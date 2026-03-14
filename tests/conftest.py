@@ -19,4 +19,6 @@ def conn(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     c = get_connection(db_path)
     init_db(c)
     yield c
+    if c.in_transaction:
+        c.rollback()
     c.close()

@@ -56,8 +56,9 @@ def insert_task(
     column_id: int,
     project_id: int | None = None,
     priority: int = 1,
+    due_date: int | None = None,
 ) -> int:
-    rid = _raw_insert_task(conn, board_id, title, column_id, project_id, priority)
+    rid = _raw_insert_task(conn, board_id, title, column_id, project_id, priority, due_date)
     _commit(conn)
     return rid
 
@@ -231,6 +232,19 @@ class TestTaskService:
     def test_get_missing_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
             service.get_task(conn, 999)
+
+    def test_get_by_title(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        cid = insert_column(conn, bid)
+        task = service.create_task(conn, bid, "Find me", cid)
+        found = service.get_task_by_title(conn, bid, "Find me")
+        assert found.id == task.id
+        assert found.title == "Find me"
+
+    def test_get_by_title_missing_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        with pytest.raises(LookupError, match="not found"):
+            service.get_task_by_title(conn, bid, "nonexistent")
 
     def test_get_ref(self, conn: sqlite3.Connection) -> None:
         bid = insert_board(conn)

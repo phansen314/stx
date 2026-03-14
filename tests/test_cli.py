@@ -371,6 +371,22 @@ class TestTaskCommands:
         assert "Task A" in out2
         assert "Task A" in out3
 
+    def test_show_by_title(self, cli):
+        cli("add", "Fix login bug")
+        out, _ = cli("show", "Fix login bug")
+        assert "task-0001" in out
+        assert "Fix login bug" in out
+
+    def test_show_by_title_not_found(self, cli):
+        _, err = cli("show", "nonexistent title", expect_exit=1)
+        assert "error:" in err
+
+    def test_dep_add_by_title(self, cli):
+        cli("add", "Task A")
+        cli("add", "Task B")
+        out, _ = cli("dep", "add", "Task B", "Task A")
+        assert "task-0002 now blocked by task-0001" in out
+
 
 # ---- Project commands ----
 

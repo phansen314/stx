@@ -3,13 +3,11 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from calendar import timegm
 from datetime import date, datetime, timezone
 from pathlib import Path
 from time import strftime, gmtime
 
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
-from . import repository as repo
 from . import service
 from .export import export_markdown
 from .models import Board, Column, Project

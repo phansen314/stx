@@ -26,11 +26,13 @@ from sticky_notes.repository import (
     get_project,
     get_project_by_name,
     get_task,
+    get_task_by_title,
     insert_board,
     insert_column,
     insert_project,
     insert_task,
     insert_task_history,
+    list_all_dependencies,
     list_blocked_by_ids,
     list_blocked_by_tasks,
     list_blocks_ids,
@@ -345,6 +347,55 @@ class TestTaskRepository:
         assert len(list_tasks_by_project(conn, proj.id)) == 1
         assert len(list_tasks_by_project(conn, proj.id, include_archived=True)) == 2
 
+    def test_get_task_by_title(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        task = insert_task(
+            conn, NewTask(board_id=board.id, title="Find me", column_id=col.id)
+        )
+        found = get_task_by_title(conn, board.id, "Find me")
+        assert found is not None
+        assert found.id == task.id
+        assert found.title == "Find me"
+
+    def test_get_task_by_title_missing(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        assert get_task_by_title(conn, board.id, "nonexistent") is None
+
+    def test_priority_at_lower_bound(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        task = insert_task(
+            conn, NewTask(board_id=board.id, title="low", column_id=col.id, priority=1)
+        )
+        assert task.priority == 1
+
+    def test_priority_at_upper_bound(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        task = insert_task(
+            conn, NewTask(board_id=board.id, title="high", column_id=col.id, priority=5)
+        )
+        assert task.priority == 5
+
+    def test_priority_below_lower_bound_rejected(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_task(
+                conn, NewTask(board_id=board.id, title="bad", column_id=col.id, priority=0)
+            )
+
+    def test_priority_above_upper_bound_rejected(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_task(
+                conn, NewTask(board_id=board.id, title="bad", column_id=col.id, priority=6)
+            )
+
+    def test_empty_title_allowed(self, conn: sqlite3.Connection) -> None:
+        board, col = self._setup(conn)
+        task = insert_task(
+            conn, NewTask(board_id=board.id, title="", column_id=col.id)
+        )
+        assert task.title == ""
+
     def test_insert_task_with_all_optional_fields(
         self, conn: sqlite3.Connection
     ) -> None:
@@ -434,6 +485,17 @@ class TestTaskDependencyRepository:
         t1, _, _ = self._setup(conn)
         with pytest.raises(sqlite3.IntegrityError):
             add_dependency(conn, t1.id, t1.id)
+
+    def test_list_all_dependencies(self, conn: sqlite3.Connection) -> None:
+        t1, t2, t3 = self._setup(conn)
+        add_dependency(conn, t2.id, t1.id)
+        add_dependency(conn, t3.id, t1.id)
+        deps = list_all_dependencies(conn)
+        assert set(deps) == {(t2.id, t1.id), (t3.id, t1.id)}
+
+    def test_list_all_dependencies_empty(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        assert list_all_dependencies(conn) == ()
 
 
 # ---- Task history ----

@@ -46,11 +46,12 @@ def insert_task(
     column_id: int,
     project_id: int | None = None,
     priority: int = 1,
+    due_date: int | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO tasks (board_id, title, column_id, project_id, priority) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (board_id, title, column_id, project_id, priority),
+        "INSERT INTO tasks (board_id, title, column_id, project_id, priority, due_date) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (board_id, title, column_id, project_id, priority, due_date),
     )
     return cur.lastrowid  # type: ignore[return-value]
 

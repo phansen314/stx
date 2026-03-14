@@ -413,6 +413,15 @@ def list_blocks_tasks(
     return tuple(row_to_task(r) for r in rows)
 
 
+def list_all_dependencies(
+    conn: sqlite3.Connection,
+) -> tuple[tuple[int, int], ...]:
+    rows = conn.execute(
+        "SELECT task_id, depends_on_id FROM task_dependencies"
+    ).fetchall()
+    return tuple((r["task_id"], r["depends_on_id"]) for r in rows)
+
+
 # ---- Task history functions ----
 
 

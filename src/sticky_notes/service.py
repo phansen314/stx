@@ -321,6 +321,12 @@ def remove_dependency(
         repo.remove_dependency(conn, task_id, depends_on_id)
 
 
+def list_all_dependencies(
+    conn: sqlite3.Connection,
+) -> tuple[tuple[int, int], ...]:
+    return repo.list_all_dependencies(conn)
+
+
 # ---- History ----
 
 

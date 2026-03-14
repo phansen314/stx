@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-
 import pytest
 
 from helpers import insert_board, insert_column, insert_task
@@ -72,6 +71,42 @@ class TestTransaction:
             with pytest.raises(RuntimeError, match="Cannot nest transactions"):
                 with transaction(conn):
                     pass
+        # Outer transaction should still have committed successfully
+        row = conn.execute(
+            "SELECT name FROM boards WHERE name = 'outer'"
+        ).fetchone()
+        assert row is not None
+        assert row["name"] == "outer"
+
+    def test_rollback_failure_chains_exceptions(self, conn: sqlite3.Connection) -> None:
+        """Verify raise exc from rollback_exc pattern in transaction()."""
+
+        class FailingRollbackConn:
+            """Proxy that fails on ROLLBACK but delegates everything else."""
+
+            def __init__(self, real_conn: sqlite3.Connection) -> None:
+                self._real = real_conn
+                self._fail_rollback = False
+
+            def __getattr__(self, name: str):
+                return getattr(self._real, name)
+
+            def execute(self, sql, *args, **kwargs):
+                if self._fail_rollback and sql == "ROLLBACK":
+                    raise OSError("disk full")
+                return self._real.execute(sql, *args, **kwargs)
+
+        proxy = FailingRollbackConn(conn)
+
+        with pytest.raises(ValueError, match="boom") as exc_info:
+            with transaction(proxy):  # type: ignore[arg-type]
+                proxy.execute("INSERT INTO boards (name) VALUES ('rb_test')")
+                proxy._fail_rollback = True
+                raise ValueError("boom")
+
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, OSError)
+        assert "disk full" in str(exc_info.value.__cause__)
 
 
 class TestSelfDependencyConstraint:
