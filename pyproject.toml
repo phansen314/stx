@@ -15,5 +15,8 @@ dependencies = [
 [project.scripts]
 todo = "sticky_notes.__main__:main"
 
+[tool.pytest.ini_options]
+pythonpath = ["tests"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/sticky_notes"]

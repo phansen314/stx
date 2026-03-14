@@ -24,11 +24,18 @@ class ProjectRef(Project):
 
 @dataclass(frozen=True)
 class TaskDetail(TaskRef):
-    column: Column | None = None
+    # column is always present (tasks.column_id is NOT NULL).
+    # Default is None to satisfy dataclass field-ordering; __post_init__
+    # enforces that callers always supply a real Column.
+    column: Column = None  # type: ignore[assignment]
     project: Project | None = None
     blocked_by: tuple[Task, ...] = ()
     blocks: tuple[Task, ...] = ()
     history: tuple[TaskHistory, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.column is None:
+            raise TypeError("TaskDetail.column is required")
 
 
 @dataclass(frozen=True)

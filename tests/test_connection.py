@@ -1,32 +1,20 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
 
+from helpers import insert_board, insert_column, insert_task
 from sticky_notes.connection import get_connection, init_db, transaction
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test.db"
-
-
-@pytest.fixture
-def conn(db_path: Path) -> sqlite3.Connection:
-    c = get_connection(db_path)
-    init_db(c)
-    return c
 
 
 class TestGetConnection:
     def test_creates_parent_dirs(self, tmp_path: Path) -> None:
         nested = tmp_path / "a" / "b" / "test.db"
-        conn = get_connection(nested)
+        c = get_connection(nested)
         assert nested.parent.exists()
-        conn.close()
+        c.close()
 
     def test_row_factory_is_sqlite_row(self, conn: sqlite3.Connection) -> None:
         assert conn.row_factory is sqlite3.Row
@@ -45,10 +33,14 @@ class TestInitDb:
         tables = {
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        assert tables == {"boards", "projects", "columns", "tasks", "task_dependencies", "task_history"}
+        assert tables == {
+            "boards", "projects", "columns",
+            "tasks", "task_dependencies", "task_history",
+        }
 
     def test_idempotent(self, conn: sqlite3.Connection) -> None:
         init_db(conn)  # second call should not raise
@@ -58,7 +50,9 @@ class TestTransaction:
     def test_commit_on_success(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             conn.execute("INSERT INTO boards (name) VALUES ('test')")
-        row = conn.execute("SELECT name FROM boards WHERE name = 'test'").fetchone()
+        row = conn.execute(
+            "SELECT name FROM boards WHERE name = 'test'",
+        ).fetchone()
         assert row is not None
         assert row["name"] == "test"
 
@@ -67,13 +61,15 @@ class TestTransaction:
             with transaction(conn):
                 conn.execute("INSERT INTO boards (name) VALUES ('rollback_test')")
                 raise ValueError("boom")
-        row = conn.execute("SELECT name FROM boards WHERE name = 'rollback_test'").fetchone()
+        row = conn.execute(
+            "SELECT name FROM boards WHERE name = 'rollback_test'",
+        ).fetchone()
         assert row is None
 
     def test_nested_transaction_not_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             conn.execute("INSERT INTO boards (name) VALUES ('outer')")
-            with pytest.raises(sqlite3.OperationalError):
+            with pytest.raises(RuntimeError, match="Cannot nest transactions"):
                 with transaction(conn):
                     pass
 
@@ -81,37 +77,109 @@ class TestTransaction:
 class TestSelfDependencyConstraint:
     def test_task_cannot_depend_on_itself(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            conn.execute("INSERT INTO boards (name) VALUES ('b')")
-            conn.execute("INSERT INTO columns (board_id, name) VALUES (1, 'col')")
-            conn.execute("INSERT INTO tasks (board_id, title, column_id) VALUES (1, 't', 1)")
+            board_id = insert_board(conn, "b")
+            col_id = insert_column(conn, board_id, "col")
+            task_id = insert_task(conn, board_id, "t", col_id)
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
-                conn.execute("INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (1, 1)")
+                conn.execute(
+                    "INSERT INTO task_dependencies (task_id, depends_on_id) "
+                    "VALUES (?, ?)",
+                    (task_id, task_id),
+                )
 
     def test_valid_dependency_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            conn.execute("INSERT INTO boards (name) VALUES ('b')")
-            conn.execute("INSERT INTO columns (board_id, name) VALUES (1, 'col')")
-            conn.execute("INSERT INTO tasks (board_id, title, column_id) VALUES (1, 't1', 1)")
-            conn.execute("INSERT INTO tasks (board_id, title, column_id) VALUES (1, 't2', 1)")
+            board_id = insert_board(conn, "b")
+            col_id = insert_column(conn, board_id, "col")
+            t1 = insert_task(conn, board_id, "t1", col_id)
+            t2 = insert_task(conn, board_id, "t2", col_id)
         with transaction(conn):
-            conn.execute("INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (1, 2)")
+            conn.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on_id) "
+                "VALUES (?, ?)",
+                (t1, t2),
+            )
         row = conn.execute("SELECT * FROM task_dependencies").fetchone()
-        assert row["task_id"] == 1
-        assert row["depends_on_id"] == 2
+        assert row["task_id"] == t1
+        assert row["depends_on_id"] == t2
 
 
 class TestColumnArchived:
     def test_column_has_archived_default_zero(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            conn.execute("INSERT INTO boards (name) VALUES ('b')")
-            conn.execute("INSERT INTO columns (board_id, name) VALUES (1, 'col')")
-        row = conn.execute("SELECT archived FROM columns WHERE id = 1").fetchone()
+            board_id = insert_board(conn, "b")
+            insert_column(conn, board_id, "col")
+        row = conn.execute(
+            "SELECT archived FROM columns WHERE name = 'col'",
+        ).fetchone()
         assert row["archived"] == 0
 
     def test_column_archived_can_be_set(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            conn.execute("INSERT INTO boards (name) VALUES ('b')")
-            conn.execute("INSERT INTO columns (board_id, name, archived) VALUES (1, 'col', 1)")
-        row = conn.execute("SELECT archived FROM columns WHERE id = 1").fetchone()
+            board_id = insert_board(conn, "b")
+            conn.execute(
+                "INSERT INTO columns (board_id, name, archived) VALUES (?, 'col', 1)",
+                (board_id,),
+            )
+        row = conn.execute(
+            "SELECT archived FROM columns WHERE name = 'col'",
+        ).fetchone()
         assert row["archived"] == 1
+
+
+class TestForeignKeyEnforcement:
+    def test_rejects_task_with_nonexistent_board(
+        self, conn: sqlite3.Connection,
+    ) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            with transaction(conn):
+                conn.execute(
+                    "INSERT INTO columns (board_id, name) VALUES (999, 'col')",
+                )
+
+    def test_rejects_task_with_nonexistent_column(
+        self, conn: sqlite3.Connection,
+    ) -> None:
+        with transaction(conn):
+            board_id = insert_board(conn, "b")
+        with pytest.raises(sqlite3.IntegrityError):
+            with transaction(conn):
+                conn.execute(
+                    "INSERT INTO tasks (board_id, title, column_id) "
+                    "VALUES (?, 't', 999)",
+                    (board_id,),
+                )
+
+
+class TestTaskHistoryFieldConstraint:
+    def test_rejects_invalid_field_value(
+        self, conn: sqlite3.Connection,
+    ) -> None:
+        with transaction(conn):
+            board_id = insert_board(conn, "b")
+            col_id = insert_column(conn, board_id, "col")
+            task_id = insert_task(conn, board_id, "t", col_id)
+        with pytest.raises(sqlite3.IntegrityError):
+            with transaction(conn):
+                conn.execute(
+                    "INSERT INTO task_history (task_id, field, new_value, source) "
+                    "VALUES (?, 'bogus_field', 'v', 'test')",
+                    (task_id,),
+                )
+
+    def test_accepts_valid_field_value(
+        self, conn: sqlite3.Connection,
+    ) -> None:
+        with transaction(conn):
+            board_id = insert_board(conn, "b")
+            col_id = insert_column(conn, board_id, "col")
+            task_id = insert_task(conn, board_id, "t", col_id)
+        with transaction(conn):
+            conn.execute(
+                "INSERT INTO task_history (task_id, field, new_value, source) "
+                "VALUES (?, 'title', 'new_title', 'test')",
+                (task_id,),
+            )
+        row = conn.execute("SELECT field FROM task_history").fetchone()
+        assert row["field"] == "title"
