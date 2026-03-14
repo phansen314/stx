@@ -37,7 +37,6 @@ class NewColumn:
     board_id: int
     name: str
     position: int = 0
-    archived: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,9 +46,11 @@ class NewTask:
     column_id: int
     project_id: int | None = None
     description: str | None = None
-    priority: int = 0
+    priority: int = 1
     due_date: int | None = None
     position: int = 0
+    start_date: int | None = None
+    finish_date: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ class Column:
     name: str
     position: int
     archived: bool
+    created_at: int
 
 
 @dataclass(frozen=True)

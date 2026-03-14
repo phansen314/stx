@@ -52,6 +52,7 @@ def row_to_column(row: Row) -> Column:
         name=row["name"],
         position=row["position"],
         archived=bool(row["archived"]),
+        created_at=row["created_at"],
     )
 
 
@@ -88,7 +89,11 @@ def row_to_task_history(row: Row) -> TaskHistory:
 # ---- Persisted model -> ref ----
 
 
-def _shallow_fields(instance: object, cls: type) -> dict[str, Any]:
+def shallow_fields(instance: object, cls: type) -> dict[str, Any]:
+    if not dataclasses.is_dataclass(cls):
+        raise TypeError(f"{cls!r} is not a dataclass")
+    if not isinstance(instance, cls):
+        raise TypeError(f"{instance!r} is not an instance of {cls!r}")
     return {f.name: getattr(instance, f.name) for f in dataclasses.fields(cls)}
 
 
@@ -97,14 +102,21 @@ def task_to_ref(
     blocked_by_ids: tuple[int, ...],
     blocks_ids: tuple[int, ...],
 ) -> TaskRef:
-    return TaskRef(**_shallow_fields(task, Task), blocked_by_ids=blocked_by_ids, blocks_ids=blocks_ids)
+    return TaskRef(
+        **shallow_fields(task, Task),
+        blocked_by_ids=blocked_by_ids,
+        blocks_ids=blocks_ids,
+    )
 
 
 def project_to_ref(
     project: Project,
     task_ids: tuple[int, ...],
 ) -> ProjectRef:
-    return ProjectRef(**_shallow_fields(project, Project), task_ids=task_ids)
+    return ProjectRef(
+        **shallow_fields(project, Project),
+        task_ids=task_ids,
+    )
 
 
 # ---- Ref -> hydrated ----
@@ -119,7 +131,7 @@ def task_ref_to_detail(
     history: tuple[TaskHistory, ...],
 ) -> TaskDetail:
     return TaskDetail(
-        **_shallow_fields(ref, TaskRef),
+        **shallow_fields(ref, TaskRef),
         column=column,
         project=project,
         blocked_by=blocked_by,
@@ -132,4 +144,7 @@ def project_ref_to_detail(
     ref: ProjectRef,
     tasks: tuple[Task, ...],
 ) -> ProjectDetail:
-    return ProjectDetail(**_shallow_fields(ref, ProjectRef), tasks=tasks)
+    return ProjectDetail(
+        **shallow_fields(ref, ProjectRef),
+        tasks=tasks,
+    )

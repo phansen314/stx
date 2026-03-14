@@ -24,7 +24,7 @@ MCP tool functions ──┘
 - **Defaults on pre-insert dataclasses** — optional/defaultable fields on `New*` types carry defaults directly. No factory layer needed.
 - **Service models inherit from domain models** — `TaskRef(Task)`, `TaskDetail(Task)`, etc. Child fields use defaults to satisfy dataclass field ordering. Access task fields directly (`ref.title`), not via composition.
 - **Mappers are plain functions** — explicit conversion at each layer boundary (row→model, model→ref, ref→detail). Models are pure data containers with no methods — conversion logic stays in `mappers.py`, not as classmethods. Accept the boilerplate to keep separation clean.
-- **Transaction context manager** — service layer controls transaction boundaries. Repository functions receive a connection and never commit/rollback.
+- **Transaction context manager** — service layer controls transaction boundaries. Repository functions receive a connection and never commit/rollback. On rollback failure, `raise exc from rollback_exc` — the original error is primary, rollback failure is attached as `__cause__`. This is intentional.
 - **Timestamps as Unix epoch integers** — formatting happens at the edges only.
 - **Task numbers** — formatted as `task-{id:04d}` in the application layer, derived from autoincrement ID.
 - **DB path** — `~/.local/share/sticky-notes/sticky-notes.db` (XDG-compliant).
