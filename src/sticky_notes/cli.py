@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from time import strftime, gmtime
 
+from .active_board import get_active_board_id, set_active_board_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import service
 from .export import export_markdown
@@ -57,34 +58,13 @@ def format_priority(p: int) -> str:
     return f"[P{p}]"
 
 
-# ---- Helpers: active board ----
-
-
-def _active_board_path(db_path: Path) -> Path:
-    return db_path.parent / "active-board"
-
-
-def _get_active_board_id(db_path: Path) -> int | None:
-    p = _active_board_path(db_path)
-    try:
-        text = p.read_text().strip()
-        return int(text)
-    except (FileNotFoundError, ValueError):
-        return None
-
-
-def _set_active_board_id(db_path: Path, board_id: int) -> None:
-    p = _active_board_path(db_path)
-    p.write_text(str(board_id))
-
-
 # ---- Helpers: resolution ----
 
 
 def _resolve_board(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> Board:
     if args.board:
         return service.get_board_by_name(conn, args.board)
-    board_id = _get_active_board_id(db_path)
+    board_id = get_active_board_id(db_path)
     if board_id is None:
         raise LookupError("no active board — use 'todo board create <name>' or 'todo board use <name>'")
     return service.get_board(conn, board_id)
@@ -281,13 +261,13 @@ def cmd_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -
 
 def cmd_board_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
     board = service.create_board(conn, args.name)
-    _set_active_board_id(db_path, board.id)
+    set_active_board_id(db_path, board.id)
     print(f"created board {board.name!r} (active)")
 
 
 def cmd_board_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
     boards = service.list_boards(conn, include_archived=args.all)
-    active_id = _get_active_board_id(db_path)
+    active_id = get_active_board_id(db_path)
     if not boards:
         print("no boards")
         return
@@ -299,7 +279,7 @@ def cmd_board_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
 
 def cmd_board_use(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
     board = service.get_board_by_name(conn, args.name)
-    _set_active_board_id(db_path, board.id)
+    set_active_board_id(db_path, board.id)
     print(f"switched to board {board.name!r}")
 
 

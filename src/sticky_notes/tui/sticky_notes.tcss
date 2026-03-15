@@ -1,0 +1,47 @@
+Screen {
+    layout: vertical;
+}
+
+#settings-container {
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+.section-title {
+    text-align: center;
+    text-style: bold;
+    padding: 1 0;
+}
+
+.section-heading {
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 1;
+    color: $accent;
+}
+
+.setting-row {
+    height: 3;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.setting-row .label {
+    width: 30;
+    padding: 0 1;
+}
+
+.setting-row Select {
+    width: 30;
+}
+
+.setting-row Switch {
+    width: auto;
+}
+
+#main-placeholder {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    text-align: center;
+}

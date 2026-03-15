@@ -3,6 +3,11 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
+from sticky_notes.active_board import (
+    active_board_path,
+    get_active_board_id,
+    set_active_board_id,
+)
 from sticky_notes.cli import (
     format_priority,
     format_task_num,
@@ -10,9 +15,6 @@ from sticky_notes.cli import (
     main,
     parse_date,
     parse_task_num,
-    _active_board_path,
-    _get_active_board_id,
-    _set_active_board_id,
 )
 
 
@@ -89,15 +91,15 @@ class TestFormatHelpers:
 
 class TestActiveBoard:
     def test_path(self, db_path: Path):
-        assert _active_board_path(db_path) == db_path.parent / "active-board"
+        assert active_board_path(db_path) == db_path.parent / "active-board"
 
     def test_get_none(self, db_path: Path):
-        assert _get_active_board_id(db_path) is None
+        assert get_active_board_id(db_path) is None
 
     def test_set_and_get(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        _set_active_board_id(db_path, 42)
-        assert _get_active_board_id(db_path) == 42
+        set_active_board_id(db_path, 42)
+        assert get_active_board_id(db_path) == 42
 
 
 # ---- Board commands ----
@@ -110,7 +112,7 @@ class TestBoardCommands:
 
     def test_create_auto_activates(self, cli, db_path):
         cli("board", "create", "dev")
-        assert _get_active_board_id(db_path) is not None
+        assert get_active_board_id(db_path) is not None
 
     def test_ls(self, cli):
         cli("board", "create", "dev")
