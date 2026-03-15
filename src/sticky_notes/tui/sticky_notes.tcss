@@ -60,3 +60,7 @@ BoardView TaskCard:focus {
 BoardView ColumnWidget:focus-within {
     border: solid $accent;
 }
+
+ModalScreen {
+    background: $background 60%;
+}

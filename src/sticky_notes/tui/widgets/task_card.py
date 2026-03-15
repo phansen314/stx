@@ -26,6 +26,12 @@ class TaskCard(Static):
         Binding("down", "nav('down')", show=False),
         Binding("left", "nav('left')", show=False),
         Binding("right", "nav('right')", show=False),
+        Binding("shift+left", "move('left')", show=False),
+        Binding("shift+right", "move('right')", show=False),
+        Binding("enter", "show_detail", "Detail"),
+        Binding("e", "edit", "Edit"),
+        Binding("d", "archive", "Archive"),
+        Binding("delete", "archive", "Archive", show=False),
     ]
 
     class Navigate(Message):
@@ -33,6 +39,34 @@ class TaskCard(Static):
 
         def __init__(self, direction: str) -> None:
             self.direction = direction
+            super().__init__()
+
+    class MoveRequest(Message):
+        """Request to move a task to an adjacent column."""
+
+        def __init__(self, direction: str) -> None:
+            self.direction = direction
+            super().__init__()
+
+    class ShowRequest(Message):
+        """Request to show task detail."""
+
+        def __init__(self, task_id: int) -> None:
+            self.task_id = task_id
+            super().__init__()
+
+    class EditRequest(Message):
+        """Request to edit a task."""
+
+        def __init__(self, task_id: int) -> None:
+            self.task_id = task_id
+            super().__init__()
+
+    class ArchiveRequest(Message):
+        """Request to archive a task."""
+
+        def __init__(self, task_id: int) -> None:
+            self.task_id = task_id
             super().__init__()
 
     def __init__(self, task_ref: TaskRef) -> None:
@@ -46,3 +80,15 @@ class TaskCard(Static):
 
     def action_nav(self, direction: str) -> None:
         self.post_message(self.Navigate(direction))
+
+    def action_move(self, direction: str) -> None:
+        self.post_message(self.MoveRequest(direction))
+
+    def action_show_detail(self) -> None:
+        self.post_message(self.ShowRequest(self.task_ref.id))
+
+    def action_edit(self) -> None:
+        self.post_message(self.EditRequest(self.task_ref.id))
+
+    def action_archive(self) -> None:
+        self.post_message(self.ArchiveRequest(self.task_ref.id))

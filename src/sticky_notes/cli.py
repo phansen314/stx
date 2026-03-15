@@ -4,15 +4,13 @@ import argparse
 import sqlite3
 import sys
 from collections.abc import Callable
-from datetime import date, datetime, timezone
 from pathlib import Path
-from time import strftime, gmtime
 
 from .active_board import get_active_board_id, set_active_board_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import service
 from .export import export_markdown
-from .formatting import format_priority, format_task_num
+from .formatting import format_priority, format_task_num, format_timestamp, parse_date
 from .models import Board, Column, Project, TaskFilter
 
 type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], None]
@@ -35,20 +33,6 @@ def parse_task_num(raw: str) -> int:
     if n <= 0:
         raise ValueError(f"invalid task number: {raw!r}")
     return n
-
-
-def parse_date(raw: str) -> int:
-    """YYYY-MM-DD -> Unix epoch int."""
-    try:
-        d = date.fromisoformat(raw)
-    except ValueError:
-        raise ValueError(f"invalid date: {raw!r} (expected YYYY-MM-DD)") from None
-    dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
-    return int(dt.timestamp())
-
-
-def format_timestamp(epoch: int) -> str:
-    return strftime("%Y-%m-%d", gmtime(epoch))
 
 
 # ---- Helpers: resolution ----
