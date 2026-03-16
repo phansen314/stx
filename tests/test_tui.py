@@ -11,8 +11,9 @@ from sticky_notes.tui.config import TuiConfig, load_config, save_config
 from sticky_notes.tui.screens.confirm_dialog import ConfirmDialog
 from sticky_notes.tui.screens.settings import SettingsScreen
 from sticky_notes.tui.screens.task_detail import TaskDetailModal
+from sticky_notes.tui.screens.task_form import TaskFormModal
 from sticky_notes.tui.widgets import BoardView, ColumnWidget, TaskCard
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 
 # ---- Config unit tests ----
@@ -848,3 +849,349 @@ class TestTaskDetailModal:
             await pilot.pause()
             # Detail should dismiss (edit modal not yet wired)
             assert not isinstance(app.screen, TaskDetailModal)
+
+
+# ---- Task create modal tests ----
+
+
+class TestTaskCreateModal:
+    """Pressing 'n' opens the task creation form."""
+
+    async def test_n_opens_create_form(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskFormModal)
+
+    async def test_create_form_title_says_new_task(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            title = app.screen.query_one("#form-title", Static)
+            assert "New Task" in str(title.render())
+
+    async def test_submit_with_title_creates_task(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            assert len(app.query(TaskCard)) == 8
+            await pilot.press("n")
+            await pilot.pause()
+            # Type a title
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "New test task"
+            # Click submit
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert not isinstance(app.screen, TaskFormModal)
+            assert len(app.query(TaskCard)) == 9
+
+    async def test_submit_empty_title_shows_error(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            # Submit without typing anything
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            # Should still be on the form
+            assert isinstance(app.screen, TaskFormModal)
+            error = app.screen.query_one("#form-error", Static)
+            assert "required" in str(error.render()).lower()
+
+    async def test_cancel_does_not_create_task(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            assert len(app.query(TaskCard)) == 8
+            await pilot.press("n")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskFormModal)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, TaskFormModal)
+            assert len(app.query(TaskCard)) == 8
+
+    async def test_created_task_appears_in_focused_column(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            # Navigate to In Progress (col 1)
+            await pilot.press("right")
+            await pilot.pause()
+            assert _board(app).focused_position == (1, 0)
+            board = _board(app)
+            in_progress_before = len(board._get_cards(board._get_columns()[1]))
+            await pilot.press("n")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "In progress task"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            board = _board(app)
+            in_progress_after = len(board._get_cards(board._get_columns()[1]))
+            assert in_progress_after == in_progress_before + 1
+
+    async def test_created_task_gets_focus(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "Focus me"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            assert focused.task_ref.title == "Focus me"
+
+    async def test_created_task_in_database(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "DB persist test"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            from sticky_notes.connection import get_connection
+
+            fresh_conn = get_connection(db_path)
+            task = service.get_task_by_title(fresh_conn, ids["board_id"], "DB persist test")
+            fresh_conn.close()
+            assert task.title == "DB persist test"
+
+    async def test_invalid_due_date_shows_error(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("n")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "Has bad date"
+            due_input = app.screen.query_one("#form-input-due", Input)
+            due_input.value = "not-a-date"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskFormModal)
+            error = app.screen.query_one("#form-error", Static)
+            assert "date" in str(error.render()).lower()
+
+
+# ---- Task edit modal tests ----
+
+
+class TestTaskEditModal:
+    """Pressing 'e' opens the edit form pre-populated with current values."""
+
+    async def test_e_opens_edit_form(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskFormModal)
+
+    async def test_edit_form_title_says_edit_task(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("e")
+            await pilot.pause()
+            title = app.screen.query_one("#form-title", Static)
+            assert "Edit Task" in str(title.render())
+
+    async def test_edit_form_prepopulated_with_title(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            original_title = focused.task_ref.title
+            await pilot.press("e")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            assert title_input.value == original_title
+
+    async def test_edit_no_column_selector(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            await pilot.press("e")
+            await pilot.pause()
+            # Edit mode should not have a column selector
+            matches = app.screen.query("#form-select-column")
+            assert len(matches) == 0
+
+    async def test_edit_changes_title(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            task_id = focused.task_ref.id
+            await pilot.press("e")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "Updated title"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert not isinstance(app.screen, TaskFormModal)
+            # Verify in DB
+            from sticky_notes.connection import get_connection
+
+            fresh_conn = get_connection(db_path)
+            task = service.get_task(fresh_conn, task_id)
+            fresh_conn.close()
+            assert task.title == "Updated title"
+
+    async def test_edit_escape_no_changes(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            task_id = focused.task_ref.id
+            original_title = focused.task_ref.title
+            await pilot.press("e")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, TaskFormModal)
+            from sticky_notes.connection import get_connection
+
+            fresh_conn = get_connection(db_path)
+            task = service.get_task(fresh_conn, task_id)
+            fresh_conn.close()
+            assert task.title == original_title
+
+    async def test_edit_preserves_focus_on_edited_task(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            task_id = focused.task_ref.id
+            await pilot.press("e")
+            await pilot.pause()
+            title_input = app.screen.query_one("#form-input-title", Input)
+            title_input.value = "Edited and focused"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            focused_after = app.focused
+            assert isinstance(focused_after, TaskCard)
+            assert focused_after.task_ref.id == task_id
+
+    async def test_detail_to_edit_flow(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        """Enter opens detail, 'e' from detail opens edit form."""
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            original_title = focused.task_ref.title
+            # Open detail
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskDetailModal)
+            # Press 'e' to transition to edit
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskFormModal)
+            # Verify pre-populated
+            title_input = app.screen.query_one("#form-input-title", Input)
+            assert title_input.value == original_title
+
+    async def test_edit_changes_priority(
+        self, seeded_tui_db: tuple[Path, dict]
+    ):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path)
+        async with app.run_test() as pilot:
+            await _wait_for_board(pilot)
+            focused = app.focused
+            assert isinstance(focused, TaskCard)
+            task_id = focused.task_ref.id
+            original_priority = focused.task_ref.priority
+            await pilot.press("e")
+            await pilot.pause()
+            # Change priority via the Select widget
+            from textual.widgets import Select
+
+            priority_select = app.screen.query_one("#form-select-priority", Select)
+            new_priority = 5 if original_priority != 5 else 4
+            priority_select.value = new_priority
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert not isinstance(app.screen, TaskFormModal)
+            from sticky_notes.connection import get_connection
+
+            fresh_conn = get_connection(db_path)
+            task = service.get_task(fresh_conn, task_id)
+            fresh_conn.close()
+            assert task.priority == new_priority

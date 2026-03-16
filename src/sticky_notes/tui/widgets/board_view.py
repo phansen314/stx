@@ -39,7 +39,7 @@ class BoardView(Horizontal):
     """
 
     BINDINGS = [
-        Binding("n", "create_task", "New Task", show=False),
+        Binding("n", "create_task", "New Task"),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -48,6 +48,7 @@ class BoardView(Horizontal):
         self._col_idx: int = 0
         self._task_idx: int = 0
         self._pending_focus_task_id: int | None = None
+        self._board_id: int | None = None
 
     @property
     def _has_cards(self) -> bool:
@@ -71,13 +72,13 @@ class BoardView(Horizontal):
         db_path = self.typed_app.db_path
         config = self.typed_app.config
 
-        board_id = get_active_board_id(db_path)
-        if board_id is None:
+        self._board_id = get_active_board_id(db_path)
+        if self._board_id is None:
             self._columns = []
             self.mount(Static("No active board", id="no-board-message"))
             return
 
-        columns = service.list_columns(conn, board_id)
+        columns = service.list_columns(conn, self._board_id)
         if not columns:
             self._columns = []
             self.mount(Static("No columns on this board", id="no-columns-message"))
@@ -85,7 +86,7 @@ class BoardView(Horizontal):
 
         task_filter = TaskFilter(include_archived=config.show_archived)
         tasks = service.list_task_refs_filtered(
-            conn, board_id, task_filter=task_filter
+            conn, self._board_id, task_filter=task_filter
         )
 
         tasks_by_column: dict[int, list[TaskRef]] = {col.id: [] for col in columns}
@@ -222,6 +223,38 @@ class BoardView(Horizontal):
         self._pending_focus_task_id = None
         self._focus_current()
 
+    def action_create_task(self) -> None:
+        if not self._columns:
+            return
+        from sticky_notes.tui.screens.task_form import TaskFormModal
+
+        col = self._columns[self._col_idx].column
+        self.typed_app.push_screen(
+            TaskFormModal(
+                self.typed_app.conn,
+                self._board_id,
+                mode="create",
+                column_id=col.id,
+                default_priority=self.typed_app.config.default_priority,
+            ),
+            callback=self._handle_create,
+        )
+
+    def _handle_create(self, result: dict | None) -> None:
+        if result is None:
+            return
+        task = service.create_task(
+            self.typed_app.conn,
+            board_id=self._board_id,
+            title=result["title"],
+            column_id=result["column_id"],
+            description=result.get("description"),
+            priority=result.get("priority", 1),
+            due_date=result.get("due_date"),
+            project_id=result.get("project_id"),
+        )
+        self.run_worker(self.reload(focus_task_id=task.id))
+
     def on_task_card_show_request(self, message: TaskCard.ShowRequest) -> None:
         message.stop()
         from sticky_notes.tui.screens.task_detail import TaskDetailModal
@@ -236,9 +269,48 @@ class BoardView(Horizontal):
             # result is a task_id — user pressed 'e' to edit
             self._open_edit(result)
 
+    def on_task_card_edit_request(self, message: TaskCard.EditRequest) -> None:
+        message.stop()
+        self._open_edit(message.task_id)
+
     def _open_edit(self, task_id: int) -> None:
-        """Open the edit modal for a task. Wired up in Phase 5."""
-        pass
+        from sticky_notes.tui.screens.task_form import TaskFormModal
+
+        task = service.get_task(self.typed_app.conn, task_id)
+        defaults = {
+            "title": task.title,
+            "description": task.description,
+            "priority": task.priority,
+            "due_date": task.due_date,
+            "project_id": task.project_id,
+        }
+        self.typed_app.push_screen(
+            TaskFormModal(
+                self.typed_app.conn,
+                self._board_id,
+                mode="edit",
+                defaults=defaults,
+                default_priority=self.typed_app.config.default_priority,
+            ),
+            callback=lambda r, tid=task_id: self._handle_edit(tid, r),
+        )
+
+    def _handle_edit(self, task_id: int, result: dict | None) -> None:
+        if result is None:
+            return
+        # Diff against current values to build a minimal changes dict
+        task = service.get_task(self.typed_app.conn, task_id)
+        current = {
+            "title": task.title,
+            "description": task.description,
+            "priority": task.priority,
+            "due_date": task.due_date,
+            "project_id": task.project_id,
+        }
+        changes = {k: v for k, v in result.items() if current.get(k) != v}
+        if changes:
+            service.update_task(self.typed_app.conn, task_id, changes, "tui")
+        self.run_worker(self.reload(focus_task_id=task_id))
 
     def on_task_card_archive_request(self, message: TaskCard.ArchiveRequest) -> None:
         message.stop()

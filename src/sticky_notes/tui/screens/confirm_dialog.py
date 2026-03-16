@@ -44,13 +44,13 @@ class ConfirmDialog(ModalScreen[bool]):
         Binding("n", "cancel", "No", show=False),
     ]
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, prompt_text: str) -> None:
         super().__init__()
-        self._message = message
+        self._prompt_text = prompt_text
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-container"):
-            yield Static(self._message, id="confirm-message")
+            yield Static(self._prompt_text, id="confirm-message")
             with Horizontal(id="confirm-buttons"):
                 yield Button("Yes", variant="error", id="confirm-yes")
                 yield Button("No", variant="primary", id="confirm-no")
