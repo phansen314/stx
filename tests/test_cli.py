@@ -9,13 +9,12 @@ from sticky_notes.active_board import (
     set_active_board_id,
 )
 from sticky_notes.cli import (
-    format_priority,
-    format_task_num,
     format_timestamp,
     main,
     parse_date,
     parse_task_num,
 )
+from sticky_notes.formatting import format_priority, format_task_num
 
 
 # ---- Fixtures ----
@@ -529,6 +528,70 @@ class TestBoardFlag:
 
 
 # ---- Help output ----
+
+
+class TestLsFilters:
+    def _setup_board(self, cli):
+        cli("board", "create", "work")
+        cli("col", "add", "backlog")
+        cli("col", "add", "doing")
+        cli("project", "create", "alpha")
+
+    def test_filter_by_column(self, cli):
+        self._setup_board(cli)
+        cli("add", "task1", "-c", "backlog")
+        cli("add", "task2", "-c", "doing")
+        out, _ = cli("ls", "-c", "backlog")
+        assert "task1" in out
+        assert "task2" not in out or "task2" not in out.split("== backlog ==")[0]
+
+    def test_filter_by_project(self, cli):
+        self._setup_board(cli)
+        cli("add", "task1", "-p", "alpha")
+        cli("add", "task2")
+        out, _ = cli("ls", "-p", "alpha")
+        assert "task1" in out
+        # task2 not in any non-empty column section
+        lines = [l for l in out.splitlines() if "task2" in l]
+        assert len(lines) == 0
+
+    def test_filter_by_priority(self, cli):
+        self._setup_board(cli)
+        cli("add", "low", "--priority", "1")
+        cli("add", "high", "--priority", "3")
+        out, _ = cli("ls", "-P", "3")
+        assert "high" in out
+        lines = [l for l in out.splitlines() if "low" in l]
+        assert len(lines) == 0
+
+    def test_filter_by_search(self, cli):
+        self._setup_board(cli)
+        cli("add", "Fix login bug")
+        cli("add", "Add search feature")
+        out, _ = cli("ls", "-s", "login")
+        assert "Fix login bug" in out
+        lines = [l for l in out.splitlines() if "search feature" in l]
+        assert len(lines) == 0
+
+    def test_combined_filters(self, cli):
+        self._setup_board(cli)
+        cli("add", "task1", "-c", "backlog", "--priority", "3")
+        cli("add", "task2", "-c", "backlog", "--priority", "1")
+        cli("add", "task3", "-c", "doing", "--priority", "3")
+        out, _ = cli("ls", "-c", "backlog", "-P", "3")
+        assert "task1" in out
+        lines = [l for l in out.splitlines() if l.strip().startswith("task-")]
+        assert len(lines) == 1
+
+    def test_invalid_column_name(self, cli):
+        self._setup_board(cli)
+        _, err = cli("ls", "-c", "nonexistent", expect_exit=1)
+        assert "not found" in err
+
+    def test_invalid_project_name(self, cli):
+        self._setup_board(cli)
+        _, err = cli("ls", "-p", "nonexistent", expect_exit=1)
+        assert "not found" in err
 
 
 class TestHelp:

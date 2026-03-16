@@ -22,6 +22,7 @@ from .models import (
     NewTaskHistory,
     Project,
     Task,
+    TaskFilter,
     TaskHistory,
 )
 
@@ -331,6 +332,37 @@ def list_tasks_by_project(
             "SELECT * FROM tasks WHERE project_id = ? AND archived = 0 ORDER BY position",
             (project_id,),
         ).fetchall()
+    return tuple(row_to_task(r) for r in rows)
+
+
+def list_tasks_filtered(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    task_filter: TaskFilter | None = None,
+) -> tuple[Task, ...]:
+    clauses = ["board_id = ?"]
+    params: list[object] = [board_id]
+    f = task_filter or TaskFilter()
+    if not f.include_archived:
+        clauses.append("archived = 0")
+    if f.column_id is not None:
+        clauses.append("column_id = ?")
+        params.append(f.column_id)
+    if f.project_id is not None:
+        clauses.append("project_id = ?")
+        params.append(f.project_id)
+    if f.priority is not None:
+        clauses.append("priority = ?")
+        params.append(f.priority)
+    if f.search is not None:
+        clauses.append("title LIKE ?")
+        params.append(f"%{f.search}%")
+    where = " AND ".join(clauses)
+    rows = conn.execute(
+        f"SELECT * FROM tasks WHERE {where} ORDER BY position",
+        params,
+    ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
 

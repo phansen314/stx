@@ -4,6 +4,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 
+@dataclass(frozen=True)
+class TaskFilter:
+    column_id: int | None = None
+    project_id: int | None = None
+    priority: int | None = None
+    search: str | None = None
+    include_archived: bool = False
+
+
 class TaskField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"

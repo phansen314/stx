@@ -15,6 +15,7 @@ from sticky_notes.models import (
     Project,
     Task,
     TaskField,
+    TaskFilter,
     TaskHistory,
 )
 from sticky_notes.repository import (
@@ -46,6 +47,7 @@ from sticky_notes.repository import (
     list_tasks,
     list_tasks_by_column,
     list_tasks_by_project,
+    list_tasks_filtered,
     remove_dependency,
     update_board,
     update_column,
@@ -601,3 +603,71 @@ class TestProjectHelper:
         insert_task(conn, NewTask(board_id=board.id, title="b", column_id=col.id))
         ids = list_task_ids_by_project(conn, proj.id)
         assert ids == (t1.id,)
+
+
+class TestListTasksFiltered:
+    def _seed(self, conn: sqlite3.Connection):
+        board = insert_board(conn, NewBoard(name="b"))
+        col1 = insert_column(conn, NewColumn(board_id=board.id, name="todo", position=0))
+        col2 = insert_column(conn, NewColumn(board_id=board.id, name="done", position=1))
+        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        t1 = insert_task(conn, NewTask(board_id=board.id, title="Fix login bug", column_id=col1.id, project_id=proj.id, priority=3))
+        t2 = insert_task(conn, NewTask(board_id=board.id, title="Add search", column_id=col1.id, priority=1))
+        t3 = insert_task(conn, NewTask(board_id=board.id, title="Deploy release", column_id=col2.id, project_id=proj.id, priority=2))
+        return board, col1, col2, proj, t1, t2, t3
+
+    def test_no_filter(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id)
+        assert len(result) == 3
+
+    def test_filter_by_column(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(column_id=col1.id))
+        assert len(result) == 2
+        assert all(t.column_id == col1.id for t in result)
+
+    def test_filter_by_project(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(project_id=proj.id))
+        assert len(result) == 2
+        assert all(t.project_id == proj.id for t in result)
+
+    def test_filter_by_priority(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(priority=3))
+        assert len(result) == 1
+        assert result[0].title == "Fix login bug"
+
+    def test_filter_by_search(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(search="login"))
+        assert len(result) == 1
+        assert result[0].title == "Fix login bug"
+
+    def test_search_case_insensitive(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(search="LOGIN"))
+        assert len(result) == 1
+
+    def test_combined_filters(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(
+            conn, board.id,
+            task_filter=TaskFilter(column_id=col1.id, project_id=proj.id),
+        )
+        assert len(result) == 1
+        assert result[0].title == "Fix login bug"
+
+    def test_include_archived(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        update_task(conn, t1.id, {"archived": True})
+        result = list_tasks_filtered(conn, board.id)
+        assert len(result) == 2
+        result_all = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(include_archived=True))
+        assert len(result_all) == 3
+
+    def test_no_matches(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(priority=5))
+        assert result == ()

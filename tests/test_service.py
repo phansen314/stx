@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from sticky_notes.models import Board, Column, Project, Task, TaskHistory
+from sticky_notes.models import Board, Column, Project, Task, TaskFilter, TaskHistory
 from sticky_notes.service_models import ProjectDetail, ProjectRef, TaskDetail, TaskRef
 from tests.helpers import (
     insert_board as _raw_insert_board,
@@ -432,3 +432,56 @@ class TestHistoryService:
         history = service.list_task_history(conn, task.id)
         assert len(history) == 1
         assert isinstance(history[0], TaskHistory)
+
+
+# ---- Filtered listing ----
+
+
+class TestListTaskRefsFiltered:
+    def test_no_filter_returns_all(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        cid = insert_column(conn, bid)
+        insert_task(conn, bid, "a", cid)
+        insert_task(conn, bid, "b", cid)
+        refs = service.list_task_refs_filtered(conn, bid)
+        assert len(refs) == 2
+        assert all(isinstance(r, TaskRef) for r in refs)
+
+    def test_filter_by_column(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        c1 = insert_column(conn, bid, "todo", 0)
+        c2 = insert_column(conn, bid, "done", 1)
+        insert_task(conn, bid, "a", c1)
+        insert_task(conn, bid, "b", c2)
+        refs = service.list_task_refs_filtered(conn, bid, task_filter=TaskFilter(column_id=c1))
+        assert len(refs) == 1
+        assert refs[0].title == "a"
+
+    def test_filter_by_priority(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        cid = insert_column(conn, bid)
+        insert_task(conn, bid, "low", cid, priority=1)
+        insert_task(conn, bid, "high", cid, priority=3)
+        refs = service.list_task_refs_filtered(conn, bid, task_filter=TaskFilter(priority=3))
+        assert len(refs) == 1
+        assert refs[0].title == "high"
+
+    def test_filter_with_dependencies(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        cid = insert_column(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        insert_task_dependency(conn, t2, t1)
+        refs = service.list_task_refs_filtered(conn, bid)
+        ref_map = {r.id: r for r in refs}
+        assert ref_map[t2].blocked_by_ids == (t1,)
+        assert ref_map[t1].blocks_ids == (t2,)
+
+    def test_filter_by_search(self, conn: sqlite3.Connection) -> None:
+        bid = insert_board(conn)
+        cid = insert_column(conn, bid)
+        insert_task(conn, bid, "Fix login", cid)
+        insert_task(conn, bid, "Add search", cid)
+        refs = service.list_task_refs_filtered(conn, bid, task_filter=TaskFilter(search="login"))
+        assert len(refs) == 1
+        assert refs[0].title == "Fix login"

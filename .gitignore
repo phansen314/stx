@@ -5,3 +5,6 @@ dist/
 build/
 .idea/
 .pytest_cache/
+tmp/
+.coverage
+settings.local.json

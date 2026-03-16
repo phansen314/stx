@@ -39,9 +39,28 @@ Screen {
     width: auto;
 }
 
-#main-placeholder {
+#no-board-message, #no-columns-message {
     width: 100%;
     height: 100%;
     content-align: center middle;
     text-align: center;
+}
+
+.column-header {
+    text-style: bold;
+    text-align: center;
+    padding: 1 0;
+}
+
+BoardView TaskCard:focus {
+    border: solid $accent;
+    background: $surface-lighten-2;
+}
+
+BoardView ColumnWidget:focus-within {
+    border: solid $accent;
+}
+
+ModalScreen {
+    background: $background 60%;
 }

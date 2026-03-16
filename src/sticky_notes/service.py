@@ -22,6 +22,7 @@ from .models import (
     Project,
     Task,
     TaskField,
+    TaskFilter,
     TaskHistory,
 )
 from .service_models import (
@@ -291,6 +292,21 @@ def list_task_refs(
     include_archived: bool = False,
 ) -> tuple[TaskRef, ...]:
     tasks = repo.list_tasks(conn, board_id, include_archived=include_archived)
+    task_ids = tuple(t.id for t in tasks)
+    blocked_by_map, blocks_map = repo.batch_dependency_ids(conn, task_ids)
+    return tuple(
+        task_to_ref(t, blocked_by_map.get(t.id, ()), blocks_map.get(t.id, ()))
+        for t in tasks
+    )
+
+
+def list_task_refs_filtered(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    task_filter: TaskFilter | None = None,
+) -> tuple[TaskRef, ...]:
+    tasks = repo.list_tasks_filtered(conn, board_id, task_filter=task_filter)
     task_ids = tuple(t.id for t in tasks)
     blocked_by_map, blocks_map = repo.batch_dependency_ids(conn, task_ids)
     return tuple(

@@ -6,6 +6,7 @@ import datetime
 import sqlite3
 
 from . import service
+from .formatting import format_task_num
 
 
 def export_markdown(conn: sqlite3.Connection) -> str:
@@ -76,7 +77,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
             lines.append("| Task | Title | Priority | Project | Due |")
             lines.append("|------|-------|----------|---------|-----|")
             for t in col_tasks:
-                task_num = f"task-{t.id:04d}"
+                task_num = format_task_num(t.id)
                 pri = f"P{t.priority}" if t.priority else ""
                 proj = proj_map.get(t.project_id, "")
                 due = (
@@ -101,7 +102,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
             lines.append("```mermaid")
             lines.append("graph LR")
             for tid, did in board_deps:
-                lines.append(f"    task-{tid:04d} --> task-{did:04d}")
+                lines.append(f"    {format_task_num(tid)} --> {format_task_num(did)}")
             lines.append("```")
             lines.append("")
             lines.append('> Arrow reads "depends on"')
