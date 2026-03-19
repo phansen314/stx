@@ -118,6 +118,34 @@ systemctl --user enable --now sticky-notes-mcp
 loginctl enable-linger $USER   # allows the service to run without an active login session
 ```
 
+### macOS install
+
+The macOS LaunchAgent keeps the MCP server running automatically. Install `sticky-notes-mcp` first:
+
+```sh
+pip install --user .
+```
+
+Verify the binary is on PATH:
+
+```sh
+command -v sticky-notes-mcp
+```
+
+Then run the install script:
+
+```sh
+./macosx/install.sh
+```
+
+This installs a LaunchAgent that starts the server at login and restarts it on failure. Logs go to `~/Library/Logs/sticky-notes-mcp/`.
+
+To uninstall:
+
+```sh
+./macosx/uninstall.sh
+```
+
 ## Claude Code Integration
 
 The sticky-notes MCP server can be used by Claude Code to persistently track multi-step plans. To set this up:
