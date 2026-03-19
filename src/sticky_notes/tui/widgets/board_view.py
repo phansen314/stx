@@ -44,6 +44,7 @@ class BoardView(Horizontal):
         Binding("n", "create_task", "New Task"),
         Binding("b", "select_board", "Switch Board"),
         Binding("p", "select_project", "Filter Project"),
+        Binding("a", "all_tasks", "All Tasks"),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -408,3 +409,10 @@ class BoardView(Horizontal):
             return
         self._project_filter_id = new_filter
         self.run_worker(self.reload())
+
+    def action_all_tasks(self) -> None:
+        if self._board_id is None:
+            return
+        from sticky_notes.tui.screens.all_tasks import AllTasksScreen
+
+        self.typed_app.push_screen(AllTasksScreen())

@@ -61,6 +61,31 @@ BoardView ColumnWidget:focus-within {
     border: solid $accent;
 }
 
+AllTasksScreen #all-tasks-container {
+    padding: 1 2;
+}
+
+AllTasksScreen .project-group-header {
+    text-style: bold;
+    margin-top: 1;
+    padding: 0 1;
+    color: $accent;
+}
+
+AllTasksScreen .column-sub-header {
+    margin-left: 2;
+    color: $text 70%;
+}
+
+AllTasksScreen TaskCard {
+    margin-left: 4;
+}
+
+AllTasksScreen TaskCard:focus {
+    border: solid $accent;
+    background: $surface-lighten-2;
+}
+
 ModalScreen {
     background: $background 60%;
 }
