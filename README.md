@@ -2,8 +2,8 @@
 
 A local todo/kanban app with three interfaces:
 
-- **CLI** (argparse) — primary interface today
-- **TUI** (Textual) — human interaction *(not yet built)*
+- **CLI** (argparse) — task management from the terminal
+- **TUI** (Textual) — interactive kanban board with keyboard navigation
 - **MCP server** (FastMCP) — Claude interaction via streamable-HTTP
 
 All interfaces share the same database and service layer, backed by **SQLite**.
@@ -36,6 +36,9 @@ todo add "Write README"
 todo ls
 todo mv task-0001 "In Progress"
 todo done task-0001
+
+# Launch the TUI
+todo --tui
 ```
 
 ## CLI Usage
@@ -44,21 +47,101 @@ Entry point: `todo`
 
 **Active board:** The CLI tracks the active board in `~/.local/share/sticky-notes/active-board`. Override per-command with `--board`/`-b`.
 
+### Task Commands
+
 | Command | Description |
 |---------|-------------|
 | `todo add <title>` | Add a task to the first column |
 | `todo ls` | List tasks on the active board |
-| `todo show <task>` | Show task detail |
-| `todo edit <task>` | Edit task fields |
+| `todo show <task>` | Show task detail with history and dependencies |
+| `todo edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
 | `todo mv <task> <column>` | Move task to a column |
+| `todo mv <task> <col> --board <board>` | Move task to a different board (copies and archives original) |
+| `todo mv <task> --project <project>` | Change task's project within the current board |
+| `todo mv <task> <col> --dry-run` | Preview a move without executing (shows dependency warnings) |
 | `todo done <task>` | Move task to the last column |
 | `todo rm <task>` | Archive a task |
 | `todo log <task>` | Show task change history |
+
+### List Filters
+
+`todo ls` supports filtering:
+
+| Flag | Description |
+|------|-------------|
+| `--all` / `-a` | Include archived tasks |
+| `--column` / `-c` | Filter by column name |
+| `--project` / `-p` | Filter by project name |
+| `--priority` / `-P` | Filter by priority (1-5) |
+| `--search` / `-s` | Search by title substring |
+
+### Management Commands
+
+| Command | Description |
+|---------|-------------|
 | `todo board ...` | `create`, `ls`, `use`, `rename`, `archive` |
 | `todo col ...` | `add`, `ls`, `rename`, `archive` |
 | `todo project ...` | `create`, `ls`, `show`, `archive` |
 | `todo dep ...` | `add`, `rm` |
-| `todo export` | Export database to Markdown |
+| `todo export` | Export database to Markdown with Mermaid dependency graphs |
+
+### Cross-Board Moves
+
+Tasks can be moved between boards. The move creates a copy on the target board and archives the original. Dependencies must be removed before moving:
+
+```sh
+# Move task to another board
+todo mv task-0001 "Backlog" --board ops
+
+# Move with project assignment on the target board
+todo mv task-0001 "Backlog" --board ops --project infra
+
+# Preview before moving (checks for blocking dependencies)
+todo mv task-0001 "Backlog" --board ops --dry-run
+```
+
+## TUI
+
+Launch with `todo --tui` (or `todo --tui --db path/to/db`).
+
+The TUI provides a full kanban board view with keyboard-driven navigation and modal dialogs.
+
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| Arrow keys | Navigate between tasks and columns |
+| `Enter` | Open task detail (read-only) |
+| `e` | Edit task |
+| `n` | Create new task in focused column |
+| `m` | Move task to a different board |
+| `d` / `Delete` | Archive task |
+| `Shift+Left/Right` | Move task between columns |
+| `s` | Open settings |
+| `a` | Open all-tasks view |
+| `b` | Switch board |
+| `p` | Filter by project |
+| `c` | Filter by column (in all-tasks view) |
+
+### Settings
+
+Accessible via `s` key. Stored at `~/.config/sticky-notes/tui.toml`.
+
+- **Theme**: dark/light
+- **Show archived**: toggle archived task visibility
+- **Show task descriptions**: toggle description display on cards
+- **Confirm archive**: prompt before archiving
+- **Default priority**: 1-5 for new tasks
+- **Auto-refresh**: configurable interval (off, 15s, 30s, 60s, 120s)
+
+### Screens
+
+- **Board View** — main kanban grid with columns and task cards
+- **All Tasks** — flat list of all tasks with column filtering
+- **Settings** — theme, display, and behavior preferences
+- **Task Detail** — read-only task view with history (press `e` to edit from here)
+- **Task Form** — create/edit task modal with validation
+- **Move to Board** — select target board, column, and optional project
 
 ## MCP Server
 
@@ -83,14 +166,16 @@ Each tool uses an `action` parameter to dispatch operations, keeping the tool li
 | `board` | `create`, `get`, `list`, `update` | `get` accepts `board_id` or `name` |
 | `column` | `create`, `list`, `update` | Always scoped to a `board_id` |
 | `project` | `create`, `get`, `list`, `update` | `get` returns hydrated `ProjectDetail` |
-| `task` | `create`, `get`, `list`, `update`, `move` | `get` returns `TaskDetail`, `list` returns `TaskRef[]` |
+| `task` | `create`, `get`, `list`, `update`, `move`, `move_to_board` | `move_to_board` copies task to target board and archives original |
 | `dependency` | `add`, `remove` | Takes `task_id` + `depends_on_id` |
 | `task_history` | `list` | Takes `task_id` |
 | `export` | *(none)* | Returns full database as Markdown |
 
 All tools require explicit `board_id` — there is no active board concept in the MCP interface.
 
-### Linux install
+Use `clear_fields` on `task` and `project` update actions to set nullable fields to null (e.g. `clear_fields=["due_date", "description"]`).
+
+### Linux Install
 
 The systemd service expects `sticky-notes-mcp` at `~/.local/bin/sticky-notes-mcp`. Install with `--user` to place it there:
 
@@ -148,7 +233,7 @@ Claude will then automatically use the sticky-notes board to track progress on c
 
 **Hierarchy:** Board → Column → Task (and Board → Project → Task)
 
-Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
+Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead. All mutations are recorded in the task history audit trail.
 
 To generate an ER diagram from the schema:
 
@@ -185,4 +270,11 @@ pytest
 pytest --cov
 ```
 
-Fresh in-memory DB per test — no cross-test pollution.
+Fresh in-memory DB per test — no cross-test pollution. TUI tests use Textual's `app.run_test()` pilot API.
+
+For manual TUI testing with seeded data:
+
+```sh
+python tests/seed.py tmp/test.db
+todo --tui --db tmp/test.db
+```
