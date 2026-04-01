@@ -25,6 +25,7 @@ from sticky_notes.repository import (
     assign_task_to_group,
     batch_child_ids_by_group,
     batch_dependency_ids,
+    batch_group_ids_by_task,
     batch_task_ids_by_group,
     delete_task_groups_by_group,
     get_board,
@@ -54,6 +55,7 @@ from sticky_notes.repository import (
     list_child_groups,
     list_columns,
     list_groups,
+    list_groups_by_board,
     list_projects,
     list_task_history,
     list_task_ids_by_group,
@@ -1012,3 +1014,52 @@ class TestBatchGroupQueries:
 
     def test_batch_child_ids_by_group_empty(self, conn: sqlite3.Connection) -> None:
         assert batch_child_ids_by_group(conn, ()) == {}
+
+    # -- batch_group_ids_by_task --
+
+    def test_batch_group_ids_by_task(self, conn: sqlite3.Connection) -> None:
+        board, col, proj = self._setup(conn)
+        grp = insert_group(conn, NewGroup(project_id=proj.id, title="g"))
+        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", column_id=col.id))
+        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", column_id=col.id))
+        t3 = insert_task(conn, NewTask(board_id=board.id, title="ungrouped", column_id=col.id))
+        assign_task_to_group(conn, t1.id, grp.id)
+        assign_task_to_group(conn, t2.id, grp.id)
+        result = batch_group_ids_by_task(conn, (t1.id, t2.id, t3.id))
+        assert result[t1.id] == grp.id
+        assert result[t2.id] == grp.id
+        assert t3.id not in result
+
+    def test_batch_group_ids_by_task_empty(self, conn: sqlite3.Connection) -> None:
+        assert batch_group_ids_by_task(conn, ()) == {}
+
+    # -- list_groups_by_board --
+
+    def test_list_groups_by_board(self, conn: sqlite3.Connection) -> None:
+        board, _, proj = self._setup(conn)
+        g1 = insert_group(conn, NewGroup(project_id=proj.id, title="g1", position=1))
+        g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2", position=0))
+        result = list_groups_by_board(conn, board.id)
+        assert len(result) == 2
+        assert result[0].id == g2.id  # position 0 first
+        assert result[1].id == g1.id
+
+    def test_list_groups_by_board_excludes_archived(self, conn: sqlite3.Connection) -> None:
+        board, _, proj = self._setup(conn)
+        insert_group(conn, NewGroup(project_id=proj.id, title="g1"))
+        g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2"))
+        update_group(conn, g2.id, {"archived": True})
+        assert len(list_groups_by_board(conn, board.id)) == 1
+        assert len(list_groups_by_board(conn, board.id, include_archived=True)) == 2
+
+    def test_list_groups_by_board_multi_project(self, conn: sqlite3.Connection) -> None:
+        board, _, proj1 = self._setup(conn)
+        proj2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
+        insert_group(conn, NewGroup(project_id=proj1.id, title="g1"))
+        insert_group(conn, NewGroup(project_id=proj2.id, title="g2"))
+        result = list_groups_by_board(conn, board.id)
+        assert len(result) == 2
+
+    def test_list_groups_by_board_empty(self, conn: sqlite3.Connection) -> None:
+        board, _, _ = self._setup(conn)
+        assert list_groups_by_board(conn, board.id) == ()

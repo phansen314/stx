@@ -647,6 +647,22 @@ def list_tasks_by_ids(
     return repo.list_tasks_by_ids(conn, task_ids)
 
 
+def batch_group_ids_by_task(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> dict[int, int]:
+    return repo.batch_group_ids_by_task(conn, task_ids)
+
+
+def list_groups_for_board(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    return repo.list_groups_by_board(conn, board_id, include_archived=include_archived)
+
+
 def list_ungrouped_task_ids(
     conn: sqlite3.Connection,
     project_id: int,

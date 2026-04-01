@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from helpers import insert_board, insert_column, insert_task
-from sticky_notes.connection import get_connection, init_db, transaction
+from sticky_notes.connection import SCHEMA_VERSION, get_connection, init_db, transaction
 
 
 class TestGetConnection:
@@ -44,6 +44,15 @@ class TestInitDb:
 
     def test_idempotent(self, conn: sqlite3.Connection) -> None:
         init_db(conn)  # second call should not raise
+
+    def test_fresh_db_sets_user_version(self, conn: sqlite3.Connection) -> None:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == SCHEMA_VERSION
+
+    def test_idempotent_preserves_user_version(self, conn: sqlite3.Connection) -> None:
+        init_db(conn)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == SCHEMA_VERSION
 
 
 class TestTransaction:
@@ -186,6 +195,65 @@ class TestForeignKeyEnforcement:
                     "VALUES (?, 't', 999)",
                     (board_id,),
                 )
+
+
+class TestMigrations:
+    def test_migration_001_upgrades_old_task_history(self, tmp_path: Path) -> None:
+        """Simulate a v0 database with old CHECK constraint, verify migration fixes it."""
+        db_path = tmp_path / "old.db"
+        conn = get_connection(db_path)
+        # Bootstrap full schema first so FK references exist
+        init_db(conn)
+        # Create a task so we have a valid task_id for history rows
+        conn.execute("INSERT INTO boards (id, name) VALUES (1, 'b')")
+        conn.execute("INSERT INTO columns (id, board_id, name) VALUES (1, 1, 'c')")
+        conn.execute("INSERT INTO tasks (id, board_id, title, column_id) VALUES (1, 1, 't', 1)")
+        # Replace task_history with old-style CHECK (without group_id)
+        conn.execute("DROP TABLE task_history")
+        conn.execute(
+            "CREATE TABLE task_history ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  task_id INTEGER NOT NULL REFERENCES tasks(id),"
+            "  field TEXT NOT NULL CHECK (field IN ("
+            "    'title', 'description', 'column_id', 'project_id',"
+            "    'priority', 'due_date', 'position', 'archived',"
+            "    'start_date', 'finish_date'"
+            "  )),"
+            "  old_value TEXT,"
+            "  new_value TEXT NOT NULL,"
+            "  source TEXT NOT NULL,"
+            "  changed_at INTEGER NOT NULL DEFAULT (unixepoch())"
+            ")"
+        )
+        conn.execute(
+            "INSERT INTO task_history (task_id, field, new_value, source) "
+            "VALUES (1, 'title', 'old', 'test')"
+        )
+        # Reset user_version to 0 to simulate old database
+        conn.execute("PRAGMA user_version = 0")
+        conn.commit()
+
+        # Run init_db which should migrate
+        init_db(conn)
+
+        # Verify user_version is updated
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        # Verify data preserved
+        row = conn.execute("SELECT * FROM task_history WHERE task_id = 1").fetchone()
+        assert row["field"] == "title"
+        # Verify new CHECK allows group_id
+        conn.execute(
+            "INSERT INTO task_history (task_id, field, new_value, source) "
+            "VALUES (1, 'group_id', '5', 'test')"
+        )
+        conn.close()
+
+    def test_migration_skips_when_already_current(self, conn: sqlite3.Connection) -> None:
+        """Fresh DB is already at current version — migrations are no-ops."""
+        version_before = conn.execute("PRAGMA user_version").fetchone()[0]
+        init_db(conn)
+        version_after = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version_before == version_after == SCHEMA_VERSION
 
 
 class TestTaskHistoryFieldConstraint:

@@ -700,6 +700,40 @@ def batch_child_ids_by_group(
     return {gid: tuple(mapping.get(gid, ())) for gid in group_ids}
 
 
+def batch_group_ids_by_task(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> dict[int, int]:
+    """Return {task_id: group_id} for tasks that have a group assignment."""
+    if not task_ids:
+        return {}
+    placeholders = ",".join("?" * len(task_ids))
+    rows = conn.execute(
+        f"SELECT task_id, group_id FROM task_groups "
+        f"WHERE task_id IN ({placeholders})",
+        task_ids,
+    ).fetchall()
+    return {r["task_id"]: r["group_id"] for r in rows}
+
+
+def list_groups_by_board(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    """Return all groups for projects on a board, ordered by position."""
+    archive_clause = "" if include_archived else " AND g.archived = 0"
+    rows = conn.execute(
+        "SELECT g.* FROM groups g "
+        "JOIN projects p ON g.project_id = p.id "
+        f"WHERE p.board_id = ?{archive_clause} "
+        "ORDER BY g.position, g.id",
+        (board_id,),
+    ).fetchall()
+    return tuple(row_to_group(r) for r in rows)
+
+
 def list_ungrouped_task_ids(
     conn: sqlite3.Connection,
     project_id: int,
