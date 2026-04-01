@@ -6,7 +6,7 @@ import datetime
 import sqlite3
 
 from . import service
-from .formatting import format_task_num
+from .formatting import format_group_num, format_task_num
 
 
 def export_markdown(conn: sqlite3.Connection) -> str:
@@ -63,6 +63,49 @@ def export_markdown(conn: sqlite3.Connection) -> str:
                 desc = p.description or ""
                 count = proj_task_count.get(p.id, 0)
                 lines.append(f"| {p.name} | {desc} | {count} |")
+            lines.append("")
+
+        # -- Groups per project --
+        has_groups = False
+        for p in projects:
+            group_refs = service.list_groups(conn, p.id)
+            if not group_refs:
+                continue
+            if not has_groups:
+                lines.append("### Groups")
+                lines.append("")
+                has_groups = True
+            lines.append(f"#### {p.name}")
+            lines.append("")
+
+            # Pre-fetch all tasks from refs (task_ids already on GroupRef)
+            group_by_id = {g.id: g for g in group_refs}
+            children_map: dict[int | None, list] = {}
+            for g in group_refs:
+                children_map.setdefault(g.parent_id, []).append(g)
+            all_task_ids = tuple(
+                tid for g in group_refs for tid in g.task_ids
+            )
+            all_tasks = service.list_tasks_by_ids(conn, all_task_ids)
+            task_by_id = {t.id: t for t in all_tasks}
+
+            def _render_group(gid: int, indent: int) -> None:
+                g = group_by_id[gid]
+                prefix = "  " * indent + "- "
+                lines.append(f"{prefix}**{g.title}** ({format_group_num(g.id)})")
+                for tid in g.task_ids:
+                    t = task_by_id.get(tid)
+                    if t:
+                        lines.append(f"  {'  ' * indent}- {format_task_num(t.id)}: {t.title}")
+                for child in children_map.get(gid, []):
+                    _render_group(child.id, indent + 1)
+
+            for g in children_map.get(None, []):
+                _render_group(g.id, 0)
+
+            ungrouped = service.list_ungrouped_task_ids(conn, p.id)
+            if ungrouped:
+                lines.append(f"  *({len(ungrouped)} ungrouped tasks)*")
             lines.append("")
 
         # -- Tasks grouped by column --

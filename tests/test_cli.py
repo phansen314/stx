@@ -662,6 +662,157 @@ class TestMvBoard:
         assert "FAIL" in out
 
 
+class TestGroupCLI:
+    """Fixture `cli` provides a helper that always passes --db to a temp DB.
+    Each test creates its own board/project/column setup."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("board", "create", "dev")
+        cli("col", "add", "todo")
+        cli("project", "create", "sprint1")
+
+    def test_create_group(self):
+        out, _ = self.cli("group", "create", "Frontend", "--project", "sprint1")
+        assert "created group 'Frontend'" in out
+        assert "group-0001" in out
+
+    def test_create_with_parent(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
+        assert "created group 'Components'" in out
+
+    def test_create_requires_project(self):
+        _, err = self.cli("group", "create", "Orphan", expect_exit=1)
+        assert "--project is required" in err
+
+    def test_list_groups(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Backend", "--project", "sprint1")
+        out, _ = self.cli("group", "ls", "--project", "sprint1")
+        assert "Frontend" in out
+        assert "Backend" in out
+
+    def test_list_groups_empty(self):
+        out, _ = self.cli("group", "ls", "--project", "sprint1")
+        assert "no groups" in out
+
+    def test_list_groups_tree(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "ls", "--project", "sprint1", "--tree")
+        assert "Frontend" in out
+        assert "Components" in out
+        assert "task-0001" in out
+
+    def test_show_group(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
+        assert "Group: Frontend" in out
+        assert "group-0001" in out
+        assert "sprint1" in out
+        assert "task-0001" in out
+
+    def test_show_group_not_found(self):
+        _, err = self.cli("group", "show", "nope", "--project", "sprint1", expect_exit=1)
+        assert "not found" in err
+
+    def test_rename_group(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "rename", "Frontend", "UI", "--project", "sprint1")
+        assert "renamed" in out
+        assert "'UI'" in out
+
+    def test_archive_group(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "archive", "Frontend", "--project", "sprint1")
+        assert "archived group 'Frontend'" in out
+
+    def test_archive_orphans_tasks(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        self.cli("group", "archive", "Frontend", "--project", "sprint1")
+        # Task should still exist but not in any group
+        out, _ = self.cli("show", "task-0001")
+        assert "Group:" not in out
+
+    def test_mv_reparent(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Backend", "--project", "sprint1")
+        out, _ = self.cli("group", "mv", "Backend", "--parent", "Frontend", "--project", "sprint1")
+        assert "moved" in out
+        assert "'Frontend'" in out
+
+    def test_mv_promote_to_top(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Child", "--project", "sprint1", "--parent", "Frontend")
+        out, _ = self.cli("group", "mv", "Child", "--parent", "none", "--project", "sprint1")
+        assert "promoted" in out
+
+    def test_assign_task(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        out, _ = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        assert "assigned task-0001 to group 'Frontend'" in out
+
+    def test_assign_auto_sets_project(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "No project task")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("show", "task-0001")
+        assert "sprint1" in out
+
+    def test_assign_cross_project_raises(self):
+        self.cli("project", "create", "sprint2")
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Task", "--project", "sprint2")
+        _, err = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=1)
+        assert "project" in err
+
+    def test_unassign_task(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "unassign", "task-0001")
+        assert "unassigned" in out
+
+    def test_show_displays_group(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Fix bug", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("show", "task-0001")
+        assert "Group:" in out
+        assert "Frontend" in out
+
+    def test_ls_group_filter(self):
+        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("add", "Grouped", "--project", "sprint1")
+        self.cli("add", "Ungrouped", "--project", "sprint1")
+        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("ls", "--group", "Frontend")
+        assert "Grouped" in out
+        assert "Ungrouped" not in out
+
+    def test_ambiguous_group_requires_project(self):
+        self.cli("project", "create", "sprint2")
+        self.cli("group", "create", "Shared", "--project", "sprint1")
+        self.cli("group", "create", "Shared", "--project", "sprint2")
+        _, err = self.cli("group", "show", "Shared", expect_exit=1)
+        assert "ambiguous" in err
+
+    def test_cycle_detection(self):
+        self.cli("group", "create", "A", "--project", "sprint1")
+        self.cli("group", "create", "B", "--project", "sprint1", "--parent", "A")
+        _, err = self.cli("group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=1)
+        assert "cycle" in err
+
+
 class TestHelp:
     def test_no_args_shows_help(self, capsys):
         try:

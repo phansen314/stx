@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS task_history (
     field TEXT NOT NULL CHECK (field IN (
         'title', 'description', 'column_id', 'project_id',
         'priority', 'due_date', 'position', 'archived',
-        'start_date', 'finish_date'
+        'start_date', 'finish_date', 'group_id'
     )),
     old_value TEXT,
     new_value TEXT NOT NULL,
@@ -72,6 +72,27 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id);
 CREATE INDEX IF NOT EXISTS idx_task_history_task_id ON task_history(task_id);
 
+CREATE TABLE IF NOT EXISTS groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    parent_id  INTEGER REFERENCES groups(id),
+    title      TEXT NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0,
+    archived   INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    UNIQUE (project_id, title)
+);
+
+CREATE TABLE IF NOT EXISTS task_groups (
+    task_id  INTEGER PRIMARY KEY REFERENCES tasks(id),
+    group_id INTEGER NOT NULL REFERENCES groups(id)
+);
+
 -- Composite position indexes for ORDER BY position queries within a board
 CREATE INDEX IF NOT EXISTS idx_columns_board_position ON columns(board_id, position);
 CREATE INDEX IF NOT EXISTS idx_tasks_board_position ON tasks(board_id, position);
+
+-- Group FK indexes
+CREATE INDEX IF NOT EXISTS idx_groups_project_id ON groups(project_id);
+CREATE INDEX IF NOT EXISTS idx_groups_parent_id ON groups(parent_id);
+CREATE INDEX IF NOT EXISTS idx_task_groups_group_id ON task_groups(group_id);

@@ -67,6 +67,31 @@ def insert_task_dependency(
     )
 
 
+def insert_group(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str = "group1",
+    parent_id: int | None = None,
+    position: int = 0,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO groups (project_id, title, parent_id, position) VALUES (?, ?, ?, ?)",
+        (project_id, title, parent_id, position),
+    )
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+def insert_task_group(
+    conn: sqlite3.Connection,
+    task_id: int,
+    group_id: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO task_groups (task_id, group_id) VALUES (?, ?)",
+        (task_id, group_id),
+    )
+
+
 def insert_task_history(
     conn: sqlite3.Connection,
     task_id: int,

@@ -24,6 +24,7 @@ class TaskField(StrEnum):
     ARCHIVED = "archived"
     START_DATE = "start_date"
     FINISH_DATE = "finish_date"
+    GROUP_ID = "group_id"
 
 
 # ---- Pre-insert types (no id, no created_at) ----
@@ -60,6 +61,14 @@ class NewTask:
     position: int = 0
     start_date: int | None = None
     finish_date: int | None = None
+
+
+@dataclass(frozen=True)
+class NewGroup:
+    project_id: int
+    title: str
+    parent_id: int | None = None
+    position: int = 0
 
 
 @dataclass(frozen=True)
@@ -117,6 +126,17 @@ class Task:
     created_at: int
     start_date: int | None
     finish_date: int | None
+
+
+@dataclass(frozen=True)
+class Group:
+    id: int
+    project_id: int
+    title: str
+    parent_id: int | None
+    position: int
+    archived: bool
+    created_at: int
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,8 @@ from typing import Any
 from . import repository as repo
 from .connection import transaction
 from .mappers import (
+    group_ref_to_detail,
+    group_to_ref,
     project_ref_to_detail,
     project_to_ref,
     task_ref_to_detail,
@@ -14,8 +16,10 @@ from .mappers import (
 from .models import (
     Board,
     Column,
+    Group,
     NewBoard,
     NewColumn,
+    NewGroup,
     NewProject,
     NewTask,
     NewTaskHistory,
@@ -26,6 +30,8 @@ from .models import (
     TaskHistory,
 )
 from .service_models import (
+    GroupDetail,
+    GroupRef,
     ProjectDetail,
     ProjectRef,
     TaskDetail,
@@ -429,3 +435,236 @@ def list_task_history(
     task_id: int,
 ) -> tuple[TaskHistory, ...]:
     return repo.list_task_history(conn, task_id)
+
+
+# ---- Group ----
+
+
+def _would_create_cycle(
+    conn: sqlite3.Connection,
+    group_id: int,
+    new_parent_id: int,
+) -> bool:
+    subtree_ids = repo.get_subtree_group_ids(conn, group_id)
+    return new_parent_id in subtree_ids
+
+
+def create_group(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str,
+    parent_id: int | None = None,
+    position: int = 0,
+) -> Group:
+    with transaction(conn):
+        if parent_id is not None:
+            parent = repo.get_group(conn, parent_id)
+            if parent is None:
+                raise LookupError(f"parent group {parent_id} not found")
+            if parent.project_id != project_id:
+                raise ValueError(
+                    f"parent group belongs to project {parent.project_id}, "
+                    f"not {project_id}"
+                )
+        return repo.insert_group(
+            conn,
+            NewGroup(
+                project_id=project_id,
+                title=title,
+                parent_id=parent_id,
+                position=position,
+            ),
+        )
+
+
+def get_group(conn: sqlite3.Connection, group_id: int) -> Group:
+    group = repo.get_group(conn, group_id)
+    if group is None:
+        raise LookupError(f"group {group_id} not found")
+    return group
+
+
+def get_group_by_title(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str,
+) -> Group:
+    group = repo.get_group_by_title(conn, project_id, title)
+    if group is None:
+        raise LookupError(f"group {title!r} not found")
+    return group
+
+
+def get_group_ref(conn: sqlite3.Connection, group_id: int) -> GroupRef:
+    group = get_group(conn, group_id)
+    task_ids = repo.list_task_ids_by_group(conn, group_id)
+    children = repo.list_child_groups(conn, group_id)
+    child_ids = tuple(c.id for c in children)
+    return group_to_ref(group, task_ids, child_ids)
+
+
+def get_group_detail(conn: sqlite3.Connection, group_id: int) -> GroupDetail:
+    ref = get_group_ref(conn, group_id)
+    tasks = repo.list_tasks_by_ids(conn, ref.task_ids)
+    children = repo.list_child_groups(conn, group_id)
+    parent = repo.get_group(conn, ref.parent_id) if ref.parent_id is not None else None
+    return group_ref_to_detail(ref, tasks, children, parent)
+
+
+def list_groups(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[GroupRef, ...]:
+    groups = repo.list_groups(conn, project_id, include_archived=include_archived)
+    if not groups:
+        return ()
+    group_ids = tuple(g.id for g in groups)
+    task_ids_map = repo.batch_task_ids_by_group(conn, group_ids)
+    child_ids_map = repo.batch_child_ids_by_group(
+        conn, group_ids, include_archived=include_archived,
+    )
+    return tuple(
+        group_to_ref(g, task_ids_map.get(g.id, ()), child_ids_map.get(g.id, ()))
+        for g in groups
+    )
+
+
+def update_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+    changes: dict[str, Any],
+) -> Group:
+    with transaction(conn):
+        if "parent_id" in changes:
+            new_parent = changes["parent_id"]
+            if new_parent is not None and _would_create_cycle(conn, group_id, new_parent):
+                raise ValueError("reparenting would create a cycle")
+        return repo.update_group(conn, group_id, changes)
+
+
+def archive_group(conn: sqlite3.Connection, group_id: int) -> None:
+    with transaction(conn):
+        group = get_group(conn, group_id)
+        task_ids = repo.list_task_ids_by_group(conn, group_id)
+        for tid in task_ids:
+            repo.insert_task_history(
+                conn,
+                NewTaskHistory(
+                    task_id=tid,
+                    field=TaskField.GROUP_ID,
+                    old_value=str(group_id),
+                    new_value="None",
+                    source="archive_group",
+                ),
+            )
+        repo.delete_task_groups_by_group(conn, group_id)
+        repo.reparent_children(conn, group_id, group.parent_id)
+        repo.update_group(conn, group_id, {"archived": True})
+
+
+# ---- Task-group assignment ----
+
+
+def assign_task_to_group(
+    conn: sqlite3.Connection,
+    task_id: int,
+    group_id: int,
+) -> None:
+    with transaction(conn):
+        task = get_task(conn, task_id)
+        group = get_group(conn, group_id)
+        if task.project_id is None:
+            repo.update_task(conn, task_id, {"project_id": group.project_id})
+        elif task.project_id != group.project_id:
+            raise ValueError(
+                f"task belongs to project {task.project_id}, "
+                f"group belongs to project {group.project_id}"
+            )
+        old_group_id = repo.get_task_group_id(conn, task_id)
+        repo.assign_task_to_group(conn, task_id, group_id)
+        repo.insert_task_history(
+            conn,
+            NewTaskHistory(
+                task_id=task_id,
+                field=TaskField.GROUP_ID,
+                old_value=str(old_group_id) if old_group_id is not None else None,
+                new_value=str(group_id),
+                source="assign_task_to_group",
+            ),
+        )
+
+
+def unassign_task_from_group(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> None:
+    with transaction(conn):
+        old_group_id = repo.get_task_group_id(conn, task_id)
+        repo.unassign_task_from_group(conn, task_id)
+        if old_group_id is not None:
+            repo.insert_task_history(
+                conn,
+                NewTaskHistory(
+                    task_id=task_id,
+                    field=TaskField.GROUP_ID,
+                    old_value=str(old_group_id),
+                    new_value="None",
+                    source="unassign_task_from_group",
+                ),
+            )
+
+
+# ---- Task-group queries ----
+
+
+def get_task_group_id(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> int | None:
+    return repo.get_task_group_id(conn, task_id)
+
+
+def list_task_ids_by_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> tuple[int, ...]:
+    return repo.list_task_ids_by_group(conn, group_id)
+
+
+def batch_task_ids_by_group(
+    conn: sqlite3.Connection,
+    group_ids: tuple[int, ...],
+) -> dict[int, tuple[int, ...]]:
+    return repo.batch_task_ids_by_group(conn, group_ids)
+
+
+def list_tasks_by_ids(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> tuple[Task, ...]:
+    return repo.list_tasks_by_ids(conn, task_ids)
+
+
+def batch_group_ids_by_task(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> dict[int, int]:
+    return repo.batch_group_ids_by_task(conn, task_ids)
+
+
+def list_groups_for_board(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    return repo.list_groups_by_board(conn, board_id, include_archived=include_archived)
+
+
+def list_ungrouped_task_ids(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> tuple[int, ...]:
+    return repo.list_ungrouped_task_ids(conn, project_id)

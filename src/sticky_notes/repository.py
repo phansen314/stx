@@ -8,6 +8,7 @@ from typing import Any
 from .mappers import (
     row_to_board,
     row_to_column,
+    row_to_group,
     row_to_project,
     row_to_task,
     row_to_task_history,
@@ -15,8 +16,10 @@ from .mappers import (
 from .models import (
     Board,
     Column,
+    Group,
     NewBoard,
     NewColumn,
+    NewGroup,
     NewProject,
     NewTask,
     NewTaskHistory,
@@ -42,6 +45,9 @@ _TASK_UPDATABLE: frozenset[str] = frozenset({
     "archived",
     "start_date",
     "finish_date",
+})
+_GROUP_UPDATABLE: frozenset[str] = frozenset({
+    "title", "parent_id", "position", "archived",
 })
 
 
@@ -379,6 +385,21 @@ def update_task(
     return row_to_task(row)
 
 
+def list_tasks_by_ids(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> tuple[Task, ...]:
+    """Return tasks for the given IDs in a single query."""
+    if not task_ids:
+        return ()
+    placeholders = ",".join("?" * len(task_ids))
+    rows = conn.execute(
+        f"SELECT * FROM tasks WHERE id IN ({placeholders})",
+        task_ids,
+    ).fetchall()
+    return tuple(row_to_task(r) for r in rows)
+
+
 # ---- Task dependency functions ----
 
 
@@ -531,3 +552,254 @@ def list_task_ids_by_project(
         (project_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
+
+
+# ---- Group functions ----
+
+
+def insert_group(conn: sqlite3.Connection, new: NewGroup) -> Group:
+    d = _asdict_for_insert(new)
+    cur = conn.execute(
+        "INSERT INTO groups (project_id, title, parent_id, position) "
+        "VALUES (:project_id, :title, :parent_id, :position)",
+        d,
+    )
+    row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return row_to_group(row)
+
+
+def get_group(conn: sqlite3.Connection, group_id: int) -> Group | None:
+    row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+    return row_to_group(row) if row else None
+
+
+def get_group_by_title(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str,
+) -> Group | None:
+    row = conn.execute(
+        "SELECT * FROM groups WHERE project_id = ? AND title = ?",
+        (project_id, title),
+    ).fetchone()
+    return row_to_group(row) if row else None
+
+
+def list_groups(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    if include_archived:
+        rows = conn.execute(
+            "SELECT * FROM groups WHERE project_id = ? ORDER BY position",
+            (project_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM groups WHERE project_id = ? AND archived = 0 ORDER BY position",
+            (project_id,),
+        ).fetchall()
+    return tuple(row_to_group(r) for r in rows)
+
+
+def update_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+    changes: dict[str, Any],
+) -> Group:
+    sql, params = _build_update("groups", group_id, changes, _GROUP_UPDATABLE)
+    cur = conn.execute(sql, params)
+    if cur.rowcount == 0:
+        raise LookupError(f"group {group_id} not found")
+    row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+    return row_to_group(row)
+
+
+# ---- Task-group membership functions ----
+
+
+def assign_task_to_group(
+    conn: sqlite3.Connection,
+    task_id: int,
+    group_id: int,
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO task_groups (task_id, group_id) VALUES (?, ?)",
+        (task_id, group_id),
+    )
+
+
+def unassign_task_from_group(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> None:
+    conn.execute("DELETE FROM task_groups WHERE task_id = ?", (task_id,))
+
+
+def get_task_group_id(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> int | None:
+    row = conn.execute(
+        "SELECT group_id FROM task_groups WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    return row["group_id"] if row else None
+
+
+def list_task_ids_by_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT task_id FROM task_groups WHERE group_id = ?", (group_id,)
+    ).fetchall()
+    return tuple(r["task_id"] for r in rows)
+
+
+def batch_task_ids_by_group(
+    conn: sqlite3.Connection,
+    group_ids: tuple[int, ...],
+) -> dict[int, tuple[int, ...]]:
+    """Return {group_id: (task_id, ...)} for a batch of group IDs."""
+    if not group_ids:
+        return {}
+    placeholders = ",".join("?" * len(group_ids))
+    rows = conn.execute(
+        f"SELECT group_id, task_id FROM task_groups "
+        f"WHERE group_id IN ({placeholders})",
+        group_ids,
+    ).fetchall()
+    mapping: dict[int, list[int]] = {}
+    for r in rows:
+        mapping.setdefault(r["group_id"], []).append(r["task_id"])
+    return {gid: tuple(mapping.get(gid, ())) for gid in group_ids}
+
+
+def batch_child_ids_by_group(
+    conn: sqlite3.Connection,
+    group_ids: tuple[int, ...],
+    *,
+    include_archived: bool = False,
+) -> dict[int, tuple[int, ...]]:
+    """Return {parent_group_id: (child_group_id, ...)} for a batch of group IDs."""
+    if not group_ids:
+        return {}
+    placeholders = ",".join("?" * len(group_ids))
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT id, parent_id FROM groups "
+        f"WHERE parent_id IN ({placeholders}){archive_clause} "
+        f"ORDER BY position",
+        group_ids,
+    ).fetchall()
+    mapping: dict[int, list[int]] = {}
+    for r in rows:
+        mapping.setdefault(r["parent_id"], []).append(r["id"])
+    return {gid: tuple(mapping.get(gid, ())) for gid in group_ids}
+
+
+def batch_group_ids_by_task(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+) -> dict[int, int]:
+    """Return {task_id: group_id} for tasks that have a group assignment."""
+    if not task_ids:
+        return {}
+    placeholders = ",".join("?" * len(task_ids))
+    rows = conn.execute(
+        f"SELECT task_id, group_id FROM task_groups "
+        f"WHERE task_id IN ({placeholders})",
+        task_ids,
+    ).fetchall()
+    return {r["task_id"]: r["group_id"] for r in rows}
+
+
+def list_groups_by_board(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    """Return all groups for projects on a board, ordered by position."""
+    archive_clause = "" if include_archived else " AND g.archived = 0"
+    rows = conn.execute(
+        "SELECT g.* FROM groups g "
+        "JOIN projects p ON g.project_id = p.id "
+        f"WHERE p.board_id = ?{archive_clause} "
+        "ORDER BY g.position, g.id",
+        (board_id,),
+    ).fetchall()
+    return tuple(row_to_group(r) for r in rows)
+
+
+def list_ungrouped_task_ids(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT t.id FROM tasks t "
+        "LEFT JOIN task_groups tg ON t.id = tg.task_id "
+        "WHERE t.project_id = ? AND t.archived = 0 "
+        "AND tg.task_id IS NULL",
+        (project_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
+# ---- Group tree operations ----
+
+
+def list_child_groups(
+    conn: sqlite3.Connection,
+    group_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    if include_archived:
+        rows = conn.execute(
+            "SELECT * FROM groups WHERE parent_id = ? ORDER BY position",
+            (group_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM groups WHERE parent_id = ? AND archived = 0 ORDER BY position",
+            (group_id,),
+        ).fetchall()
+    return tuple(row_to_group(r) for r in rows)
+
+
+def get_subtree_group_ids(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "WITH RECURSIVE subtree AS ("
+        "  SELECT id FROM groups WHERE id = ? "
+        "  UNION ALL "
+        "  SELECT g.id FROM groups g "
+        "  JOIN subtree s ON g.parent_id = s.id "
+        "  WHERE g.archived = 0"
+        ") SELECT id FROM subtree",
+        (group_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
+def reparent_children(
+    conn: sqlite3.Connection,
+    group_id: int,
+    new_parent_id: int | None,
+) -> None:
+    conn.execute(
+        "UPDATE groups SET parent_id = ? WHERE parent_id = ?",
+        (new_parent_id, group_id),
+    )
+
+
+def delete_task_groups_by_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> None:
+    conn.execute("DELETE FROM task_groups WHERE group_id = ?", (group_id,))

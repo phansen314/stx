@@ -8,6 +8,10 @@ def format_task_num(task_id: int) -> str:
     return f"task-{task_id:04d}"
 
 
+def format_group_num(group_id: int) -> str:
+    return f"group-{group_id:04d}"
+
+
 def format_priority(priority: int) -> str:
     return f"[P{priority}]"
 

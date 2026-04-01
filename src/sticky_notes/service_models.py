@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import Column, Project, Task, TaskHistory
+from .models import Column, Group, Project, Task, TaskHistory
 
 
 # ---- Ref types (relationships as IDs) ----
@@ -17,6 +17,12 @@ class TaskRef(Task):
 @dataclass(frozen=True)
 class ProjectRef(Project):
     task_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class GroupRef(Group):
+    task_ids: tuple[int, ...] = ()
+    child_ids: tuple[int, ...] = ()
 
 
 # ---- Hydrated types (relationships as full objects) ----
@@ -41,3 +47,10 @@ class TaskDetail(TaskRef):
 @dataclass(frozen=True)
 class ProjectDetail(ProjectRef):
     tasks: tuple[Task, ...] = ()
+
+
+@dataclass(frozen=True)
+class GroupDetail(GroupRef):
+    tasks: tuple[Task, ...] = ()
+    children: tuple[Group, ...] = ()
+    parent: Group | None = None

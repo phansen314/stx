@@ -8,9 +8,11 @@ import pytest
 from helpers import (
     insert_board,
     insert_column,
+    insert_group,
     insert_project,
     insert_task,
     insert_task_dependency,
+    insert_task_group,
 )
 from sticky_notes.connection import transaction
 from sticky_notes.export import export_markdown
@@ -159,3 +161,47 @@ class TestExportEdgeCases:
         md = export_markdown(conn)
         # Neither board section should show a dependencies block
         assert "### Dependencies" not in md
+
+
+class TestExportGroups:
+    def test_groups_section_with_tasks(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Col", position=0)
+            pid = insert_project(conn, bid, "P")
+            gid = insert_group(conn, pid, "Frontend")
+            tid = insert_task(conn, bid, "Fix UI", col, project_id=pid)
+            insert_task_group(conn, tid, gid)
+        md = export_markdown(conn)
+        assert "### Groups" in md
+        assert "**Frontend**" in md
+        assert "task-0001: Fix UI" in md
+
+    def test_nested_groups(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Col", position=0)
+            pid = insert_project(conn, bid, "P")
+            parent = insert_group(conn, pid, "Frontend")
+            insert_group(conn, pid, "Components", parent_id=parent)
+        md = export_markdown(conn)
+        assert "**Frontend**" in md
+        assert "**Components**" in md
+
+    def test_no_groups_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            insert_column(conn, bid, "Col", position=0)
+            insert_project(conn, bid, "P")
+        md = export_markdown(conn)
+        assert "### Groups" not in md
+
+    def test_ungrouped_tasks_count(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Col", position=0)
+            pid = insert_project(conn, bid, "P")
+            insert_group(conn, pid, "G")
+            insert_task(conn, bid, "Ungrouped", col, project_id=pid)
+        md = export_markdown(conn)
+        assert "1 ungrouped task" in md

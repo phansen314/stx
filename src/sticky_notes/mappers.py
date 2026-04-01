@@ -7,12 +7,15 @@ from typing import Any
 from .models import (
     Board,
     Column,
+    Group,
     Project,
     Task,
     TaskField,
     TaskHistory,
 )
 from .service_models import (
+    GroupDetail,
+    GroupRef,
     ProjectDetail,
     ProjectRef,
     TaskDetail,
@@ -74,6 +77,18 @@ def row_to_task(row: Row) -> Task:
     )
 
 
+def row_to_group(row: Row) -> Group:
+    return Group(
+        id=row["id"],
+        project_id=row["project_id"],
+        title=row["title"],
+        parent_id=row["parent_id"],
+        position=row["position"],
+        archived=bool(row["archived"]),
+        created_at=row["created_at"],
+    )
+
+
 def row_to_task_history(row: Row) -> TaskHistory:
     return TaskHistory(
         id=row["id"],
@@ -119,6 +134,18 @@ def project_to_ref(
     )
 
 
+def group_to_ref(
+    group: Group,
+    task_ids: tuple[int, ...],
+    child_ids: tuple[int, ...],
+) -> GroupRef:
+    return GroupRef(
+        **shallow_fields(group, Group),
+        task_ids=task_ids,
+        child_ids=child_ids,
+    )
+
+
 # ---- Ref -> hydrated ----
 
 
@@ -147,4 +174,18 @@ def project_ref_to_detail(
     return ProjectDetail(
         **shallow_fields(ref, ProjectRef),
         tasks=tasks,
+    )
+
+
+def group_ref_to_detail(
+    ref: GroupRef,
+    tasks: tuple[Task, ...],
+    children: tuple[Group, ...],
+    parent: Group | None,
+) -> GroupDetail:
+    return GroupDetail(
+        **shallow_fields(ref, GroupRef),
+        tasks=tasks,
+        children=children,
+        parent=parent,
     )

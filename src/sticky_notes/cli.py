@@ -10,8 +10,8 @@ from .active_board import get_active_board_id, set_active_board_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import service
 from .export import export_markdown
-from .formatting import format_priority, format_task_num, format_timestamp, parse_date
-from .models import Board, Column, Project, TaskFilter
+from .formatting import format_group_num, format_priority, format_task_num, format_timestamp, parse_date
+from .models import Board, Column, Group, Project, TaskFilter
 
 type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], None]
 
@@ -99,6 +99,40 @@ def _resolve_task(conn: sqlite3.Connection, raw: str, args: argparse.Namespace, 
     return service.get_task_by_title(conn, board.id, raw).id
 
 
+def _resolve_group(
+    conn: sqlite3.Connection,
+    board_id: int,
+    title: str,
+    project_name: str | None = None,
+) -> Group:
+    """Resolve a group by title. If project_name given, search only that project.
+    Otherwise search all projects on the board; error if ambiguous."""
+    if project_name is not None:
+        proj = _resolve_project(conn, board_id, project_name)
+        return service.get_group_by_title(conn, proj.id, title)
+    projects = service.list_projects(conn, board_id)
+    matches: list[Group] = []
+    for proj in projects:
+        try:
+            grp = service.get_group_by_title(conn, proj.id, title)
+            matches.append(grp)
+        except LookupError:
+            continue
+    if not matches:
+        raise LookupError(f"group {title!r} not found")
+    if len(matches) > 1:
+        proj_names = []
+        for m in matches:
+            p = service.get_project(conn, m.project_id)
+            proj_names.append(p.name)
+        raise LookupError(
+            f"group {title!r} is ambiguous — exists in projects: "
+            + ", ".join(repr(n) for n in proj_names)
+            + ". Use --project to disambiguate"
+        )
+    return matches[0]
+
+
 # ---- Command handlers ----
 
 
@@ -145,6 +179,12 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
         include_archived=args.all,
     )
     refs = service.list_task_refs_filtered(conn, board.id, task_filter=task_filter)
+    # Optional group filter
+    group_name = args.group
+    if group_name:
+        grp = _resolve_group(conn, board.id, group_name, project_name=args.project)
+        group_task_ids = set(service.list_task_ids_by_group(conn, grp.id))
+        refs = tuple(r for r in refs if r.id in group_task_ids)
     # Group refs by column_id
     by_col: dict[int, list] = {c.id: [] for c in cols}
     for ref in refs:
@@ -173,6 +213,10 @@ def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
     print(f"  Column:      {detail.column.name}")
     if detail.project:
         print(f"  Project:     {detail.project.name}")
+    group_id = service.get_task_group_id(conn, task_id)
+    if group_id is not None:
+        grp = service.get_group(conn, group_id)
+        print(f"  Group:       {grp.title} ({format_group_num(grp.id)})")
     print(f"  Priority:    {detail.priority}")
     if detail.due_date:
         print(f"  Due:         {format_timestamp(detail.due_date)}")
@@ -249,7 +293,7 @@ def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
         print(f"moved {format_task_num(task_id)} -> board \"{target_board.name}\" / column \"{target_col.name}\" (new {format_task_num(new.id)})")
     else:
         # Within-board move
-        project_name = getattr(args, "project", None)
+        project_name = args.project
         if args.column_name:
             board = _resolve_board(conn, args, db_path)
             col = _resolve_column(conn, board.id, args.column_name)
@@ -425,6 +469,173 @@ def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
     print(f"removed dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}")
 
 
+# ---- Group subcommands ----
+
+
+def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    if not project_name:
+        raise ValueError("--project is required for group create")
+    proj = _resolve_project(conn, board.id, project_name)
+    parent_id = None
+    if args.parent:
+        parent = _resolve_group(conn, board.id, args.parent, project_name=project_name)
+        parent_id = parent.id
+    grp = service.create_group(conn, proj.id, args.title, parent_id=parent_id)
+    print(f"created group {grp.title!r} ({format_group_num(grp.id)})")
+
+
+def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    if project_name:
+        projects = [_resolve_project(conn, board.id, project_name)]
+    else:
+        projects = list(service.list_projects(conn, board.id))
+    if not projects:
+        print("no projects")
+        return
+    tree_mode = args.tree
+    include_archived = args.all
+    for proj in projects:
+        refs = service.list_groups(conn, proj.id, include_archived=include_archived)
+        if not refs and len(projects) == 1:
+            print("no groups")
+            return
+        if not refs:
+            continue
+        if len(projects) > 1:
+            print(f"\n== {proj.name} ==")
+        if tree_mode:
+            _print_group_tree(conn, proj.id, refs, include_archived)
+        else:
+            for ref in refs:
+                archived = " (archived)" if ref.archived else ""
+                print(f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}")
+
+
+def _print_group_tree(
+    conn: sqlite3.Connection,
+    project_id: int,
+    refs: tuple,
+    include_archived: bool,
+) -> None:
+    # Pre-fetch all tasks referenced by any group
+    all_task_ids = tuple(tid for ref in refs for tid in ref.task_ids)
+    all_tasks = service.list_tasks_by_ids(conn, all_task_ids)
+    task_by_id = {t.id: t for t in all_tasks}
+
+    # Build lookup structures
+    ref_by_id = {r.id: r for r in refs}
+    children_map: dict[int | None, list] = {}
+    for ref in refs:
+        children_map.setdefault(ref.parent_id, []).append(ref)
+
+    def _print_subtree(group_id: int, prefix: str, is_last: bool) -> None:
+        ref = ref_by_id[group_id]
+        connector = "+-- " if prefix else ""
+        archived = " (archived)" if ref.archived else ""
+        print(f"{prefix}{connector}{format_group_num(ref.id)}  {ref.title}{archived}")
+        child_prefix = prefix + ("|   " if not is_last and prefix else "    ") if prefix else ""
+        children = children_map.get(group_id, [])
+        for i, tid in enumerate(ref.task_ids):
+            task = task_by_id.get(tid)
+            if task is None:
+                continue
+            is_last_item = (i == len(ref.task_ids) - 1) and not children
+            item_connector = "+-- " if child_prefix or prefix else "+-- "
+            print(f"{child_prefix}{item_connector}{format_task_num(task.id)}: {task.title}")
+        for i, child_ref in enumerate(children):
+            _print_subtree(child_ref.id, child_prefix, i == len(children) - 1)
+
+    # Print top-level groups (parent_id is None)
+    top_level = children_map.get(None, [])
+    for i, ref in enumerate(top_level):
+        _print_subtree(ref.id, "", i == len(top_level) - 1)
+
+    # Ungrouped tasks count
+    ungrouped = service.list_ungrouped_task_ids(conn, project_id)
+    if ungrouped:
+        print(f"\n({len(ungrouped)} ungrouped tasks)")
+
+
+def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
+    detail = service.get_group_detail(conn, grp.id)
+    # Build path
+    path_parts = [detail.title]
+    current = detail.parent
+    while current is not None:
+        path_parts.append(current.title)
+        p = service.get_group(conn, current.id)
+        if p.parent_id is not None:
+            current = service.get_group(conn, p.parent_id)
+        else:
+            current = None
+    path_parts.reverse()
+    proj = service.get_project(conn, detail.project_id)
+    print(f"Group: {detail.title} ({format_group_num(detail.id)})")
+    print(f"  Project: {proj.name}")
+    print(f"  Path:    {' > '.join(path_parts)}")
+    print(f"  Tasks:   {len(detail.tasks)}")
+    if detail.children:
+        child_names = ", ".join(c.title for c in detail.children)
+        print(f"  Sub-groups: {child_names}")
+    if detail.tasks:
+        print()
+        for t in detail.tasks:
+            due = f"  due: {format_timestamp(t.due_date)}" if t.due_date else ""
+            print(f"  {format_task_num(t.id)}  {format_priority(t.priority)} {t.title}{due}")
+
+
+def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
+    service.update_group(conn, grp.id, {"title": args.new_title})
+    print(f"renamed group {args.title!r} -> {args.new_title!r}")
+
+
+def cmd_group_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
+    service.archive_group(conn, grp.id)
+    print(f"archived group {grp.title!r}")
+
+
+def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    project_name = args.project
+    grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
+    parent_str = args.parent
+    if parent_str.lower() == "none":
+        service.update_group(conn, grp.id, {"parent_id": None})
+        print(f"promoted group {grp.title!r} to top-level")
+    else:
+        parent = _resolve_group(conn, board.id, parent_str, project_name=project_name)
+        service.update_group(conn, grp.id, {"parent_id": parent.id})
+        print(f"moved group {grp.title!r} under {parent.title!r}")
+
+
+def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    board = _resolve_board(conn, args, db_path)
+    task_id = _resolve_task(conn, args.task, args, db_path)
+    project_name = args.project
+    grp = _resolve_group(conn, board.id, args.group_title, project_name=project_name)
+    service.assign_task_to_group(conn, task_id, grp.id)
+    print(f"assigned {format_task_num(task_id)} to group {grp.title!r}")
+
+
+def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+    task_id = _resolve_task(conn, args.task, args, db_path)
+    service.unassign_task_from_group(conn, task_id)
+    print(f"unassigned {format_task_num(task_id)} from group")
+
+
 # ---- Export ----
 
 
@@ -464,6 +675,14 @@ HANDLERS: dict[str, CommandHandler] = {
     "project_archive": cmd_project_archive,
     "dep_add": cmd_dep_add,
     "dep_rm": cmd_dep_rm,
+    "group_create": cmd_group_create,
+    "group_ls": cmd_group_ls,
+    "group_show": cmd_group_show,
+    "group_rename": cmd_group_rename,
+    "group_archive": cmd_group_archive,
+    "group_mv": cmd_group_mv,
+    "group_assign": cmd_group_assign,
+    "group_unassign": cmd_group_unassign,
     "export": cmd_export,
 }
 
@@ -494,6 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--project", "-p", default=None, help="filter by project name")
     p_ls.add_argument("--priority", "-P", type=int, default=None, help="filter by priority (1-5)")
     p_ls.add_argument("--search", "-s", default=None, help="search title substring")
+    p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
 
     p_show = sub.add_parser("show", help="show task detail")
     p_show.set_defaults(command="show")
@@ -610,6 +830,55 @@ def build_parser() -> argparse.ArgumentParser:
     p_dr.set_defaults(command="dep_rm")
     p_dr.add_argument("task_num")
     p_dr.add_argument("depends_on_num")
+
+    # ---- Group subcommands ----
+
+    p_grp = sub.add_parser("group", help="group management")
+    grp_sub = p_grp.add_subparsers()
+
+    p_gc = grp_sub.add_parser("create", help="create a group")
+    p_gc.set_defaults(command="group_create")
+    p_gc.add_argument("title")
+    p_gc.add_argument("--parent", default=None, help="parent group title")
+    p_gc.add_argument("--project", "-p", default=None, help="project name (required)")
+
+    p_gl = grp_sub.add_parser("ls", help="list groups")
+    p_gl.set_defaults(command="group_ls")
+    p_gl.add_argument("--project", "-p", default=None, help="filter by project name")
+    p_gl.add_argument("--all", "-a", action="store_true", help="include archived")
+    p_gl.add_argument("--tree", "-t", action="store_true", help="tree view")
+
+    p_gs = grp_sub.add_parser("show", help="show group detail")
+    p_gs.set_defaults(command="group_show")
+    p_gs.add_argument("title")
+    p_gs.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_grn = grp_sub.add_parser("rename", help="rename a group")
+    p_grn.set_defaults(command="group_rename")
+    p_grn.add_argument("title")
+    p_grn.add_argument("new_title")
+    p_grn.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_ga = grp_sub.add_parser("archive", help="archive a group")
+    p_ga.set_defaults(command="group_archive")
+    p_ga.add_argument("title")
+    p_ga.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gmv = grp_sub.add_parser("mv", help="reparent a group")
+    p_gmv.set_defaults(command="group_mv")
+    p_gmv.add_argument("title")
+    p_gmv.add_argument("--parent", required=True, help="new parent title, or 'none'")
+    p_gmv.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gasn = grp_sub.add_parser("assign", help="assign task to group")
+    p_gasn.set_defaults(command="group_assign")
+    p_gasn.add_argument("task", help="task number or title")
+    p_gasn.add_argument("group_title", help="group title")
+    p_gasn.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gun = grp_sub.add_parser("unassign", help="unassign task from group")
+    p_gun.set_defaults(command="group_unassign")
+    p_gun.add_argument("task", help="task number or title")
 
     # ---- Export ----
 
