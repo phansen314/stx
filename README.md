@@ -1,10 +1,9 @@
 # sticky-notes
 
-A local todo/kanban app with three interfaces:
+A local todo/kanban app with two interfaces:
 
-- **CLI** (argparse) — task management from the terminal
+- **CLI** (argparse) — task management from the terminal, with `--json` for structured output
 - **TUI** (Textual) — interactive kanban board with keyboard navigation
-- **MCP server** (FastMCP) — Claude interaction via streamable-HTTP
 
 All interfaces share the same database and service layer, backed by **SQLite**.
 
@@ -12,9 +11,7 @@ All interfaces share the same database and service layer, backed by **SQLite**.
 
 ```
 CLI commands ────────┐
-TUI event handlers ──┤
-                     ├──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
-MCP tool functions ──┘
+TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
 ```
 
 ## Quick Start
@@ -46,6 +43,8 @@ todo --tui
 Entry point: `todo`
 
 **Active board:** The CLI tracks the active board in `~/.local/share/sticky-notes/active-board`. Override per-command with `--board`/`-b`.
+
+**JSON output:** Add `--json` before any command for structured JSON output.
 
 ### Task Commands
 
@@ -143,119 +142,33 @@ Accessible via `s` key. Stored at `~/.config/sticky-notes/tui.toml`.
 - **Task Form** — create/edit task modal with validation
 - **Move to Board** — select target board, column, and optional project
 
-## MCP Server
-
-The MCP server exposes the service layer over streamable-HTTP for use by Claude and other MCP clients.
-
-Entry point: `sticky-notes-mcp`
-
-```sh
-# Start the server (default: 127.0.0.1:8741)
-sticky-notes-mcp
-
-# Custom host/port
-sticky-notes-mcp --host 0.0.0.0 --port 9000
-```
-
-### Tools
-
-Each tool uses an `action` parameter to dispatch operations, keeping the tool list compact.
-
-| Tool | Actions | Notes |
-|------|---------|-------|
-| `board` | `create`, `get`, `list`, `update` | `get` accepts `board_id` or `name` |
-| `column` | `create`, `list`, `update` | Always scoped to a `board_id` |
-| `project` | `create`, `get`, `list`, `update` | `get` returns hydrated `ProjectDetail` |
-| `task` | `create`, `get`, `list`, `update`, `move`, `move_to_board` | `move_to_board` copies task to target board and archives original |
-| `dependency` | `add`, `remove` | Takes `task_id` + `depends_on_id` |
-| `task_history` | `list` | Takes `task_id` |
-| `export` | *(none)* | Returns full database as Markdown |
-
-All tools require explicit `board_id` — there is no active board concept in the MCP interface.
-
-Use `clear_fields` on `task` and `project` update actions to set nullable fields to null (e.g. `clear_fields=["due_date", "description"]`).
-
-### Linux Install
-
-The systemd service expects `sticky-notes-mcp` at `~/.local/bin/sticky-notes-mcp`. Install with `--user` to place it there:
-
-```sh
-pip install --user .
-```
-
-Verify the binary is in place:
-
-```sh
-ls ~/.local/bin/sticky-notes-mcp
-```
-
-If you use `pip install -e .` (editable/dev mode) instead, the script lands in your active Python environment's `bin/` directory (e.g. `~/.pyenv/versions/3.12.x/bin/`). In that case, update the `ExecStart` path in the service file to match, or create a symlink:
-
-```sh
-ln -s "$(which sticky-notes-mcp)" ~/.local/bin/sticky-notes-mcp
-```
-
-Then enable the systemd user service:
-
-```sh
-cp scripts/sticky-notes-mcp.service ~/.config/systemd/user/
-systemctl --user enable --now sticky-notes-mcp
-loginctl enable-linger $USER   # allows the service to run without an active login session
-```
-
-### macOS install
-
-The macOS LaunchAgent keeps the MCP server running automatically. Install `sticky-notes-mcp` first:
-
-```sh
-pip install --user .
-```
-
-Verify the binary is on PATH:
-
-```sh
-command -v sticky-notes-mcp
-```
-
-Then run the install script:
-
-```sh
-./macosx/install.sh
-```
-
-This installs a LaunchAgent that starts the server at login and restarts it on failure. Logs go to `~/Library/Logs/sticky-notes-mcp/`.
-
-To uninstall:
-
-```sh
-./macosx/uninstall.sh
-```
-
 ## Claude Code Integration
 
-The sticky-notes MCP server can be used by Claude Code to persistently track multi-step plans. To set this up:
+The `todo` CLI can be used by Claude Code to persistently track multi-step plans. Use the `/todo` command for the full CLI reference.
 
-1. Run the MCP server (see above) and configure it in your Claude Code MCP settings
-2. Create a board for Claude to use: `todo board create Claude`
-3. Add workflow columns: `todo col add Backlog && todo col add "In Progress" && todo col add Done`
-4. Add the following to your global `~/.claude/CLAUDE.md`:
+Setup:
 
-```markdown
-## Workflow Tracking with sticky-notes MCP
-
-For multi-step plans (5+ steps), use the sticky-notes MCP server to track progress persistently.
-All work lives on the **"Claude" board** which has three columns: Backlog, In Progress, Done.
-
-1. Look up the Claude board: `board(action="get", name="Claude")` — note the `board_id`
-2. List columns: `column(action="list", board_id=<id>)` — note column IDs
-3. Create a project for the plan: `project(action="create", board_id=<id>, name="<plan name>")`
-4. Create one task per plan step, assigning each to the project and the Backlog column
-5. Add dependencies between tasks where ordering matters
-6. Move tasks to "In Progress" when starting, "Done" when complete
-7. Call `export()` at milestones to get a full status snapshot
+```sh
+todo board create Claude
+todo col add Backlog && todo col add "In Progress" && todo col add Done
 ```
 
-Claude will then automatically use the sticky-notes board to track progress on complex tasks across conversations.
+Then add to your `~/.claude/CLAUDE.md`:
+
+```markdown
+## Workflow Tracking with sticky-notes
+
+For multi-step plans (5+ steps), use the `todo` CLI to track progress persistently.
+All work lives on the **"Claude" board** which has three columns: Backlog, In Progress, Done.
+
+1. Switch to the Claude board: `todo board use Claude`
+2. Create a project for the plan: `todo project create "<plan name>"`
+3. Create one task per plan step: `todo add "<step>" --project "<plan>" --priority N`
+4. Add dependencies where ordering matters: `todo dep add task-NNNN task-MMMM`
+5. Move tasks to "In Progress" when starting: `todo mv task-NNNN "In Progress"`
+6. Mark tasks done when complete: `todo done task-NNNN`
+7. Run `todo export` at milestones for a full status snapshot
+```
 
 ## Data Model
 
@@ -279,7 +192,6 @@ python scripts/generate_erd.py > erd.mermaid
 
 - Python 3.12+
 - [Textual](https://textual.textualize.io/) (TUI)
-- [FastMCP](https://github.com/jlowin/fastmcp) >= 3.1.0 (MCP server)
 
 Dev dependencies: pytest, pytest-cov
 

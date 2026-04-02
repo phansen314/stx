@@ -4,15 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A local todo/kanban app (`todo` CLI) with three interfaces: CLI (argparse), TUI (Textual), and MCP server (FastMCP), all backed by SQLite storage. Repository, service, CLI, mappers, export, and TUI layers are fully implemented. MCP layer is not yet built.
+A local todo/kanban app (`todo` CLI) with two interfaces: CLI (argparse) and TUI (Textual), backed by SQLite storage. All layers are fully implemented. Use `--json` flag for structured CLI output. Use the `/todo` command for full CLI reference.
 
 ## Architecture
 
 ```
 CLI commands ────────┐
-TUI event handlers ──┤
-                     ├──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
-MCP tool functions ──┘
+TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
 ```
 
 **Data hierarchy:** Board → Column → Task (and Board → Project → Task). Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
@@ -113,7 +111,7 @@ Entry point: `todo --tui` (or `todo --tui --db path/to/db`).
 - **Active board file** — persisted at `~/.local/share/sticky-notes/active-board`. CLI resolves board from `--board` flag or this file.
 - **Export** — `export.py` renders the full database to Markdown with Mermaid dependency graphs.
 - **DB path** — `~/.local/share/sticky-notes/sticky-notes.db` (XDG-compliant).
-- **WAL journal mode** — enables concurrent reads from TUI and MCP.
+- **WAL journal mode** — enables concurrent reads from TUI and CLI.
 
 ## Testing
 
@@ -127,5 +125,5 @@ Entry point: `todo --tui` (or `todo --tui --db path/to/db`).
 
 - Python 3.12+ (uses `type` statement for type aliases, `str | None` union syntax)
 - Build system: hatchling
-- Dependencies: textual, fastmcp
+- Dependencies: textual
 - Dev dependencies: pytest, pytest-cov

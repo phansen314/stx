@@ -316,7 +316,7 @@ class TestTaskCommands:
 
     def test_edit_nothing(self, cli):
         cli("add", "Task")
-        _, err = cli("edit", "1")
+        _, err = cli("edit", "1", expect_exit=1)
         assert "nothing to change" in err
 
     def test_mv(self, cli):
@@ -819,3 +819,270 @@ class TestHelp:
             main([])
         except SystemExit as exc:
             assert exc.code == 0
+
+
+# ---- JSON output ----
+
+
+class TestJsonOutput:
+    """Test --json flag produces valid JSON across command categories."""
+
+    def _json(self, cli, *args):
+        """Run CLI with --json and return parsed JSON."""
+        import json
+        out, _ = cli("--json", *args)
+        return json.loads(out)
+
+    # -- Mutations --
+
+    def test_add(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        data = self._json(cli, "add", "My task")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_edit(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "Original")
+        data = self._json(cli, "edit", "1", "--title", "Updated")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_done(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("col", "add", "Done")
+        cli("add", "T1")
+        data = self._json(cli, "done", "1")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_rm(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        data = self._json(cli, "rm", "1")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_board_create(self, cli):
+        data = self._json(cli, "board", "create", "NewBoard")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_col_add(self, cli):
+        cli("board", "create", "B")
+        data = self._json(cli, "col", "add", "Backlog")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_project_create(self, cli):
+        cli("board", "create", "B")
+        data = self._json(cli, "project", "create", "P1")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_dep_add(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        cli("add", "T2")
+        data = self._json(cli, "dep", "add", "1", "2")
+        assert data["ok"] is True
+        assert data["task_id"] == 1
+        assert data["depends_on_id"] == 2
+
+    # -- Lists --
+
+    def test_ls(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "Task A")
+        data = self._json(cli, "ls")
+        assert data["board"] == "B"
+        assert len(data["columns"]) == 1
+        assert data["columns"][0]["name"] == "Todo"
+        assert len(data["columns"][0]["tasks"]) == 1
+        assert data["columns"][0]["tasks"][0]["title"] == "Task A"
+
+    def test_board_ls(self, cli):
+        cli("board", "create", "B1")
+        data = self._json(cli, "board", "ls")
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["name"] == "B1"
+        assert data[0]["active"] is True
+
+    def test_col_ls(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("col", "add", "Done")
+        data = self._json(cli, "col", "ls")
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+    def test_project_ls(self, cli):
+        cli("board", "create", "B")
+        cli("project", "create", "P1")
+        data = self._json(cli, "project", "ls")
+        assert isinstance(data, list)
+        assert data[0]["name"] == "P1"
+
+    def test_log_empty(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        data = self._json(cli, "log", "1")
+        assert isinstance(data, list)
+
+    def test_group_ls(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1")
+        cli("group", "create", "G1", "-p", "P1")
+        data = self._json(cli, "group", "ls")
+        assert isinstance(data, list)
+        assert data[0]["title"] == "G1"
+
+    # -- Details --
+
+    def test_show(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "Task A", "--priority", "3")
+        data = self._json(cli, "show", "1")
+        assert data["title"] == "Task A"
+        assert data["priority"] == 3
+        assert "column" in data
+        assert data["column"]["name"] == "Todo"
+        assert "group_id" in data
+
+    def test_project_show(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1", "-d", "desc")
+        cli("add", "T1", "-p", "P1")
+        data = self._json(cli, "project", "show", "P1")
+        assert data["name"] == "P1"
+        assert data["description"] == "desc"
+        assert len(data["tasks"]) == 1
+
+    def test_group_show(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1")
+        cli("group", "create", "G1", "-p", "P1")
+        data = self._json(cli, "group", "show", "G1")
+        assert data["title"] == "G1"
+
+    # -- Moves --
+
+    def test_mv_within_board(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("col", "add", "Done")
+        cli("add", "T1")
+        data = self._json(cli, "mv", "1", "Done")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    def test_mv_cross_board(self, cli):
+        cli("board", "create", "B1")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        cli("board", "create", "B2")
+        cli("col", "add", "Inbox")
+        data = self._json(cli, "mv", "1", "Inbox", "--board", "B2")
+        assert data["ok"] is True
+        assert data["id"] == 1
+        assert "new_id" in data
+
+    def test_mv_dry_run(self, cli):
+        cli("board", "create", "B1")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        cli("board", "create", "B2")
+        cli("col", "add", "Inbox")
+        data = self._json(cli, "mv", "1", "Inbox", "--board", "B2", "--dry-run")
+        assert data["dry_run"] is True
+        assert data["can_move"] is True
+        assert data["dependency_ids"] == []
+
+    def test_mv_project_only(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1")
+        cli("add", "T1")
+        data = self._json(cli, "mv", "1", "--project", "P1")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
+    # -- Edit edge case --
+
+    def test_edit_no_changes(self, cli):
+        import json
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        out, _ = cli("--json", "edit", "1", expect_exit=1)
+        data = json.loads(out)
+        assert data["ok"] is False
+        assert "nothing to change" in data["error"]
+
+    # -- Log with entries --
+
+    def test_log_with_history(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        cli("edit", "1", "--title", "Updated")
+        data = self._json(cli, "log", "1")
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        assert data[0]["field"] == "title"
+
+    # -- Export --
+
+    def test_export(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "T1")
+        data = self._json(cli, "export")
+        assert "markdown" in data
+        assert "# B" in data["markdown"]
+
+    # -- Group assign/unassign --
+
+    def test_group_assign(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1")
+        cli("group", "create", "G1", "-p", "P1")
+        cli("add", "T1", "-p", "P1")
+        data = self._json(cli, "group", "assign", "1", "G1", "-p", "P1")
+        assert data["ok"] is True
+        assert data["task_id"] == 1
+        assert data["group_id"] == 1
+
+    def test_group_unassign(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("project", "create", "P1")
+        cli("group", "create", "G1", "-p", "P1")
+        cli("add", "T1", "-p", "P1")
+        cli("group", "assign", "1", "G1", "-p", "P1")
+        data = self._json(cli, "group", "unassign", "1")
+        assert data["ok"] is True
+        assert data["task_id"] == 1
+
+    # -- Error in JSON mode --
+
+    def test_error_json(self, cli):
+        import json
+        cli("board", "create", "B")
+        out, _ = cli("--json", "show", "999", expect_exit=1)
+        data = json.loads(out)
+        assert data["ok"] is False
+        assert "error" in data

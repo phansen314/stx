@@ -1,19 +1,40 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from .active_board import get_active_board_id, set_active_board_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import service
 from .export import export_markdown
-from .formatting import format_group_num, format_priority, format_task_num, format_timestamp, parse_date
+from .formatting import format_group_num, format_priority, format_task_num, format_timestamp, parse_date, to_dict
 from .models import Board, Column, Group, Project, TaskFilter
 
-type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], None]
+
+# ---- Result types ----
+
+
+@dataclass(frozen=True)
+class Ok:
+    """Mutation result. JSON: {"ok": true, ...data}"""
+    data: dict[str, object]
+    text: str
+
+
+@dataclass(frozen=True)
+class Data:
+    """Query result. JSON: to_dict(payload)"""
+    payload: object
+    text: str
+
+
+type CmdResult = Ok | Data
+type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], CmdResult]
 
 
 # ---- Helpers: parsing & formatting ----
@@ -133,10 +154,24 @@ def _resolve_group(
     return matches[0]
 
 
+# ---- JSON output ----
+
+
+def _emit_json(result: CmdResult) -> None:
+    if isinstance(result, Ok):
+        print(json.dumps({"ok": True, **{k: to_dict(v) for k, v in result.data.items()}}))
+    else:
+        print(json.dumps(to_dict(result.payload)))
+
+
+def _json_err(message: str) -> None:
+    print(json.dumps({"ok": False, "error": message}))
+
+
 # ---- Command handlers ----
 
 
-def cmd_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     if args.col:
         col = _resolve_column(conn, board.id, args.col)
@@ -156,10 +191,10 @@ def cmd_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -
         priority=args.priority,
         due_date=due,
     )
-    print(f"created {format_task_num(task.id)}")
+    return Ok(data={"id": task.id}, text=f"created {format_task_num(task.id)}")
 
 
-def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     cols = service.list_columns(conn, board.id)
     # Build filter from CLI flags
@@ -190,53 +225,63 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
     for ref in refs:
         if ref.column_id in by_col:
             by_col[ref.column_id].append(ref)
-    # Look up project names
+    payload = {
+        "board": board.name,
+        "columns": [
+            {"name": c.name, "id": c.id, "tasks": list(by_col[c.id])}
+            for c in cols
+        ],
+    }
+    # Build text output
     projects = service.list_projects(conn, board.id, include_archived=True)
     proj_names: dict[int, str] = {p.id: p.name for p in projects}
+    lines: list[str] = []
     for col in cols:
-        print(f"\n== {col.name} ==")
+        lines.append(f"\n== {col.name} ==")
         tasks = by_col[col.id]
         if not tasks:
-            print("  (empty)")
+            lines.append("  (empty)")
         else:
             for ref in tasks:
                 parts = [f"  {format_task_num(ref.id)}  {format_priority(ref.priority)} {ref.title}"]
                 if ref.project_id and ref.project_id in proj_names:
                     parts.append(f"  @{proj_names[ref.project_id]}")
-                print("".join(parts))
+                lines.append("".join(parts))
+    return Data(payload=payload, text="\n".join(lines))
 
 
-def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     detail = service.get_task_detail(conn, task_id)
-    print(f"{format_task_num(detail.id)}  {detail.title}")
-    print(f"  Column:      {detail.column.name}")
-    if detail.project:
-        print(f"  Project:     {detail.project.name}")
     group_id = service.get_task_group_id(conn, task_id)
+    lines = [f"{format_task_num(detail.id)}  {detail.title}"]
+    lines.append(f"  Column:      {detail.column.name}")
+    if detail.project:
+        lines.append(f"  Project:     {detail.project.name}")
     if group_id is not None:
         grp = service.get_group(conn, group_id)
-        print(f"  Group:       {grp.title} ({format_group_num(grp.id)})")
-    print(f"  Priority:    {detail.priority}")
+        lines.append(f"  Group:       {grp.title} ({format_group_num(grp.id)})")
+    lines.append(f"  Priority:    {detail.priority}")
     if detail.due_date:
-        print(f"  Due:         {format_timestamp(detail.due_date)}")
-    print(f"  Created:     {format_timestamp(detail.created_at)}")
+        lines.append(f"  Due:         {format_timestamp(detail.due_date)}")
+    lines.append(f"  Created:     {format_timestamp(detail.created_at)}")
     if detail.blocked_by:
         nums = ", ".join(format_task_num(t.id) for t in detail.blocked_by)
-        print(f"  Blocked by:  {nums}")
+        lines.append(f"  Blocked by:  {nums}")
     if detail.blocks:
         nums = ", ".join(format_task_num(t.id) for t in detail.blocks)
-        print(f"  Blocks:      {nums}")
+        lines.append(f"  Blocks:      {nums}")
     if detail.description:
-        print(f"\n  Description:\n    {detail.description}")
+        lines.append(f"\n  Description:\n    {detail.description}")
     if detail.history:
-        print("\n  History:")
+        lines.append("\n  History:")
         for h in detail.history:
             old_str = h.old_value if h.old_value is not None else "(none)"
-            print(f"    {format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+            lines.append(f"    {format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+    return Data(payload={**to_dict(detail), "group_id": group_id}, text="\n".join(lines))
 
 
-def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     changes: dict = {}
     if args.title is not None:
@@ -251,21 +296,19 @@ def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
         board = _resolve_board(conn, args, db_path)
         changes["project_id"] = _resolve_project(conn, board.id, args.project).id
     if not changes:
-        print("nothing to change", file=sys.stderr)
-        return
+        raise ValueError("nothing to change")
     service.update_task(conn, task_id, changes, source="cli")
-    print(f"updated {format_task_num(task_id)}")
+    return Ok(data={"id": task_id}, text=f"updated {format_task_num(task_id)}")
 
 
-def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     target_board_name = getattr(args, "target_board", None)
 
     if target_board_name:
         # Cross-board move
         if not args.column_name:
-            print("column name required when moving to another board", file=sys.stderr)
-            sys.exit(1)
+            raise ValueError("column name required when moving to another board")
         target_board = service.get_board_by_name(conn, target_board_name)
         target_col = _resolve_column(conn, target_board.id, args.column_name)
         project_id = None
@@ -276,203 +319,221 @@ def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
             task = service.get_task(conn, task_id)
             blocked_by = service.get_task_ref(conn, task_id).blocked_by_ids
             blocks = service.get_task_ref(conn, task_id).blocks_ids
-            print(f"dry-run: would move {format_task_num(task_id)} ({task.title})")
-            print(f"  from board {task.board_id} -> board \"{target_board.name}\" / column \"{target_col.name}\"")
-            if blocked_by or blocks:
-                dep_ids = sorted({*blocked_by, *blocks})
-                print(f"  ⚠ has dependencies: {', '.join(format_task_num(d) for d in dep_ids)}")
-                print("  move would FAIL — remove dependencies first")
+            has_deps = bool(blocked_by or blocks)
+            dep_ids = sorted({*blocked_by, *blocks}) if has_deps else []
+            lines = [f"dry-run: would move {format_task_num(task_id)} ({task.title})"]
+            lines.append(f'  from board {task.board_id} -> board "{target_board.name}" / column "{target_col.name}"')
+            if has_deps:
+                lines.append(f"  \u26a0 has dependencies: {', '.join(format_task_num(d) for d in dep_ids)}")
+                lines.append("  move would FAIL \u2014 remove dependencies first")
             else:
-                print("  no dependencies — move OK")
-            return
+                lines.append("  no dependencies \u2014 move OK")
+            return Data(
+                payload={"dry_run": True, "can_move": not has_deps,
+                         "task_id": task_id, "target_board": target_board.name,
+                         "target_column": target_col.name, "dependency_ids": dep_ids},
+                text="\n".join(lines),
+            )
 
         new = service.move_task_to_board(
             conn, task_id, target_board.id, target_col.id,
             project_id=project_id, source="cli",
         )
-        print(f"moved {format_task_num(task_id)} -> board \"{target_board.name}\" / column \"{target_col.name}\" (new {format_task_num(new.id)})")
-    else:
-        # Within-board move
-        project_name = args.project
-        if args.column_name:
-            board = _resolve_board(conn, args, db_path)
-            col = _resolve_column(conn, board.id, args.column_name)
-            position = args.position if args.position is not None else 0
-            service.move_task(conn, task_id, col.id, position, source="cli")
-            if project_name:
-                project_id = _resolve_project(conn, board.id, project_name).id
-                service.update_task(conn, task_id, {"project_id": project_id}, source="cli")
-            print(f"moved {format_task_num(task_id)} -> {col.name}")
-        elif project_name:
-            board = _resolve_board(conn, args, db_path)
+        return Ok(
+            data={"id": task_id, "new_id": new.id},
+            text=f'moved {format_task_num(task_id)} -> board "{target_board.name}" / column "{target_col.name}" (new {format_task_num(new.id)})',
+        )
+
+    # Within-board move
+    project_name = args.project
+    if args.column_name:
+        board = _resolve_board(conn, args, db_path)
+        col = _resolve_column(conn, board.id, args.column_name)
+        position = args.position if args.position is not None else 0
+        service.move_task(conn, task_id, col.id, position, source="cli")
+        if project_name:
             project_id = _resolve_project(conn, board.id, project_name).id
             service.update_task(conn, task_id, {"project_id": project_id}, source="cli")
-            print(f"updated {format_task_num(task_id)} project -> {project_name}")
-        else:
-            print("specify a column, --board, or --project", file=sys.stderr)
-            sys.exit(1)
+        return Ok(data={"id": task_id}, text=f"moved {format_task_num(task_id)} -> {col.name}")
+    elif project_name:
+        board = _resolve_board(conn, args, db_path)
+        project_id = _resolve_project(conn, board.id, project_name).id
+        service.update_task(conn, task_id, {"project_id": project_id}, source="cli")
+        return Ok(data={"id": task_id}, text=f"updated {format_task_num(task_id)} project -> {project_name}")
+    else:
+        raise ValueError("specify a column, --board, or --project")
 
 
-def cmd_done(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_done(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     board = _resolve_board(conn, args, db_path)
     col = _last_column(conn, board.id)
     service.move_task(conn, task_id, col.id, 0, source="cli")
-    print(f"moved {format_task_num(task_id)} -> {col.name}")
+    return Ok(data={"id": task_id}, text=f"moved {format_task_num(task_id)} -> {col.name}")
 
 
-def cmd_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     service.update_task(conn, task_id, {"archived": True}, source="cli")
-    print(f"archived {format_task_num(task_id)}")
+    return Ok(data={"id": task_id}, text=f"archived {format_task_num(task_id)}")
 
 
-def cmd_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     # Verify task exists
     service.get_task(conn, task_id)
     history = service.list_task_history(conn, task_id)
     if not history:
-        print("no history")
-        return
+        return Data(payload=history, text="no history")
+    lines: list[str] = []
     for h in history:
         old_str = h.old_value if h.old_value is not None else "(none)"
-        print(f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+        lines.append(f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+    return Data(payload=history, text="\n".join(lines))
 
 
 # ---- Board subcommands ----
 
 
-def cmd_board_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_board_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = service.create_board(conn, args.name)
     set_active_board_id(db_path, board.id)
-    print(f"created board {board.name!r} (active)")
+    return Ok(data={"id": board.id}, text=f"created board {board.name!r} (active)")
 
 
-def cmd_board_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_board_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     boards = service.list_boards(conn, include_archived=args.all)
     active_id = get_active_board_id(db_path)
+    payload = [{**to_dict(b), "active": b.id == active_id} for b in boards]
     if not boards:
-        print("no boards")
-        return
+        return Data(payload=payload, text="no boards")
+    lines: list[str] = []
     for b in boards:
         marker = " *" if b.id == active_id else ""
         archived = " (archived)" if b.archived else ""
-        print(f"  {b.name}{marker}{archived}")
+        lines.append(f"  {b.name}{marker}{archived}")
+    return Data(payload=payload, text="\n".join(lines))
 
 
-def cmd_board_use(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_board_use(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = service.get_board_by_name(conn, args.name)
     set_active_board_id(db_path, board.id)
-    print(f"switched to board {board.name!r}")
+    return Ok(data={"id": board.id}, text=f"switched to board {board.name!r}")
 
 
-def cmd_board_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_board_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     service.update_board(conn, board.id, {"name": args.new_name})
-    print(f"renamed board -> {args.new_name!r}")
+    return Ok(data={"id": board.id}, text=f"renamed board -> {args.new_name!r}")
 
 
-def cmd_board_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_board_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     service.update_board(conn, board.id, {"archived": True})
-    print(f"archived board {board.name!r}")
+    return Ok(data={"id": board.id}, text=f"archived board {board.name!r}")
 
 
 # ---- Column subcommands ----
 
 
-def cmd_col_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_col_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     position = args.pos if args.pos is not None else 0
     col = service.create_column(conn, board.id, args.name, position=position)
-    print(f"created column {col.name!r}")
+    return Ok(data={"id": col.id}, text=f"created column {col.name!r}")
 
 
-def cmd_col_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_col_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     cols = service.list_columns(conn, board.id)
     if not cols:
-        print("no columns")
-        return
-    for c in cols:
-        print(f"  {c.position}  {c.name}")
+        return Data(payload=cols, text="no columns")
+    lines = [f"  {c.position}  {c.name}" for c in cols]
+    return Data(payload=cols, text="\n".join(lines))
 
 
-def cmd_col_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_col_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     col = _resolve_column(conn, board.id, args.old_name)
     service.update_column(conn, col.id, {"name": args.new_name})
-    print(f"renamed column {args.old_name!r} -> {args.new_name!r}")
+    return Ok(data={"id": col.id}, text=f"renamed column {args.old_name!r} -> {args.new_name!r}")
 
 
-def cmd_col_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_col_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     col = _resolve_column(conn, board.id, args.name)
     service.update_column(conn, col.id, {"archived": True})
-    print(f"archived column {col.name!r}")
+    return Ok(data={"id": col.id}, text=f"archived column {col.name!r}")
 
 
 # ---- Project subcommands ----
 
 
-def cmd_project_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_project_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     proj = service.create_project(conn, board.id, args.name, description=args.desc)
-    print(f"created project {proj.name!r}")
+    return Ok(data={"id": proj.id}, text=f"created project {proj.name!r}")
 
 
-def cmd_project_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_project_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     projects = service.list_projects(conn, board.id)
     if not projects:
-        print("no projects")
-        return
+        return Data(payload=projects, text="no projects")
+    lines: list[str] = []
     for p in projects:
         desc = f"  {p.description}" if p.description else ""
-        print(f"  {p.name}{desc}")
+        lines.append(f"  {p.name}{desc}")
+    return Data(payload=projects, text="\n".join(lines))
 
 
-def cmd_project_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_project_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     proj = _resolve_project(conn, board.id, args.name)
     detail = service.get_project_detail(conn, proj.id)
-    print(f"{detail.name}")
+    lines = [f"{detail.name}"]
     if detail.description:
-        print(f"  {detail.description}")
-    print(f"  Tasks: {len(detail.tasks)}")
+        lines.append(f"  {detail.description}")
+    lines.append(f"  Tasks: {len(detail.tasks)}")
     for t in detail.tasks:
-        print(f"    {format_task_num(t.id)}  {t.title}")
+        lines.append(f"    {format_task_num(t.id)}  {t.title}")
+    return Data(payload=detail, text="\n".join(lines))
 
 
-def cmd_project_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_project_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     proj = _resolve_project(conn, board.id, args.name)
     service.update_project(conn, proj.id, {"archived": True})
-    print(f"archived project {proj.name!r}")
+    return Ok(data={"id": proj.id}, text=f"archived project {proj.name!r}")
 
 
 # ---- Dependency subcommands ----
 
 
-def cmd_dep_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_dep_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     depends_on_id = _resolve_task(conn, args.depends_on_num, args, db_path)
     service.add_dependency(conn, task_id, depends_on_id)
-    print(f"{format_task_num(task_id)} now blocked by {format_task_num(depends_on_id)}")
+    return Ok(
+        data={"task_id": task_id, "depends_on_id": depends_on_id},
+        text=f"{format_task_num(task_id)} now blocked by {format_task_num(depends_on_id)}",
+    )
 
 
-def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task_num, args, db_path)
     depends_on_id = _resolve_task(conn, args.depends_on_num, args, db_path)
     service.remove_dependency(conn, task_id, depends_on_id)
-    print(f"removed dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}")
+    return Ok(
+        data={"task_id": task_id, "depends_on_id": depends_on_id},
+        text=f"removed dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}",
+    )
 
 
 # ---- Group subcommands ----
 
 
-def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     if not project_name:
@@ -483,44 +544,48 @@ def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path
         parent = _resolve_group(conn, board.id, args.parent, project_name=project_name)
         parent_id = parent.id
     grp = service.create_group(conn, proj.id, args.title, parent_id=parent_id)
-    print(f"created group {grp.title!r} ({format_group_num(grp.id)})")
+    return Ok(data={"id": grp.id}, text=f"created group {grp.title!r} ({format_group_num(grp.id)})")
 
 
-def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     if project_name:
         projects = [_resolve_project(conn, board.id, project_name)]
     else:
         projects = list(service.list_projects(conn, board.id))
+    all_refs = []
+    for proj in projects:
+        refs = service.list_groups(conn, proj.id, include_archived=args.all)
+        all_refs.extend(refs)
     if not projects:
-        print("no projects")
-        return
+        return Data(payload=all_refs, text="no projects")
     tree_mode = args.tree
     include_archived = args.all
+    lines: list[str] = []
     for proj in projects:
         refs = service.list_groups(conn, proj.id, include_archived=include_archived)
         if not refs and len(projects) == 1:
-            print("no groups")
-            return
+            return Data(payload=all_refs, text="no groups")
         if not refs:
             continue
         if len(projects) > 1:
-            print(f"\n== {proj.name} ==")
+            lines.append(f"\n== {proj.name} ==")
         if tree_mode:
-            _print_group_tree(conn, proj.id, refs, include_archived)
+            lines.extend(_format_group_tree(conn, proj.id, refs))
         else:
             for ref in refs:
                 archived = " (archived)" if ref.archived else ""
-                print(f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}")
+                lines.append(f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}")
+    return Data(payload=all_refs, text="\n".join(lines))
 
 
-def _print_group_tree(
+def _format_group_tree(
     conn: sqlite3.Connection,
     project_id: int,
     refs: tuple,
-    include_archived: bool,
-) -> None:
+) -> list[str]:
+    lines: list[str] = []
     # Pre-fetch all tasks referenced by any group
     all_task_ids = tuple(tid for ref in refs for tid in ref.task_ids)
     all_tasks = service.list_tasks_by_ids(conn, all_task_ids)
@@ -532,35 +597,35 @@ def _print_group_tree(
     for ref in refs:
         children_map.setdefault(ref.parent_id, []).append(ref)
 
-    def _print_subtree(group_id: int, prefix: str, is_last: bool) -> None:
+    def _format_subtree(group_id: int, prefix: str, is_last: bool) -> None:
         ref = ref_by_id[group_id]
         connector = "+-- " if prefix else ""
         archived = " (archived)" if ref.archived else ""
-        print(f"{prefix}{connector}{format_group_num(ref.id)}  {ref.title}{archived}")
+        lines.append(f"{prefix}{connector}{format_group_num(ref.id)}  {ref.title}{archived}")
         child_prefix = prefix + ("|   " if not is_last and prefix else "    ") if prefix else ""
         children = children_map.get(group_id, [])
         for i, tid in enumerate(ref.task_ids):
             task = task_by_id.get(tid)
             if task is None:
                 continue
-            is_last_item = (i == len(ref.task_ids) - 1) and not children
             item_connector = "+-- " if child_prefix or prefix else "+-- "
-            print(f"{child_prefix}{item_connector}{format_task_num(task.id)}: {task.title}")
+            lines.append(f"{child_prefix}{item_connector}{format_task_num(task.id)}: {task.title}")
         for i, child_ref in enumerate(children):
-            _print_subtree(child_ref.id, child_prefix, i == len(children) - 1)
+            _format_subtree(child_ref.id, child_prefix, i == len(children) - 1)
 
-    # Print top-level groups (parent_id is None)
+    # Top-level groups (parent_id is None)
     top_level = children_map.get(None, [])
     for i, ref in enumerate(top_level):
-        _print_subtree(ref.id, "", i == len(top_level) - 1)
+        _format_subtree(ref.id, "", i == len(top_level) - 1)
 
     # Ungrouped tasks count
     ungrouped = service.list_ungrouped_task_ids(conn, project_id)
     if ungrouped:
-        print(f"\n({len(ungrouped)} ungrouped tasks)")
+        lines.append(f"\n({len(ungrouped)} ungrouped tasks)")
+    return lines
 
 
-def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
@@ -577,75 +642,78 @@ def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
             current = None
     path_parts.reverse()
     proj = service.get_project(conn, detail.project_id)
-    print(f"Group: {detail.title} ({format_group_num(detail.id)})")
-    print(f"  Project: {proj.name}")
-    print(f"  Path:    {' > '.join(path_parts)}")
-    print(f"  Tasks:   {len(detail.tasks)}")
+    lines = [f"Group: {detail.title} ({format_group_num(detail.id)})"]
+    lines.append(f"  Project: {proj.name}")
+    lines.append(f"  Path:    {' > '.join(path_parts)}")
+    lines.append(f"  Tasks:   {len(detail.tasks)}")
     if detail.children:
         child_names = ", ".join(c.title for c in detail.children)
-        print(f"  Sub-groups: {child_names}")
+        lines.append(f"  Sub-groups: {child_names}")
     if detail.tasks:
-        print()
+        lines.append("")
         for t in detail.tasks:
             due = f"  due: {format_timestamp(t.due_date)}" if t.due_date else ""
-            print(f"  {format_task_num(t.id)}  {format_priority(t.priority)} {t.title}{due}")
+            lines.append(f"  {format_task_num(t.id)}  {format_priority(t.priority)} {t.title}{due}")
+    return Data(payload=detail, text="\n".join(lines))
 
 
-def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
     service.update_group(conn, grp.id, {"title": args.new_title})
-    print(f"renamed group {args.title!r} -> {args.new_title!r}")
+    return Ok(data={"id": grp.id}, text=f"renamed group {args.title!r} -> {args.new_title!r}")
 
 
-def cmd_group_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
     service.archive_group(conn, grp.id)
-    print(f"archived group {grp.title!r}")
+    return Ok(data={"id": grp.id}, text=f"archived group {grp.title!r}")
 
 
-def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     project_name = args.project
     grp = _resolve_group(conn, board.id, args.title, project_name=project_name)
     parent_str = args.parent
     if parent_str.lower() == "none":
         service.update_group(conn, grp.id, {"parent_id": None})
-        print(f"promoted group {grp.title!r} to top-level")
-    else:
-        parent = _resolve_group(conn, board.id, parent_str, project_name=project_name)
-        service.update_group(conn, grp.id, {"parent_id": parent.id})
-        print(f"moved group {grp.title!r} under {parent.title!r}")
+        return Ok(data={"id": grp.id}, text=f"promoted group {grp.title!r} to top-level")
+    parent = _resolve_group(conn, board.id, parent_str, project_name=project_name)
+    service.update_group(conn, grp.id, {"parent_id": parent.id})
+    return Ok(data={"id": grp.id}, text=f"moved group {grp.title!r} under {parent.title!r}")
 
 
-def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, args.task, args, db_path)
     project_name = args.project
     grp = _resolve_group(conn, board.id, args.group_title, project_name=project_name)
     service.assign_task_to_group(conn, task_id, grp.id)
-    print(f"assigned {format_task_num(task_id)} to group {grp.title!r}")
+    return Ok(
+        data={"task_id": task_id, "group_id": grp.id},
+        text=f"assigned {format_task_num(task_id)} to group {grp.title!r}",
+    )
 
 
-def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     task_id = _resolve_task(conn, args.task, args, db_path)
     service.unassign_task_from_group(conn, task_id)
-    print(f"unassigned {format_task_num(task_id)} from group")
+    return Ok(data={"task_id": task_id}, text=f"unassigned {format_task_num(task_id)} from group")
 
 
 # ---- Export ----
 
 
-def cmd_export(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> None:
+def cmd_export(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     md = export_markdown(conn)
     if args.output:
         Path(args.output).write_text(md)
         print(f"Wrote {args.output}", file=sys.stderr)
-    else:
-        sys.stdout.write(md)
+        return Data(payload={"markdown": md}, text="")
+    return Data(payload={"markdown": md}, text=md)
 
 
 # ---- Parser ----
@@ -691,6 +759,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="todo", description="Sticky Notes — local kanban CLI")
     parser.add_argument("--db", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--board", "-b", help="board name (overrides active board)")
+    parser.add_argument("--json", action="store_true", help="output JSON instead of text")
     parser.set_defaults(command=None)
 
     sub = parser.add_subparsers()
@@ -902,14 +971,17 @@ def main(argv: list[str] | None = None) -> None:
     conn = get_connection(db_path)
     try:
         init_db(conn)
-        HANDLERS[args.command](conn, args, db_path)
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    except sqlite3.IntegrityError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    except ValueError as exc:
+        result = HANDLERS[args.command](conn, args, db_path)
+        if args.json:
+            _emit_json(result)
+        elif result.text:
+            sys.stdout.write(result.text)
+            if not result.text.endswith("\n"):
+                sys.stdout.write("\n")
+    except (LookupError, sqlite3.IntegrityError, ValueError) as exc:
+        if args.json:
+            _json_err(str(exc))
+            raise SystemExit(1)
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1)
     finally:

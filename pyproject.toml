@@ -5,11 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "sticky-notes"
 version = "0.1.0"
-description = "A local todo/kanban app with TUI and MCP interfaces"
+description = "A local todo/kanban app with CLI and TUI interfaces"
 requires-python = ">=3.12"
 dependencies = [
     "textual>=0.50.0",
-    "fastmcp>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -18,7 +17,6 @@ dev = ["pytest>=8.0", "pytest-cov>=6.0", "pytest-asyncio>=1.0"]
 [project.scripts]
 todo = "sticky_notes.__main__:main"
 todo-tui = "sticky_notes.tui:main"
-sticky-notes-mcp = "sticky_notes.mcp_server:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
