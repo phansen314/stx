@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import Column, Group, Project, Task, TaskHistory
+from .models import Column, Group, Project, Tag, Task, TaskHistory
 
 
 # ---- Ref types (relationships as IDs) ----
@@ -12,6 +12,7 @@ from .models import Column, Group, Project, Task, TaskHistory
 class TaskRef(Task):
     blocked_by_ids: tuple[int, ...] = ()
     blocks_ids: tuple[int, ...] = ()
+    tag_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class TaskDetail(TaskRef):
     blocked_by: tuple[Task, ...] = ()
     blocks: tuple[Task, ...] = ()
     history: tuple[TaskHistory, ...] = ()
+    tags: tuple[Tag, ...] = ()
 
     def __post_init__(self) -> None:
         if self.column is None:

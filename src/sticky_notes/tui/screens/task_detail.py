@@ -114,10 +114,11 @@ class TaskDetailModal(ModalScreen[int | None]):
             history_lines = []
             for h in detail.history:
                 old_str = h.old_value if h.old_value is not None else "(none)"
+                new_str = h.new_value if h.new_value is not None else "(none)"
                 history_lines.append(
                     f"  {format_timestamp(h.changed_at)}  "
                     f"{h.field}: {escape_markup(old_str)} -> "
-                    f"{escape_markup(h.new_value)}  ({escape_markup(h.source)})"
+                    f"{escape_markup(new_str)}  ({escape_markup(h.source)})"
                 )
             self.query_one("#detail-history", Static).update("\n".join(history_lines))
         else:

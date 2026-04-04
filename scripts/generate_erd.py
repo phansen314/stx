@@ -26,6 +26,13 @@ COMPOSITE_PK_RE = re.compile(
     r"PRIMARY KEY\s*\(\s*([\w\s,]+)\s*\)", re.MULTILINE
 )
 
+# Table-level FOREIGN KEY pattern
+TABLE_FK_RE = re.compile(
+    r"FOREIGN KEY\s*\(\s*([\w\s,]+)\s*\)\s*REFERENCES\s+(\w+)\s*\(\s*([\w\s,]+)\s*\)"
+    r"(?:\s*ON DELETE\s+(CASCADE|RESTRICT|SET NULL))?",
+    re.MULTILINE,
+)
+
 
 def parse_schema(sql: str) -> list[dict]:
     tables = []
@@ -42,31 +49,64 @@ def parse_schema(sql: str) -> list[dict]:
                 c.strip() for c in cpk.group(1).split(",")
             )
 
+        # Collect FK columns from table-level FOREIGN KEY clauses
+        table_fk_cols: set[str] = set()
+        for tfk in TABLE_FK_RE.finditer(body):
+            child_cols = [c.strip() for c in tfk.group(1).split(",")]
+            ref_table = tfk.group(2)
+            for col in child_cols:
+                table_fk_cols.add(col)
+            # Use first column for the relationship line
+            fk_rels.append((child_cols[0], ref_table, ""))
+
         for col_match in COL_RE.finditer(body):
             col_name = col_match.group(1)
             col_type = col_match.group(2)
             rest = col_match.group(3)
 
-            markers = []
-            if PK_RE.search(rest):
-                markers.append("PK")
-            elif col_name in composite_pk_cols:
-                markers.append("PK")
+            is_pk = PK_RE.search(rest) or col_name in composite_pk_cols
+            is_fk = col_name in table_fk_cols
 
+            # Inline REFERENCES (simple single-column FKs)
             fk_match = FK_RE.search(rest)
             if fk_match:
-                markers.append("FK")
+                is_fk = True
                 fk_rels.append((col_name, fk_match.group(1), fk_match.group(2)))
 
-            if UNIQUE_RE.search(rest) and "PK" not in markers:
-                markers.append("UK")
+            is_uk = UNIQUE_RE.search(rest) and not is_pk
 
-            # Mermaid allows only one marker per attribute; prefer PK > FK > UK
-            marker = markers[0] if markers else ""
-            columns.append((col_type, col_name, marker))
+            # Mermaid allows only one marker; prefer FK for composite PK+FK
+            # columns (relationship is more informative than PK in ERD),
+            # otherwise PK > FK > UK
+            if is_pk and is_fk:
+                marker = "FK"
+                comment = "PK"
+            elif is_pk:
+                marker = "PK"
+                comment = ""
+            elif is_fk:
+                marker = "FK"
+                comment = ""
+            elif is_uk:
+                marker = "UK"
+                comment = ""
+            else:
+                marker = ""
+                comment = ""
+
+            columns.append((col_type, col_name, marker, comment))
+
+        # Deduplicate relationship lines (composite FKs may add duplicates)
+        seen: set[tuple[str, str]] = set()
+        unique_rels = []
+        for rel in fk_rels:
+            key = (rel[0], rel[1])
+            if key not in seen:
+                seen.add(key)
+                unique_rels.append(rel)
 
         tables.append(
-            {"name": table_name, "columns": columns, "fk_rels": fk_rels}
+            {"name": table_name, "columns": columns, "fk_rels": unique_rels}
         )
     return tables
 
@@ -84,10 +124,12 @@ def build_mermaid(tables: list[dict]) -> str:
     # Entities
     for table in tables:
         lines.append(f"    {table['name']} {{")
-        for col_type, col_name, markers in table["columns"]:
+        for col_type, col_name, marker, comment in table["columns"]:
             entry = f"        {col_type} {col_name}"
-            if markers:
-                entry += f" {markers}"
+            if marker:
+                entry += f" {marker}"
+            if comment:
+                entry += f' "{comment}"'
             lines.append(entry)
         lines.append("    }")
         lines.append("")

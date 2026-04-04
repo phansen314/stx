@@ -13,7 +13,7 @@ CLI commands ────────┐
 TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
 ```
 
-**Data hierarchy:** Board → Column → Task (and Board → Project → Task). Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
+**Data hierarchy:** Board → Column → Task (and Board → Project → Task, Board → Tag ↔ Task). Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
 
 ## Project Structure
 
@@ -24,12 +24,13 @@ src/sticky_notes/
   formatting.py      # shared formatting: format_task_num, format_priority, parse_date, format_timestamp
   service.py         # business logic, transaction boundaries
   repository.py      # raw SQL queries, one function per operation
-  connection.py      # SQLite connection factory, schema init
+  connection.py      # SQLite connection factory, schema init, migration runner
   models.py          # domain dataclasses (New*, persisted)
   service_models.py  # Ref/Detail dataclasses for service layer
   mappers.py         # row→model, model→ref, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
-  schema.sql         # DDL
+  schema.sql         # DDL (current schema, used for fresh databases)
+  migrations/        # numbered SQL migration files (001_*.sql, 002_*.sql, ...)
   tui/
     app.py           # StickyNotesApp — main Textual app shell
     config.py        # TuiConfig dataclass, TOML load/save
@@ -66,7 +67,7 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 
 **Command structure:**
 - Top-level task commands: `add`, `ls`, `show`, `edit`, `mv`, `done`, `rm`, `log`
-- Subcommand groups: `board`, `col`, `project`, `dep`, `export`
+- Subcommand groups: `board`, `col`, `project`, `dep`, `tag`, `export`
 
 ## TUI
 
@@ -109,6 +110,10 @@ Entry point: `todo --tui` (or `todo --tui --db path/to/db`).
 - **Timestamps as Unix epoch integers** — formatting happens at the edges only. `parse_date` and `format_timestamp` live in `formatting.py` (shared by CLI and TUI).
 - **Task numbers** — formatted as `task-{id:04d}` in the application layer, derived from autoincrement ID. `format_task_num` and `format_priority` also live in `formatting.py`.
 - **Active board file** — persisted at `~/.local/share/sticky-notes/active-board`. CLI resolves board from `--board` flag or this file.
+- **Tags** — board-scoped, many-to-many with tasks via `task_tags` junction table. `tag_task` auto-creates the tag if it doesn't exist. Composite FKs enforce same-board scoping at the DB level.
+- **Error translation** — `_friendly_errors()` context manager in the service layer catches `IntegrityError` and translates to `ValueError` with human-readable messages. `_UNIQUE_MESSAGES` dict maps constraint patterns to messages.
+- **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (column/project exists, on correct board, not archived) before hitting the DB.
+- **Migrations** — numbered SQL files in `src/sticky_notes/migrations/` (e.g., `003_schema_hardening.sql`). `_run_migrations()` discovers files by version prefix, wraps each in FK-off + transaction + FK-revalidate. SQL files contain only DDL/DML — no PRAGMAs, no transaction control. `SCHEMA_VERSION` is explicit; a test asserts it matches the highest migration file number. Fresh databases skip migrations entirely (`init_db` runs `schema.sql` and stamps `SCHEMA_VERSION`).
 - **Export** — `export.py` renders the full database to Markdown with Mermaid dependency graphs.
 - **DB path** — `~/.local/share/sticky-notes/sticky-notes.db` (XDG-compliant).
 - **WAL journal mode** — enables concurrent reads from TUI and CLI.

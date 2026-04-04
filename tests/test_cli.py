@@ -495,13 +495,12 @@ class TestErrorHandling:
         _, err = cli("add", "Task", "-p", "nonexistent", expect_exit=1)
         assert "not found" in err
 
-    def test_done_no_columns(self, cli):
+    def test_archive_column_with_active_tasks_blocked(self, cli):
         cli("board", "create", "dev")
         cli("col", "add", "todo")
         cli("add", "Task")
-        cli("col", "archive", "todo")
-        _, err = cli("done", "1", expect_exit=1)
-        assert "no columns" in err
+        _, err = cli("col", "archive", "todo", expect_exit=1)
+        assert "active task" in err
 
 
 # ---- Board flag override ----
@@ -813,6 +812,134 @@ class TestGroupCLI:
         assert "cycle" in err
 
 
+# ---- Tag ----
+
+
+class TestTagCommands:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        cli("board", "create", "dev")
+        cli("col", "add", "todo", "--pos", "0")
+        cli("col", "add", "done", "--pos", "1")
+
+    # -- Tag subcommands --
+
+    def test_tag_create(self, cli):
+        out, _ = cli("tag", "create", "bug")
+        assert "created tag 'bug'" in out
+
+    def test_tag_ls(self, cli):
+        cli("tag", "create", "bug")
+        cli("tag", "create", "feature")
+        out, _ = cli("tag", "ls")
+        assert "bug" in out
+        assert "feature" in out
+
+    def test_tag_ls_empty(self, cli):
+        out, _ = cli("tag", "ls")
+        assert "no tags" in out
+
+    def test_tag_rm(self, cli):
+        cli("tag", "create", "bug")
+        out, _ = cli("tag", "rm", "bug")
+        assert "archived tag 'bug'" in out
+
+    def test_tag_rm_not_found(self, cli):
+        _, err = cli("tag", "rm", "nonexistent", expect_exit=1)
+        assert "not found" in err
+
+    def test_tag_ls_all_shows_archived(self, cli):
+        cli("tag", "create", "bug")
+        cli("tag", "create", "old")
+        cli("tag", "rm", "old")
+        out, _ = cli("tag", "ls")
+        assert "bug" in out
+        assert "old" not in out
+        out, _ = cli("tag", "ls", "--all")
+        assert "bug" in out
+        assert "old" in out
+        assert "(archived)" in out
+
+    # -- Tags on add --
+
+    def test_add_with_tag(self, cli):
+        cli("add", "Fix bug", "--tag", "bug")
+        out, _ = cli("show", "1")
+        assert "bug" in out
+
+    def test_add_with_multiple_tags(self, cli):
+        cli("add", "Fix bug", "-t", "bug", "-t", "urgent")
+        out, _ = cli("show", "1")
+        assert "bug" in out
+        assert "urgent" in out
+
+    def test_add_tag_auto_creates(self, cli):
+        cli("add", "Fix", "-t", "new-tag")
+        out, _ = cli("tag", "ls")
+        assert "new-tag" in out
+
+    # -- Tags on edit --
+
+    def test_edit_add_tag(self, cli):
+        cli("add", "Task")
+        cli("edit", "1", "--tag", "bug")
+        out, _ = cli("show", "1")
+        assert "bug" in out
+
+    def test_edit_untag(self, cli):
+        cli("add", "Task", "-t", "bug")
+        cli("edit", "1", "--untag", "bug")
+        out, _ = cli("show", "1")
+        assert "Tags:" not in out
+
+    def test_edit_tag_only_no_field_changes(self, cli):
+        cli("add", "Task")
+        out, _ = cli("edit", "1", "-t", "bug")
+        assert "updated" in out
+
+    def test_edit_untag_not_found(self, cli):
+        cli("add", "Task")
+        _, err = cli("edit", "1", "--untag", "nonexistent", expect_exit=1)
+        assert "not found" in err
+
+    def test_edit_nothing_still_errors(self, cli):
+        cli("add", "Task")
+        _, err = cli("edit", "1", expect_exit=1)
+        assert "nothing to change" in err
+
+    # -- Tags on ls --
+
+    def test_ls_filter_by_tag(self, cli):
+        cli("add", "Tagged", "-t", "bug")
+        cli("add", "Untagged")
+        out, _ = cli("ls", "--tag", "bug")
+        assert "Tagged" in out
+        assert "Untagged" not in out
+
+    def test_ls_shows_tags(self, cli):
+        cli("add", "Task", "-t", "bug")
+        out, _ = cli("ls")
+        assert "[bug]" in out
+
+    def test_ls_shows_multiple_tags(self, cli):
+        cli("add", "Task", "-t", "bug", "-t", "urgent")
+        out, _ = cli("ls")
+        assert "[bug, urgent]" in out
+
+    def test_ls_tag_filter_not_found(self, cli):
+        _, err = cli("ls", "--tag", "nonexistent", expect_exit=1)
+        assert "not found" in err
+
+    # -- Tags on show --
+
+    def test_show_displays_tags(self, cli):
+        cli("add", "Task", "-t", "bug", "-t", "feature")
+        out, _ = cli("show", "1")
+        assert "Tags:" in out
+        assert "bug" in out
+        assert "feature" in out
+
+
 class TestHelp:
     def test_no_args_shows_help(self, capsys):
         try:
@@ -894,6 +1021,12 @@ class TestJsonOutput:
         assert data["task_id"] == 1
         assert data["depends_on_id"] == 2
 
+    def test_tag_create(self, cli):
+        cli("board", "create", "B")
+        data = self._json(cli, "tag", "create", "bug")
+        assert data["ok"] is True
+        assert data["id"] == 1
+
     # -- Lists --
 
     def test_ls(self, cli):
@@ -946,6 +1079,15 @@ class TestJsonOutput:
         assert isinstance(data, list)
         assert data[0]["title"] == "G1"
 
+    def test_tag_ls(self, cli):
+        cli("board", "create", "B")
+        cli("tag", "create", "bug")
+        cli("tag", "create", "feature")
+        data = self._json(cli, "tag", "ls")
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0]["name"] == "bug"
+
     # -- Details --
 
     def test_show(self, cli):
@@ -958,6 +1100,15 @@ class TestJsonOutput:
         assert "column" in data
         assert data["column"]["name"] == "Todo"
         assert "group_id" in data
+
+    def test_show_with_tags(self, cli):
+        cli("board", "create", "B")
+        cli("col", "add", "Todo")
+        cli("add", "Task A", "-t", "bug", "-t", "feature")
+        data = self._json(cli, "show", "1")
+        assert len(data["tags"]) == 2
+        assert data["tags"][0]["name"] == "bug"
+        assert data["tags"][1]["name"] == "feature"
 
     def test_project_show(self, cli):
         cli("board", "create", "B")

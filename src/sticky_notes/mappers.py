@@ -9,6 +9,7 @@ from .models import (
     Column,
     Group,
     Project,
+    Tag,
     Task,
     TaskField,
     TaskHistory,
@@ -90,6 +91,16 @@ def row_to_group(row: Row) -> Group:
     )
 
 
+def row_to_tag(row: Row) -> Tag:
+    return Tag(
+        id=row["id"],
+        board_id=row["board_id"],
+        name=row["name"],
+        archived=bool(row["archived"]),
+        created_at=row["created_at"],
+    )
+
+
 def row_to_task_history(row: Row) -> TaskHistory:
     return TaskHistory(
         id=row["id"],
@@ -117,11 +128,13 @@ def task_to_ref(
     task: Task,
     blocked_by_ids: tuple[int, ...],
     blocks_ids: tuple[int, ...],
+    tag_ids: tuple[int, ...] = (),
 ) -> TaskRef:
     return TaskRef(
         **shallow_fields(task, Task),
         blocked_by_ids=blocked_by_ids,
         blocks_ids=blocks_ids,
+        tag_ids=tag_ids,
     )
 
 
@@ -157,6 +170,7 @@ def task_ref_to_detail(
     blocked_by: tuple[Task, ...],
     blocks: tuple[Task, ...],
     history: tuple[TaskHistory, ...],
+    tags: tuple[Tag, ...] = (),
 ) -> TaskDetail:
     return TaskDetail(
         **shallow_fields(ref, TaskRef),
@@ -165,6 +179,7 @@ def task_ref_to_detail(
         blocked_by=blocked_by,
         blocks=blocks,
         history=history,
+        tags=tags,
     )
 
 

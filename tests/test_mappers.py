@@ -419,16 +419,13 @@ def _schema_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 class TestTaskFieldMatchesSchema:
-    def test_task_field_matches_check_constraint(self) -> None:
+    def test_rendered_schema_contains_all_task_fields(self) -> None:
+        """read_schema() generates the CHECK from TaskField, so drift is impossible.
+        This test verifies the template substitution works correctly."""
         schema = read_schema()
-        match = re.search(
-            r"field TEXT NOT NULL CHECK \(field IN \(([^)]+)\)\)", schema,
-        )
-        assert match is not None, "CHECK constraint for field not found in schema"
-        raw = match.group(1)
-        schema_fields = {f.strip().strip("'") for f in raw.split(",")}
-        enum_fields = {member.value for member in TaskField}
-        assert schema_fields == enum_fields
+        for field in TaskField:
+            assert f"'{field.value}'" in schema, f"TaskField.{field.name} missing from rendered schema"
+        assert "__TASK_FIELD_VALUES__" not in schema, "placeholder was not substituted"
 
 
 class TestNewBoardFieldsMatchSchema:

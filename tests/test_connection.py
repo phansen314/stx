@@ -45,6 +45,7 @@ class TestInitDb:
         assert tables == {
             "boards", "projects", "columns",
             "tasks", "task_dependencies", "task_history",
+            "tags", "task_tags",
             "groups",
         }
 
@@ -147,9 +148,9 @@ class TestSelfDependencyConstraint:
             t2 = insert_task(conn, board_id, "t2", col_id)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on_id) "
-                "VALUES (?, ?)",
-                (t1, t2),
+                "INSERT INTO task_dependencies (task_id, depends_on_id, board_id) "
+                "VALUES (?, ?, ?)",
+                (t1, t2, board_id),
             )
         row = conn.execute("SELECT * FROM task_dependencies").fetchone()
         assert row["task_id"] == t1
@@ -203,44 +204,169 @@ class TestForeignKeyEnforcement:
                 )
 
 
+class TestCrossBoardConstraints:
+    def test_dependency_same_board_allowed(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "b")
+            cid = insert_column(conn, bid)
+            t1 = insert_task(conn, bid, "t1", cid)
+            t2 = insert_task(conn, bid, "t2", cid)
+        with transaction(conn):
+            conn.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on_id, board_id) "
+                "VALUES (?, ?, ?)",
+                (t1, t2, bid),
+            )
+        row = conn.execute("SELECT * FROM task_dependencies").fetchone()
+        assert row["task_id"] == t1
+        assert row["depends_on_id"] == t2
+        assert row["board_id"] == bid
+
+    def test_dependency_cross_board_rejected(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            b1 = insert_board(conn, "b1")
+            b2 = insert_board(conn, "b2")
+            c1 = insert_column(conn, b1)
+            c2 = insert_column(conn, b2)
+            t1 = insert_task(conn, b1, "t1", c1)
+            t2 = insert_task(conn, b2, "t2", c2)
+        with pytest.raises(sqlite3.IntegrityError):
+            with transaction(conn):
+                conn.execute(
+                    "INSERT INTO task_dependencies (task_id, depends_on_id, board_id) "
+                    "VALUES (?, ?, ?)",
+                    (t1, t2, b1),
+                )
+
+    def test_tag_same_board_allowed(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "b")
+            cid = insert_column(conn, bid)
+            tid = insert_task(conn, bid, "t", cid)
+            tag_id = conn.execute(
+                "INSERT INTO tags (board_id, name) VALUES (?, 'bug')", (bid,)
+            ).lastrowid
+        with transaction(conn):
+            conn.execute(
+                "INSERT INTO task_tags (task_id, tag_id, board_id) VALUES (?, ?, ?)",
+                (tid, tag_id, bid),
+            )
+        row = conn.execute("SELECT * FROM task_tags").fetchone()
+        assert row["task_id"] == tid
+        assert row["tag_id"] == tag_id
+        assert row["board_id"] == bid
+
+    def test_tag_cross_board_rejected(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            b1 = insert_board(conn, "b1")
+            b2 = insert_board(conn, "b2")
+            c1 = insert_column(conn, b1)
+            tid = insert_task(conn, b1, "t", c1)
+            tag_id = conn.execute(
+                "INSERT INTO tags (board_id, name) VALUES (?, 'bug')", (b2,)
+            ).lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            with transaction(conn):
+                conn.execute(
+                    "INSERT INTO task_tags (task_id, tag_id, board_id) VALUES (?, ?, ?)",
+                    (tid, tag_id, b1),
+                )
+
+
 class TestMigrations:
     def test_migration_001_upgrades_old_task_history(self, tmp_path: Path) -> None:
         """Simulate a v0 database with old CHECK constraint, verify migration fixes it."""
         db_path = tmp_path / "old.db"
         conn = get_connection(db_path)
-        # Bootstrap full schema first so FK references exist
-        init_db(conn)
-        # Create a task so we have a valid task_id for history rows
+        # Bootstrap a v0-era schema: tables exist but task_history has an old
+        # CHECK constraint (no 'group_id').
+        conn.executescript("""
+            CREATE TABLE boards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE columns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id INTEGER NOT NULL REFERENCES boards(id),
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (board_id, name)
+            );
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id INTEGER NOT NULL REFERENCES boards(id),
+                name TEXT NOT NULL,
+                description TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (board_id, name)
+            );
+            CREATE TABLE groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                parent_id INTEGER REFERENCES groups(id),
+                title TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (project_id, title)
+            );
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id INTEGER NOT NULL REFERENCES boards(id),
+                project_id INTEGER REFERENCES projects(id),
+                title TEXT NOT NULL,
+                description TEXT,
+                column_id INTEGER NOT NULL REFERENCES columns(id),
+                priority INTEGER NOT NULL DEFAULT 1,
+                due_date INTEGER,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                start_date INTEGER,
+                finish_date INTEGER,
+                UNIQUE (board_id, title)
+            );
+            CREATE TABLE task_groups (
+                task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+                group_id INTEGER NOT NULL REFERENCES groups(id)
+            );
+            CREATE TABLE task_dependencies (
+                task_id INTEGER NOT NULL REFERENCES tasks(id),
+                depends_on_id INTEGER NOT NULL REFERENCES tasks(id),
+                PRIMARY KEY (task_id, depends_on_id),
+                CHECK (task_id != depends_on_id)
+            );
+            CREATE TABLE task_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL REFERENCES tasks(id),
+                field TEXT NOT NULL CHECK (field IN (
+                    'title','description','column_id','project_id',
+                    'priority','due_date','position','archived',
+                    'start_date','finish_date'
+                )),
+                old_value TEXT,
+                new_value TEXT NOT NULL,
+                source TEXT NOT NULL,
+                changed_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+        """)
+        # Seed data
         conn.execute("INSERT INTO boards (id, name) VALUES (1, 'b')")
         conn.execute("INSERT INTO columns (id, board_id, name) VALUES (1, 1, 'c')")
         conn.execute("INSERT INTO tasks (id, board_id, title, column_id) VALUES (1, 1, 't', 1)")
-        # Replace task_history with old-style CHECK (without group_id)
-        conn.execute("DROP TABLE task_history")
-        conn.execute(
-            "CREATE TABLE task_history ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "  task_id INTEGER NOT NULL REFERENCES tasks(id),"
-            "  field TEXT NOT NULL CHECK (field IN ("
-            "    'title', 'description', 'column_id', 'project_id',"
-            "    'priority', 'due_date', 'position', 'archived',"
-            "    'start_date', 'finish_date'"
-            "  )),"
-            "  old_value TEXT,"
-            "  new_value TEXT NOT NULL,"
-            "  source TEXT NOT NULL,"
-            "  changed_at INTEGER NOT NULL DEFAULT (unixepoch())"
-            ")"
-        )
         conn.execute(
             "INSERT INTO task_history (task_id, field, new_value, source) "
             "VALUES (1, 'title', 'old', 'test')"
         )
-        # Reset user_version to 0 to simulate old database
-        conn.execute("PRAGMA user_version = 0")
         conn.commit()
 
-        # Run init_db which should migrate
-        init_db(conn)
+        # Run migrations from v0
+        _run_migrations(conn)
 
         # Verify user_version is updated
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
@@ -270,6 +396,7 @@ class TestMigrations:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 board_id INTEGER NOT NULL REFERENCES boards(id),
                 name TEXT NOT NULL,
+                description TEXT,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL DEFAULT (unixepoch()),
                 UNIQUE (board_id, name)
@@ -363,6 +490,20 @@ class TestMigrations:
         assert row["group_id"] == 1
         row = conn.execute("SELECT group_id FROM tasks WHERE id = 2").fetchone()
         assert row["group_id"] is None
+        # Verify COLLATE NOCASE applied to name/title columns by migration 003
+        # (case-insensitive lookup should work on boards after rebuild)
+        assert conn.execute(
+            "SELECT id FROM boards WHERE name = 'B'"
+        ).fetchone() is not None
+        # Verify composite FK (group_id, project_id) enforces group-project match
+        conn.execute("INSERT INTO projects (id, board_id, name) VALUES (2, 1, 'p2')")
+        conn.execute("INSERT INTO groups (id, project_id, title) VALUES (2, 2, 'g2')")
+        with pytest.raises(sqlite3.IntegrityError):
+            # Task in project 1 cannot be assigned to group in project 2
+            conn.execute(
+                "INSERT INTO tasks (board_id, title, column_id, project_id, group_id) "
+                "VALUES (1, 'bad', 1, 1, 2)"
+            )
         conn.close()
 
     def test_migration_skips_when_already_current(self, conn: sqlite3.Connection) -> None:
@@ -404,3 +545,44 @@ class TestTaskHistoryFieldConstraint:
             )
         row = conn.execute("SELECT field FROM task_history").fetchone()
         assert row["field"] == "title"
+
+
+class TestMigrationFileStructure:
+    def test_schema_version_matches_highest_migration(self) -> None:
+        """SCHEMA_VERSION must equal the highest numbered migration file."""
+        import importlib.resources
+
+        pkg = importlib.resources.files("sticky_notes.migrations")
+        versions = [
+            int(r.name[:3])
+            for r in pkg.iterdir()
+            if r.name.endswith(".sql") and r.name[:3].isdigit()
+        ]
+        assert versions, "No migration SQL files found"
+        assert max(versions) == SCHEMA_VERSION
+
+    def test_migration_files_contain_no_pragmas(self) -> None:
+        """Migration SQL files must not contain PRAGMAs or transaction control."""
+        import importlib.resources
+
+        pkg = importlib.resources.files("sticky_notes.migrations")
+        for resource in pkg.iterdir():
+            if not resource.name.endswith(".sql"):
+                continue
+            content = resource.read_text().upper()
+            assert "PRAGMA" not in content, f"{resource.name} contains PRAGMA"
+            assert "\nBEGIN" not in content, f"{resource.name} contains BEGIN"
+            assert "\nCOMMIT" not in content, f"{resource.name} contains COMMIT"
+            assert "\nROLLBACK" not in content, f"{resource.name} contains ROLLBACK"
+
+    def test_migration_file_sequence_is_contiguous(self) -> None:
+        """Migration file version numbers must form a contiguous sequence 1..N."""
+        import importlib.resources
+
+        pkg = importlib.resources.files("sticky_notes.migrations")
+        versions = sorted(
+            int(r.name[:3])
+            for r in pkg.iterdir()
+            if r.name.endswith(".sql") and r.name[:3].isdigit()
+        )
+        assert versions == list(range(1, len(versions) + 1))

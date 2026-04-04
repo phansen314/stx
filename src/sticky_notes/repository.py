@@ -10,6 +10,7 @@ from .mappers import (
     row_to_column,
     row_to_group,
     row_to_project,
+    row_to_tag,
     row_to_task,
     row_to_task_history,
 )
@@ -21,9 +22,11 @@ from .models import (
     NewColumn,
     NewGroup,
     NewProject,
+    NewTag,
     NewTask,
     NewTaskHistory,
     Project,
+    Tag,
     Task,
     TaskFilter,
     TaskHistory,
@@ -49,6 +52,7 @@ _TASK_UPDATABLE: frozenset[str] = frozenset({
     "start_date",
     "finish_date",
 })
+_TAG_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _GROUP_UPDATABLE: frozenset[str] = frozenset({
     "title", "parent_id", "position", "archived",
 })
@@ -99,7 +103,9 @@ def get_board(conn: sqlite3.Connection, board_id: int) -> Board | None:
 
 
 def get_board_by_name(conn: sqlite3.Connection, name: str) -> Board | None:
-    row = conn.execute("SELECT * FROM boards WHERE name = ?", (name,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM boards WHERE name = ? AND archived = 0", (name,)
+    ).fetchone()
     return row_to_board(row) if row else None
 
 
@@ -108,12 +114,10 @@ def list_boards(
     *,
     include_archived: bool = False,
 ) -> tuple[Board, ...]:
-    if include_archived:
-        rows = conn.execute("SELECT * FROM boards ORDER BY created_at").fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM boards WHERE archived = 0 ORDER BY created_at"
-        ).fetchall()
+    archive_clause = "" if include_archived else " WHERE archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM boards{archive_clause} ORDER BY created_at"
+    ).fetchall()
     return tuple(row_to_board(r) for r in rows)
 
 
@@ -149,7 +153,7 @@ def get_column_by_name(
     name: str,
 ) -> Column | None:
     row = conn.execute(
-        "SELECT * FROM columns WHERE board_id = ? AND name = ?",
+        "SELECT * FROM columns WHERE board_id = ? AND name = ? AND archived = 0",
         (board_id, name),
     ).fetchone()
     return row_to_column(row) if row else None
@@ -166,16 +170,11 @@ def list_columns(
     *,
     include_archived: bool = False,
 ) -> tuple[Column, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM columns WHERE board_id = ? ORDER BY position",
-            (board_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM columns WHERE board_id = ? AND archived = 0 ORDER BY position",
-            (board_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM columns WHERE board_id = ?{archive_clause} ORDER BY position, id",
+        (board_id,),
+    ).fetchall()
     return tuple(row_to_column(r) for r in rows)
 
 
@@ -212,7 +211,7 @@ def get_project_by_name(
     name: str,
 ) -> Project | None:
     row = conn.execute(
-        "SELECT * FROM projects WHERE board_id = ? AND name = ?",
+        "SELECT * FROM projects WHERE board_id = ? AND name = ? AND archived = 0",
         (board_id, name),
     ).fetchone()
     return row_to_project(row) if row else None
@@ -229,16 +228,11 @@ def list_projects(
     *,
     include_archived: bool = False,
 ) -> tuple[Project, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM projects WHERE board_id = ? ORDER BY created_at",
-            (board_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM projects WHERE board_id = ? AND archived = 0 ORDER BY created_at",
-            (board_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM projects WHERE board_id = ?{archive_clause} ORDER BY created_at",
+        (board_id,),
+    ).fetchall()
     return tuple(row_to_project(r) for r in rows)
 
 
@@ -281,7 +275,7 @@ def get_task_by_title(
     title: str,
 ) -> Task | None:
     row = conn.execute(
-        "SELECT * FROM tasks WHERE board_id = ? AND title = ?",
+        "SELECT * FROM tasks WHERE board_id = ? AND title = ? AND archived = 0",
         (board_id, title),
     ).fetchone()
     return row_to_task(row) if row else None
@@ -293,16 +287,11 @@ def list_tasks(
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE board_id = ? ORDER BY position",
-            (board_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE board_id = ? AND archived = 0 ORDER BY position",
-            (board_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM tasks WHERE board_id = ?{archive_clause} ORDER BY position, id",
+        (board_id,),
+    ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
 
@@ -312,16 +301,11 @@ def list_tasks_by_column(
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE column_id = ? ORDER BY position",
-            (column_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE column_id = ? AND archived = 0 ORDER BY position",
-            (column_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM tasks WHERE column_id = ?{archive_clause} ORDER BY position, id",
+        (column_id,),
+    ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
 
@@ -331,16 +315,11 @@ def list_tasks_by_project(
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE project_id = ? ORDER BY position",
-            (project_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE project_id = ? AND archived = 0 ORDER BY position",
-            (project_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM tasks WHERE project_id = ?{archive_clause} ORDER BY position, id",
+        (project_id,),
+    ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
 
@@ -367,9 +346,12 @@ def list_tasks_filtered(
     if f.search is not None:
         clauses.append("title LIKE ?")
         params.append(f"%{f.search}%")
+    if f.tag_id is not None:
+        clauses.append("id IN (SELECT task_id FROM task_tags WHERE tag_id = ?)")
+        params.append(f.tag_id)
     where = " AND ".join(clauses)
     rows = conn.execute(
-        f"SELECT * FROM tasks WHERE {where} ORDER BY position",
+        f"SELECT * FROM tasks WHERE {where} ORDER BY position, id",
         params,
     ).fetchall()
     return tuple(row_to_task(r) for r in rows)
@@ -412,8 +394,9 @@ def add_dependency(
     depends_on_id: int,
 ) -> None:
     conn.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)",
-        (task_id, depends_on_id),
+        "INSERT INTO task_dependencies (task_id, depends_on_id, board_id) "
+        "VALUES (?, ?, (SELECT board_id FROM tasks WHERE id = ?))",
+        (task_id, depends_on_id, task_id),
     )
 
 
@@ -504,6 +487,23 @@ def list_blocks_tasks(
     return tuple(row_to_task(r) for r in rows)
 
 
+def get_reachable_task_ids(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> tuple[int, ...]:
+    """Return all task IDs reachable from *task_id* by following depends_on edges."""
+    rows = conn.execute(
+        "WITH RECURSIVE reachable AS ("
+        "  SELECT depends_on_id AS id FROM task_dependencies WHERE task_id = ? "
+        "  UNION "
+        "  SELECT td.depends_on_id FROM task_dependencies td "
+        "  JOIN reachable r ON td.task_id = r.id"
+        ") SELECT id FROM reachable",
+        (task_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
 def list_all_dependencies(
     conn: sqlite3.Connection,
 ) -> tuple[tuple[int, int], ...]:
@@ -543,15 +543,162 @@ def list_task_history(
     return tuple(row_to_task_history(r) for r in rows)
 
 
+# ---- Tag functions ----
+
+
+def insert_tag(conn: sqlite3.Connection, new: NewTag) -> Tag:
+    d = _asdict_for_insert(new)
+    cur = conn.execute(
+        "INSERT INTO tags (board_id, name) VALUES (:board_id, :name)",
+        d,
+    )
+    row = conn.execute("SELECT * FROM tags WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return row_to_tag(row)
+
+
+def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag | None:
+    row = conn.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)).fetchone()
+    return row_to_tag(row) if row else None
+
+
+def get_tag_by_name(
+    conn: sqlite3.Connection,
+    board_id: int,
+    name: str,
+) -> Tag | None:
+    row = conn.execute(
+        "SELECT * FROM tags WHERE board_id = ? AND name = ? AND archived = 0",
+        (board_id, name),
+    ).fetchone()
+    return row_to_tag(row) if row else None
+
+
+def list_tags(
+    conn: sqlite3.Connection,
+    board_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Tag, ...]:
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM tags WHERE board_id = ?{archive_clause} ORDER BY name",
+        (board_id,),
+    ).fetchall()
+    return tuple(row_to_tag(r) for r in rows)
+
+
+def update_tag(
+    conn: sqlite3.Connection,
+    tag_id: int,
+    changes: dict[str, Any],
+) -> Tag:
+    sql, params = _build_update("tags", tag_id, changes, _TAG_UPDATABLE)
+    cur = conn.execute(sql, params)
+    if cur.rowcount == 0:
+        raise LookupError(f"tag {tag_id} not found")
+    row = conn.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)).fetchone()
+    return row_to_tag(row)
+
+
+# ---- Task-tag join table functions ----
+
+
+def add_tag_to_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    tag_id: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO task_tags (task_id, tag_id, board_id) "
+        "VALUES (?, ?, (SELECT board_id FROM tasks WHERE id = ?))",
+        (task_id, tag_id, task_id),
+    )
+
+
+def remove_tag_from_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    tag_id: int,
+) -> None:
+    conn.execute(
+        "DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?",
+        (task_id, tag_id),
+    )
+
+
+def list_tag_ids_by_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT tag_id FROM task_tags WHERE task_id = ?",
+        (task_id,),
+    ).fetchall()
+    return tuple(r["tag_id"] for r in rows)
+
+
+def list_tags_by_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Tag, ...]:
+    archive_clause = "" if include_archived else " AND t.archived = 0"
+    rows = conn.execute(
+        f"SELECT t.* FROM tags t "
+        f"JOIN task_tags tt ON t.id = tt.tag_id "
+        f"WHERE tt.task_id = ?{archive_clause} ORDER BY t.name",
+        (task_id,),
+    ).fetchall()
+    return tuple(row_to_tag(r) for r in rows)
+
+
+def list_task_ids_by_tag(
+    conn: sqlite3.Connection,
+    tag_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT task_id FROM task_tags WHERE tag_id = ?",
+        (tag_id,),
+    ).fetchall()
+    return tuple(r["task_id"] for r in rows)
+
+
+def batch_tag_ids_by_task(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+    *,
+    include_archived: bool = False,
+) -> dict[int, tuple[int, ...]]:
+    """Return {task_id: tuple_of_tag_ids} for a batch of task IDs."""
+    if not task_ids:
+        return {}
+    placeholders = ",".join("?" * len(task_ids))
+    archive_clause = "" if include_archived else " AND t.archived = 0"
+    rows = conn.execute(
+        f"SELECT tt.task_id, tt.tag_id FROM task_tags tt "
+        f"JOIN tags t ON t.id = tt.tag_id "
+        f"WHERE tt.task_id IN ({placeholders}){archive_clause}",
+        task_ids,
+    ).fetchall()
+    intermediate: dict[int, list[int]] = {}
+    for r in rows:
+        intermediate.setdefault(r["task_id"], []).append(r["tag_id"])
+    return {tid: tuple(intermediate.get(tid, ())) for tid in task_ids}
+
+
 # ---- Project helper ----
 
 
 def list_task_ids_by_project(
     conn: sqlite3.Connection,
     project_id: int,
+    *,
+    include_archived: bool = False,
 ) -> tuple[int, ...]:
+    archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        "SELECT id FROM tasks WHERE project_id = ?",
+        f"SELECT id FROM tasks WHERE project_id = ?{archive_clause}",
         (project_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
@@ -582,7 +729,7 @@ def get_group_by_title(
     title: str,
 ) -> Group | None:
     row = conn.execute(
-        "SELECT * FROM groups WHERE project_id = ? AND title = ?",
+        "SELECT * FROM groups WHERE project_id = ? AND title = ? AND archived = 0",
         (project_id, title),
     ).fetchone()
     return row_to_group(row) if row else None
@@ -594,16 +741,11 @@ def list_groups(
     *,
     include_archived: bool = False,
 ) -> tuple[Group, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM groups WHERE project_id = ? ORDER BY position",
-            (project_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM groups WHERE project_id = ? AND archived = 0 ORDER BY position",
-            (project_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM groups WHERE project_id = ?{archive_clause} ORDER BY position, id",
+        (project_id,),
+    ).fetchall()
     return tuple(row_to_group(r) for r in rows)
 
 
@@ -643,9 +785,12 @@ def unassign_tasks_from_group(
 def list_task_ids_by_group(
     conn: sqlite3.Connection,
     group_id: int,
+    *,
+    include_archived: bool = False,
 ) -> tuple[int, ...]:
+    archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        "SELECT id FROM tasks WHERE group_id = ?", (group_id,)
+        f"SELECT id FROM tasks WHERE group_id = ?{archive_clause}", (group_id,)
     ).fetchall()
     return tuple(r["id"] for r in rows)
 
@@ -653,13 +798,16 @@ def list_task_ids_by_group(
 def batch_task_ids_by_group(
     conn: sqlite3.Connection,
     group_ids: tuple[int, ...],
+    *,
+    include_archived: bool = False,
 ) -> dict[int, tuple[int, ...]]:
     """Return {group_id: (task_id, ...)} for a batch of group IDs."""
     if not group_ids:
         return {}
     placeholders = ",".join("?" * len(group_ids))
+    archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT group_id, id FROM tasks WHERE group_id IN ({placeholders})",
+        f"SELECT group_id, id FROM tasks WHERE group_id IN ({placeholders}){archive_clause}",
         group_ids,
     ).fetchall()
     mapping: dict[int, list[int]] = {}
@@ -682,7 +830,7 @@ def batch_child_ids_by_group(
     rows = conn.execute(
         f"SELECT id, parent_id FROM groups "
         f"WHERE parent_id IN ({placeholders}){archive_clause} "
-        f"ORDER BY position",
+        f"ORDER BY position, id",
         group_ids,
     ).fetchall()
     mapping: dict[int, list[int]] = {}
@@ -730,16 +878,11 @@ def list_child_groups(
     *,
     include_archived: bool = False,
 ) -> tuple[Group, ...]:
-    if include_archived:
-        rows = conn.execute(
-            "SELECT * FROM groups WHERE parent_id = ? ORDER BY position",
-            (group_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM groups WHERE parent_id = ? AND archived = 0 ORDER BY position",
-            (group_id,),
-        ).fetchall()
+    archive_clause = "" if include_archived else " AND archived = 0"
+    rows = conn.execute(
+        f"SELECT * FROM groups WHERE parent_id = ?{archive_clause} ORDER BY position, id",
+        (group_id,),
+    ).fetchall()
     return tuple(row_to_group(r) for r in rows)
 
 
@@ -752,8 +895,7 @@ def get_subtree_group_ids(
         "  SELECT id FROM groups WHERE id = ? "
         "  UNION ALL "
         "  SELECT g.id FROM groups g "
-        "  JOIN subtree s ON g.parent_id = s.id "
-        "  WHERE g.archived = 0"
+        "  JOIN subtree s ON g.parent_id = s.id"
         ") SELECT id FROM subtree",
         (group_id,),
     ).fetchall()

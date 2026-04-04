@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import sqlite3
 
+from . import repository as repo
 from . import service
 from .formatting import format_group_num, format_task_num
 
@@ -31,6 +32,9 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         task_ids = {t.id for t in tasks}
         projects = service.list_projects(conn, bid)
         proj_map = {p.id: p.name for p in projects}
+        tags = service.list_tags(conn, bid)
+        tag_map = {t.id: t.name for t in tags}
+        task_tag_map = repo.batch_tag_ids_by_task(conn, tuple(task_ids))
 
         # Group tasks by column
         tasks_by_col: dict[int, list] = {}
@@ -63,6 +67,21 @@ def export_markdown(conn: sqlite3.Connection) -> str:
                 desc = p.description or ""
                 count = proj_task_count.get(p.id, 0)
                 lines.append(f"| {p.name} | {desc} | {count} |")
+            lines.append("")
+
+        # -- Tags table --
+        if tags:
+            tag_task_count: dict[int, int] = {}
+            for tid, tag_ids in task_tag_map.items():
+                for tag_id in tag_ids:
+                    tag_task_count[tag_id] = tag_task_count.get(tag_id, 0) + 1
+            lines.append("### Tags")
+            lines.append("")
+            lines.append("| Tag | Tasks |")
+            lines.append("|-----|-------|")
+            for t in tags:
+                count = tag_task_count.get(t.id, 0)
+                lines.append(f"| {t.name} | {count} |")
             lines.append("")
 
         # -- Groups per project --
@@ -117,12 +136,15 @@ def export_markdown(conn: sqlite3.Connection) -> str:
                 continue
             lines.append(f"#### {c.name}")
             lines.append("")
-            lines.append("| Task | Title | Priority | Project | Due |")
-            lines.append("|------|-------|----------|---------|-----|")
+            lines.append("| Task | Title | Priority | Project | Tags | Due |")
+            lines.append("|------|-------|----------|---------|------|-----|")
             for t in col_tasks:
                 task_num = format_task_num(t.id)
                 pri = f"P{t.priority}" if t.priority else ""
                 proj = proj_map.get(t.project_id, "")
+                task_tags = ", ".join(
+                    tag_map[tid] for tid in task_tag_map.get(t.id, ()) if tid in tag_map
+                )
                 due = (
                     datetime.datetime.fromtimestamp(
                         t.due_date, tz=datetime.timezone.utc
@@ -130,7 +152,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
                     if t.due_date
                     else ""
                 )
-                lines.append(f"| {task_num} | {t.title} | {pri} | {proj} | {due} |")
+                lines.append(f"| {task_num} | {t.title} | {pri} | {proj} | {task_tags} | {due} |")
             lines.append("")
 
         # -- Dependencies (Mermaid) --

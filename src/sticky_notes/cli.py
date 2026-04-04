@@ -69,31 +69,11 @@ def _resolve_board(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 
 def _resolve_column(conn: sqlite3.Connection, board_id: int, name: str) -> Column:
-    # Try exact match first (fast, direct SQL lookup)
-    try:
-        return service.get_column_by_name(conn, board_id, name)
-    except LookupError:
-        pass
-    # Fall back to case-insensitive scan for CLI convenience
-    cols = service.list_columns(conn, board_id)
-    for col in cols:
-        if col.name.lower() == name.lower():
-            return col
-    raise LookupError(f"column {name!r} not found")
+    return service.get_column_by_name(conn, board_id, name)
 
 
 def _resolve_project(conn: sqlite3.Connection, board_id: int, name: str) -> Project:
-    # Try exact match first (fast, direct SQL lookup)
-    try:
-        return service.get_project_by_name(conn, board_id, name)
-    except LookupError:
-        pass
-    # Fall back to case-insensitive scan for CLI convenience
-    projects = service.list_projects(conn, board_id)
-    for proj in projects:
-        if proj.name.lower() == name.lower():
-            return proj
-    raise LookupError(f"project {name!r} not found")
+    return service.get_project_by_name(conn, board_id, name)
 
 
 def _first_column(conn: sqlite3.Connection, board_id: int) -> Column:
@@ -191,6 +171,9 @@ def cmd_add(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -
         priority=args.priority,
         due_date=due,
     )
+    if args.tag:
+        for tag_name in args.tag:
+            service.tag_task(conn, task.id, tag_name, board.id)
     return Ok(data={"id": task.id}, text=f"created {format_task_num(task.id)}")
 
 
@@ -206,11 +189,16 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
         project_id = _resolve_project(conn, board.id, args.project).id
     priority = args.priority
     search = args.search
+    tag_id = None
+    if args.tag:
+        tag = service.get_tag_by_name(conn, board.id, args.tag)
+        tag_id = tag.id
     task_filter = TaskFilter(
         column_id=column_id,
         project_id=project_id,
         priority=priority,
         search=search,
+        tag_id=tag_id,
         include_archived=args.all,
     )
     refs = service.list_task_refs_filtered(conn, board.id, task_filter=task_filter)
@@ -235,6 +223,8 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
     # Build text output
     projects = service.list_projects(conn, board.id, include_archived=True)
     proj_names: dict[int, str] = {p.id: p.name for p in projects}
+    all_tags = service.list_tags(conn, board.id, include_archived=True)
+    tag_names: dict[int, str] = {t.id: t.name for t in all_tags}
     lines: list[str] = []
     for col in cols:
         lines.append(f"\n== {col.name} ==")
@@ -246,6 +236,10 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
                 parts = [f"  {format_task_num(ref.id)}  {format_priority(ref.priority)} {ref.title}"]
                 if ref.project_id and ref.project_id in proj_names:
                     parts.append(f"  @{proj_names[ref.project_id]}")
+                if ref.tag_ids:
+                    tag_strs = [tag_names[tid] for tid in ref.tag_ids if tid in tag_names]
+                    if tag_strs:
+                        parts.append(f"  [{', '.join(tag_strs)}]")
                 lines.append("".join(parts))
     return Data(payload=payload, text="\n".join(lines))
 
@@ -260,6 +254,9 @@ def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
     if detail.group_id is not None:
         grp = service.get_group(conn, detail.group_id)
         lines.append(f"  Group:       {grp.title} ({format_group_num(grp.id)})")
+    if detail.tags:
+        tag_str = ", ".join(t.name for t in detail.tags)
+        lines.append(f"  Tags:        {tag_str}")
     lines.append(f"  Priority:    {detail.priority}")
     if detail.due_date:
         lines.append(f"  Due:         {format_timestamp(detail.due_date)}")
@@ -276,7 +273,8 @@ def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
         lines.append("\n  History:")
         for h in detail.history:
             old_str = h.old_value if h.old_value is not None else "(none)"
-            lines.append(f"    {format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+            new_str = h.new_value if h.new_value is not None else "(none)"
+            lines.append(f"    {format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {new_str}  ({h.source})")
     return Data(payload=detail, text="\n".join(lines))
 
 
@@ -294,9 +292,17 @@ def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
     if args.project is not None:
         board = _resolve_board(conn, args, db_path)
         changes["project_id"] = _resolve_project(conn, board.id, args.project).id
-    if not changes:
+    has_tag_ops = bool(args.tag or args.untag)
+    if not changes and not has_tag_ops:
         raise ValueError("nothing to change")
-    service.update_task(conn, task_id, changes, source="cli")
+    if changes:
+        service.update_task(conn, task_id, changes, source="cli")
+    if has_tag_ops:
+        board = _resolve_board(conn, args, db_path)
+        for tag_name in (args.tag or []):
+            service.tag_task(conn, task_id, tag_name, board.id)
+        for tag_name in (args.untag or []):
+            service.untag_task(conn, task_id, tag_name, board.id)
     return Ok(data={"id": task_id}, text=f"updated {format_task_num(task_id)}")
 
 
@@ -387,7 +393,8 @@ def cmd_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -
     lines: list[str] = []
     for h in history:
         old_str = h.old_value if h.old_value is not None else "(none)"
-        lines.append(f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {h.new_value}  ({h.source})")
+        new_str = h.new_value if h.new_value is not None else "(none)"
+        lines.append(f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {new_str}  ({h.source})")
     return Data(payload=history, text="\n".join(lines))
 
 
@@ -703,6 +710,34 @@ def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_pa
     return Ok(data={"task_id": task_id}, text=f"unassigned {format_task_num(task_id)} from group")
 
 
+# ---- Tag ----
+
+
+def cmd_tag_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    board = _resolve_board(conn, args, db_path)
+    tag = service.create_tag(conn, board.id, args.name)
+    return Ok(data={"id": tag.id}, text=f"created tag {tag.name!r}")
+
+
+def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    board = _resolve_board(conn, args, db_path)
+    tags = service.list_tags(conn, board.id, include_archived=args.all)
+    if not tags:
+        return Data(payload=tags, text="no tags")
+    lines = []
+    for t in tags:
+        archived = " (archived)" if t.archived else ""
+        lines.append(f"  {t.name}{archived}")
+    return Data(payload=tags, text="\n".join(lines))
+
+
+def cmd_tag_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    board = _resolve_board(conn, args, db_path)
+    tag = service.get_tag_by_name(conn, board.id, args.name)
+    service.archive_tag(conn, tag.id)
+    return Ok(data={"id": tag.id}, text=f"archived tag {tag.name!r}")
+
+
 # ---- Export ----
 
 
@@ -750,6 +785,9 @@ HANDLERS: dict[str, CommandHandler] = {
     "group_mv": cmd_group_mv,
     "group_assign": cmd_group_assign,
     "group_unassign": cmd_group_unassign,
+    "tag_create": cmd_tag_create,
+    "tag_ls": cmd_tag_ls,
+    "tag_rm": cmd_tag_rm,
     "export": cmd_export,
 }
 
@@ -773,6 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--project", "-p", default=None)
     p_add.add_argument("--priority", type=int, default=1)
     p_add.add_argument("--due", default=None, help="YYYY-MM-DD")
+    p_add.add_argument("--tag", "-t", action="append", default=None, help="tag name (repeatable)")
 
     p_ls = sub.add_parser("ls", help="list tasks")
     p_ls.set_defaults(command="ls")
@@ -782,6 +821,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--priority", "-P", type=int, default=None, help="filter by priority (1-5)")
     p_ls.add_argument("--search", "-s", default=None, help="search title substring")
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
+    p_ls.add_argument("--tag", "-t", default=None, help="filter by tag name")
 
     p_show = sub.add_parser("show", help="show task detail")
     p_show.set_defaults(command="show")
@@ -795,6 +835,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--priority", type=int, default=None)
     p_edit.add_argument("--due", default=None, help="YYYY-MM-DD")
     p_edit.add_argument("--project", "-p", default=None)
+    p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
+    p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
 
     p_mv = sub.add_parser("mv", help="move task to column or board")
     p_mv.set_defaults(command="mv")
@@ -947,6 +989,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_gun = grp_sub.add_parser("unassign", help="unassign task from group")
     p_gun.set_defaults(command="group_unassign")
     p_gun.add_argument("task", help="task number or title")
+
+    # ---- Tag subcommands ----
+
+    p_tag = sub.add_parser("tag", help="tag management")
+    tag_sub = p_tag.add_subparsers()
+
+    p_tc = tag_sub.add_parser("create", help="create a tag")
+    p_tc.set_defaults(command="tag_create")
+    p_tc.add_argument("name")
+
+    p_tl = tag_sub.add_parser("ls", help="list tags")
+    p_tl.set_defaults(command="tag_ls")
+    p_tl.add_argument("--all", "-a", action="store_true", help="include archived")
+
+    p_tr = tag_sub.add_parser("rm", help="archive a tag")
+    p_tr.set_defaults(command="tag_rm")
+    p_tr.add_argument("name")
 
     # ---- Export ----
 
