@@ -24,10 +24,10 @@ pip install -e .
 todo board create work --columns "To Do","In Progress","Done"
 
 # Add and manage tasks
-todo create "Write README" -c "To Do"
-todo ls
-todo mv task-0001 "In Progress"
-todo mv task-0001 "Done"
+todo task create "Write README" -c "To Do"
+todo task ls
+todo task mv task-0001 "In Progress"
+todo task mv task-0001 "Done"
 
 # Launch the TUI
 todo tui
@@ -45,19 +45,19 @@ Entry point: `todo`
 
 | Command | Description |
 |---------|-------------|
-| `todo create <title> -c <col>` | Create a task in the named column (required) |
-| `todo ls` | List tasks on the active board |
-| `todo show <task>` | Show task detail with history and dependencies |
-| `todo edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo mv <task> <column> [pos]` | Move task to a column (within-board only) |
-| `todo rm <task>` | Archive a task |
-| `todo log <task>` | Show task change history |
+| `todo task create <title> -c <col>` | Create a task in the named column (required) |
+| `todo task ls` | List tasks on the active board |
+| `todo task show <task>` | Show task detail with history and dependencies |
+| `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
+| `todo task mv <task> <column> [pos]` | Move task to a column (within-board only) |
+| `todo task rm <task>` | Archive a task |
+| `todo task log <task>` | Show task change history |
 
 Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
 
 ### List Filters
 
-`todo ls` supports filtering:
+`todo task ls` supports filtering:
 
 | Flag | Description |
 |------|-------------|
@@ -87,13 +87,13 @@ Tasks can be transferred between boards. The transfer creates a copy on the targ
 
 ```sh
 # Transfer task to another board
-todo transfer task-0001 --board ops --column Backlog
+todo task transfer task-0001 --board ops --column Backlog
 
 # Transfer with project assignment on the target board
-todo transfer task-0001 --board ops --column Backlog --project infra
+todo task transfer task-0001 --board ops --column Backlog --project infra
 
 # Preview before transferring (checks for blocking dependencies)
-todo transfer task-0001 --board ops --column Backlog --dry-run
+todo task transfer task-0001 --board ops --column Backlog --dry-run
 ```
 
 ## TUI
@@ -182,10 +182,10 @@ All work lives on the **"claude" board** which has three columns: Backlog, In Pr
 
 1. Switch to the claude board: `todo board use claude`
 2. Create a project for the plan: `todo project create "<plan name>"`
-3. Create one task per plan step: `todo create "<step>" -c Backlog --project "<plan>" -P N`
+3. Create one task per plan step: `todo task create "<step>" -c Backlog --project "<plan>" -P N`
 4. Add dependencies where ordering matters: `todo dep create task-NNNN task-MMMM`
-5. Move tasks to "In Progress" when starting: `todo mv task-NNNN "In Progress"`
-6. Mark tasks done when complete: `todo mv task-NNNN Done`
+5. Move tasks to "In Progress" when starting: `todo task mv task-NNNN "In Progress"`
+6. Mark tasks done when complete: `todo task mv task-NNNN Done`
 7. Run `todo export` at milestones for a full status snapshot
 ```
 

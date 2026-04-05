@@ -15,9 +15,12 @@ from helpers import (
     insert_task_dependency,
     insert_task_tag,
 )
+import json
+
 from sticky_notes.repository import set_task_group_id
-from sticky_notes.connection import transaction
-from sticky_notes.export import export_markdown, _md_escape
+from sticky_notes.connection import SCHEMA_VERSION, transaction
+from sticky_notes.export import export_full_json, export_markdown, _md_escape
+from helpers import insert_task_history
 
 
 # ---- Helpers ----
@@ -280,3 +283,98 @@ class TestExportMdEscaping:
             insert_project(conn, bid, "P", description="use `cmd` here")
         md = export_markdown(conn)
         assert r"use \`cmd\` here" in md
+
+
+class TestExportFullJson:
+    def test_schema_version(self, conn: sqlite3.Connection) -> None:
+        result = export_full_json(conn)
+        assert result["schema_version"] == SCHEMA_VERSION
+
+    def test_exported_at_is_recent_epoch(self, conn: sqlite3.Connection) -> None:
+        import time
+        before = int(time.time())
+        result = export_full_json(conn)
+        after = int(time.time())
+        assert before <= result["exported_at"] <= after
+
+    def test_top_level_keys(self, conn: sqlite3.Connection) -> None:
+        result = export_full_json(conn)
+        assert set(result.keys()) == {
+            "schema_version", "exported_at",
+            "boards", "columns", "projects", "tasks", "tags", "groups",
+            "task_tags", "task_dependencies", "task_history",
+        }
+
+    def test_empty_db_all_lists_empty(self, conn: sqlite3.Connection) -> None:
+        result = export_full_json(conn)
+        for key in ("boards", "columns", "projects", "tasks", "tags", "groups",
+                    "task_tags", "task_dependencies", "task_history"):
+            assert result[key] == [], f"expected {key} to be empty"
+
+    def test_json_serializable(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Todo", position=0)
+            pid = insert_project(conn, bid, "P", description="desc")
+            tid = insert_task(conn, bid, "T1", col, project_id=pid)
+            tag_id = insert_tag(conn, bid, "bug")
+            insert_task_tag(conn, tid, tag_id)
+            insert_task_history(conn, tid, field="title", old_value="Old", new_value="T1")
+        result = export_full_json(conn)
+        serialized = json.dumps(result)  # must not raise TypeError
+        assert isinstance(serialized, str)
+
+    def test_archived_rows_included(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Done", position=0)
+            tid = insert_task(conn, bid, "archived task", col)
+            conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (tid,))
+            conn.execute("UPDATE boards SET archived = 1 WHERE id = ?", (bid,))
+        result = export_full_json(conn)
+        assert any(b["archived"] is True for b in result["boards"])
+        assert any(t["archived"] is True for t in result["tasks"])
+
+    def test_all_seeded_ids_present(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "Work")
+            col1 = insert_column(conn, bid, "Todo", position=0)
+            col2 = insert_column(conn, bid, "Done", position=1)
+            pid = insert_project(conn, bid, "Backend")
+            t1 = insert_task(conn, bid, "T1", col1, project_id=pid)
+            t2 = insert_task(conn, bid, "T2", col2)
+            insert_task_dependency(conn, t2, t1)
+            tag_id = insert_tag(conn, bid, "urgent")
+            insert_task_tag(conn, t1, tag_id)
+        result = export_full_json(conn)
+        board_ids = {b["id"] for b in result["boards"]}
+        assert bid in board_ids
+        task_ids = {t["id"] for t in result["tasks"]}
+        assert {t1, t2} <= task_ids
+        assert any(d["task_id"] == t2 and d["depends_on_id"] == t1 for d in result["task_dependencies"])
+        assert any(tt["task_id"] == t1 and tt["tag_id"] == tag_id for tt in result["task_tags"])
+
+    def test_task_history_included(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Todo", position=0)
+            tid = insert_task(conn, bid, "T", col)
+            insert_task_history(conn, tid, field="title", old_value="old", new_value="T")
+        result = export_full_json(conn)
+        history = result["task_history"]
+        assert len(history) == 1
+        assert history[0]["task_id"] == tid
+        assert history[0]["field"] == "title"
+        assert history[0]["old_value"] == "old"
+        assert history[0]["new_value"] == "T"
+
+    def test_task_dependency_board_id_preserved(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Todo", position=0)
+            t1 = insert_task(conn, bid, "T1", col)
+            t2 = insert_task(conn, bid, "T2", col)
+            insert_task_dependency(conn, t2, t1)
+        result = export_full_json(conn)
+        dep = result["task_dependencies"][0]
+        assert dep["board_id"] == bid

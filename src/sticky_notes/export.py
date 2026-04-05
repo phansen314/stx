@@ -1,12 +1,15 @@
-"""Export a sticky-notes database to a Markdown report."""
+"""Export a sticky-notes database to Markdown or full JSON."""
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import sqlite3
+import time
 
 from . import repository as repo
 from . import service
+from .connection import SCHEMA_VERSION, transaction
 from .formatting import format_group_num, format_task_num, format_timestamp
 
 
@@ -184,6 +187,67 @@ def _render_deps_section(
         "",
     ]
     return lines
+
+
+def export_full_json(conn: sqlite3.Connection) -> dict:
+    """Return a lossless full-database snapshot as a plain dict ready for json.dumps.
+
+    Includes all rows from every table (archived rows included) with all FK columns
+    intact so the dump can be reimported via INSERT statements. Wrapped in a single
+    read transaction so the snapshot is consistent even if the TUI is writing concurrently
+    (WAL mode lets readers and writers proceed without blocking each other).
+    """
+    with transaction(conn):
+        boards = service.list_boards(conn, include_archived=True)
+
+        columns: list[dict] = []
+        projects: list[dict] = []
+        tasks: list[dict] = []
+        tags: list[dict] = []
+        groups: list[dict] = []
+
+        for board in boards:
+            bid = board.id
+            columns.extend(
+                dataclasses.asdict(c)
+                for c in service.list_columns(conn, bid, include_archived=True)
+            )
+            projects.extend(
+                dataclasses.asdict(p)
+                for p in service.list_projects(conn, bid, include_archived=True)
+            )
+            tasks.extend(
+                dataclasses.asdict(t)
+                for t in service.list_tasks(conn, bid, include_archived=True)
+            )
+            tags.extend(
+                dataclasses.asdict(t)
+                for t in service.list_tags(conn, bid, include_archived=True)
+            )
+            groups.extend(
+                dataclasses.asdict(g)
+                for g in service.list_groups_for_board(conn, bid, include_archived=True)
+            )
+
+        task_tags = list(repo.list_all_task_tags(conn))
+        task_dependencies = list(repo.list_all_task_dependencies(conn))
+        task_history = [
+            dataclasses.asdict(h) for h in repo.list_all_task_history(conn)
+        ]
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "exported_at": int(time.time()),
+        "boards": [dataclasses.asdict(b) for b in boards],
+        "columns": columns,
+        "projects": projects,
+        "tasks": tasks,
+        "tags": tags,
+        "groups": groups,
+        "task_tags": task_tags,
+        "task_dependencies": task_dependencies,
+        "task_history": task_history,
+    }
 
 
 def export_markdown(conn: sqlite3.Connection) -> str:

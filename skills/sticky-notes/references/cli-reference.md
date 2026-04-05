@@ -33,7 +33,7 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 
 ## Task Commands
 
-### `todo create <title> -c <column> [flags]`
+### `todo task create <title> -c <column> [flags]`
 
 `-c/--column` is **required** — there is no default column.
 
@@ -47,16 +47,16 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | `--tag` | `-t` | — | Tag name (repeatable) |
 
 ```sh
-todo create "Write README" -c "To Do"
-todo create "Deploy to prod" -c Backlog --project "Q2 launch" -P 3 --due 2026-05-01
-todo create "Add tests" -c "To Do" --tag backend --tag ci
+todo task create "Write README" -c "To Do"
+todo task create "Deploy to prod" -c Backlog --project "Q2 launch" -P 3 --due 2026-05-01
+todo task create "Add tests" -c "To Do" --tag backend --tag ci
 ```
 
-> **JSON and tags:** The `create` JSON response returns the raw `Task` object which has no `tags` field. Tags attached via `--tag` are not reflected in the response. To see attached tags, follow up with `todo show <task_num>` which returns a `TaskDetail` with a `tags` array.
+> **JSON and tags:** The `task create` JSON response returns the raw `Task` object which has no `tags` field. Tags attached via `--tag` are not reflected in the response. To see attached tags, follow up with `todo task show <task_num>` which returns a `TaskDetail` with a `tags` array.
 
 ---
 
-### `todo ls [flags]`
+### `todo task ls [flags]`
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
@@ -70,26 +70,26 @@ todo create "Add tests" -c "To Do" --tag backend --tag ci
 | `--tag` | `-t` | — | Filter by tag name |
 
 ```sh
-todo ls
-todo ls --project "Q2 launch" --column "In Progress"
-todo ls --search auth --priority 3
-todo ls --tag backend --all
+todo task ls
+todo task ls --project "Q2 launch" --column "In Progress"
+todo task ls --search auth --priority 3
+todo task ls --tag backend --all
 ```
 
 ---
 
-### `todo show <task_num> [--by-title]`
+### `todo task show <task_num> [--by-title]`
 
 Shows full task detail: description, history, dependencies, group, tags.
 
 ```sh
-todo show task-0001
-todo show "Write README" --by-title
+todo task show task-0001
+todo task show "Write README" --by-title
 ```
 
 ---
 
-### `todo edit <task_num> [flags]`
+### `todo task edit <task_num> [flags]`
 
 All flags are optional; only provided fields are updated.
 
@@ -105,15 +105,15 @@ All flags are optional; only provided fields are updated.
 | `--by-title` | — | off | Resolve `task_num` as title string |
 
 ```sh
-todo edit task-0003 --priority 4 --due 2026-06-01
-todo edit task-0003 --tag urgent --untag backend
+todo task edit task-0003 --priority 4 --due 2026-06-01
+todo task edit task-0003 --tag urgent --untag backend
 ```
 
 ---
 
-### `todo mv <task_num> <column> [position] [flags]`
+### `todo task mv <task_num> <column> [position] [flags]`
 
-**Within-board only.** Use `todo transfer` for cross-board moves.
+**Within-board only.** Use `todo task transfer` for cross-board moves.
 
 | Arg/Flag | Description |
 |---|---|
@@ -123,22 +123,22 @@ todo edit task-0003 --tag urgent --untag backend
 | `--by-title` | Resolve task by title |
 
 ```sh
-todo mv task-0001 "In Progress"
-todo mv task-0001 Done 2          # position 2 within Done column
-todo mv task-0001 Backlog --project "Next sprint"
+todo task mv task-0001 "In Progress"
+todo task mv task-0001 Done 2          # position 2 within Done column
+todo task mv task-0001 Backlog --project "Next sprint"
 ```
 
-**Note:** `todo done` does not exist. To mark done: `todo mv <task> Done` (requires a column literally named "Done").
+**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> Done` (requires a column literally named "Done").
 
 ---
 
-### `todo rm <task_num> [--by-title]`
+### `todo task rm <task_num> [--by-title]`
 
 Soft-archives the task (`archived=true`). Not a hard delete. Tasks remain queryable with `--all` or `--archived`.
 
 ---
 
-### `todo log <task_num> [--by-title]`
+### `todo task log <task_num> [--by-title]`
 
 Shows the full audit trail of field changes (TaskHistory).
 
@@ -155,9 +155,9 @@ todo --json context
 
 ---
 
-## `todo transfer` — Cross-Board Move
+## `todo task transfer` — Cross-Board Move
 
-`todo mv` is within-board only. `todo transfer` handles cross-board moves.
+`todo task mv` is within-board only. `todo task transfer` handles cross-board moves.
 
 **Behavior:**
 1. Creates a copy of the task on the target board in the specified column
@@ -173,9 +173,9 @@ todo --json context
 | `--by-title` | — | no | Resolve source task by title |
 
 ```sh
-todo transfer task-0001 --board ops --column Backlog
-todo transfer task-0001 --board ops --column Backlog --project infra
-todo transfer task-0001 --board ops --column Backlog --dry-run
+todo task transfer task-0001 --board ops --column Backlog
+todo task transfer task-0001 --board ops --column Backlog --project infra
+todo task transfer task-0001 --board ops --column Backlog --dry-run
 ```
 
 > **Board flag disambiguation:** The global `-b/--board` selects the **source** board (or falls back to the active board). The transfer subcommand's own `--board` selects the **target** board. Both may appear on the same command line.
@@ -228,13 +228,13 @@ todo col rm "Old Column" --force
 | `project show` | `name` | — | Show project detail |
 | `project rm` | `name` | — | Archive project |
 
-> **No `project rename`.** To rename: create a new project, reassign tasks via `todo edit --project "new name"`, then archive the old one.
+> **No `project rename`.** To rename: create a new project, reassign tasks via `todo task edit --project "new name"`, then archive the old one.
 
 ---
 
 ## `todo dep` Subcommands
 
-Semantics: `todo dep create <task> <depends-on>` means **task is blocked by depends-on**. No `dep ls` — use `todo show <task>` to see `blocked_by` and `blocks` arrays.
+Semantics: `todo dep create <task> <depends-on>` means **task is blocked by depends-on**. No `dep ls` — use `todo task show <task>` to see `blocked_by` and `blocks` arrays.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
@@ -250,7 +250,7 @@ todo dep rm task-0003 task-0001
 
 ## `todo tag` Subcommands
 
-Tags are board-scoped. Many-to-many with tasks. `todo create`/`todo edit` auto-create tags that don't exist yet.
+Tags are board-scoped. Many-to-many with tasks. `todo task create`/`todo task edit` auto-create tags that don't exist yet.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
@@ -258,7 +258,7 @@ Tags are board-scoped. Many-to-many with tasks. `todo create`/`todo edit` auto-c
 | `tag ls` | — | `--all` / `-a` | List tags (include archived with `-a`) |
 | `tag rm` | `name` | `--unassign` | Archive tag; `--unassign` strips it from all tasks first |
 
-> **No `tag rename`.** To rename: create new tag, reassign via `todo edit --tag new --untag old`, archive old.
+> **No `tag rename`.** To rename: create new tag, reassign via `todo task edit --tag new --untag old`, archive old.
 
 ```sh
 todo tag create backend
@@ -325,7 +325,7 @@ Launches the Textual TUI interface. No JSON output. Useful for interactive explo
 
 Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
-`show` · `edit` · `mv` · `transfer` · `rm` · `log` · `dep create` · `dep rm` · `group assign` · `group unassign`
+`task show` · `task edit` · `task mv` · `task transfer` · `task rm` · `task log` · `dep create` · `dep rm` · `group assign` · `group unassign`
 
 ---
 
@@ -333,7 +333,7 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
 | Command | `data` shape |
 |---|---|
-| `create`, `edit`, `rm`, `mv` | full Task object |
+| `task create`, `task edit`, `task rm`, `task mv` | full Task object |
 | `board create/rename/rm` | full Board object |
 | `col create/rename/rm` | full Column object |
 | `project create/rm` | full Project object |
@@ -341,18 +341,18 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | `dep create/rm` | `{"task_id": N, "depends_on_id": N}` |
 | `group assign` | `{"task": {...}, "group_id": N}` — `group_id` is duplicated: it appears here AND inside `task.group_id` (always equal after assign) |
 | `group unassign` | full Task object |
-| `transfer` (live) | `{"task": {...}, "source_task_id": N}` |
-| `transfer --dry-run` | `{"task_id": N, "task_title": str, "source_board_id": N, "target_board_id": N, "target_column_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
-| `ls` | `{"board": {...}, "columns": [{"column": {...}, "tasks": [...]}]}` |
+| `task transfer` (live) | `{"task": {...}, "source_task_id": N}` |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_board_id": N, "target_board_id": N, "target_column_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
+| `task ls` | `{"board": {...}, "columns": [{"column": {...}, "tasks": [...]}]}` |
 | `board ls` | array of Board objects with `"active": bool` field |
 | `col ls` | array of Column objects |
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
 | `group ls` | array of GroupRef objects |
-| `show` | full TaskDetail (with `column`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`) |
+| `task show` | full TaskDetail (with `column`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`) |
 | `project show` | ProjectDetail with `tasks` array |
 | `group show` | GroupDetail with `tasks` and `children` arrays |
-| `log` | array of TaskHistory objects |
+| `task log` | array of TaskHistory objects |
 | `context` | `{"view": {"board": {...}, "columns": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 

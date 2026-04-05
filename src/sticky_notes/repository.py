@@ -518,6 +518,26 @@ def list_all_dependencies(
     return tuple((r["task_id"], r["depends_on_id"]) for r in rows)
 
 
+def list_all_task_dependencies(
+    conn: sqlite3.Connection,
+) -> tuple[dict, ...]:
+    """Return all task_dependencies rows as plain dicts (full FK columns preserved)."""
+    rows = conn.execute(
+        "SELECT task_id, depends_on_id, board_id FROM task_dependencies"
+    ).fetchall()
+    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "board_id": r["board_id"]} for r in rows)
+
+
+def list_all_task_tags(
+    conn: sqlite3.Connection,
+) -> tuple[dict, ...]:
+    """Return all task_tags rows as plain dicts (full FK columns preserved)."""
+    rows = conn.execute(
+        "SELECT task_id, tag_id, board_id FROM task_tags"
+    ).fetchall()
+    return tuple({"task_id": r["task_id"], "tag_id": r["tag_id"], "board_id": r["board_id"]} for r in rows)
+
+
 # ---- Task history functions ----
 
 
@@ -544,6 +564,16 @@ def list_task_history(
     rows = conn.execute(
         "SELECT * FROM task_history WHERE task_id = ? ORDER BY changed_at DESC, id DESC",
         (task_id,),
+    ).fetchall()
+    return tuple(row_to_task_history(r) for r in rows)
+
+
+def list_all_task_history(
+    conn: sqlite3.Connection,
+) -> tuple[TaskHistory, ...]:
+    """Return all task_history rows ordered by task and time."""
+    rows = conn.execute(
+        "SELECT * FROM task_history ORDER BY task_id, changed_at, id"
     ).fetchall()
     return tuple(row_to_task_history(r) for r in rows)
 

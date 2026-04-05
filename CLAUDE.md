@@ -68,8 +68,8 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 **Active board:** persisted at `~/.local/share/sticky-notes/active-board`. CLI resolves board from `--board`/`-b` flag, falling back to this file. Set via `todo board create` or `todo board use`.
 
 **Command structure:**
-- Top-level task commands: `add`, `ls`, `show`, `edit`, `mv`, `rm`, `log`
-- Subcommand groups: `board`, `col`, `project`, `dep`, `tag`, `export`
+- Task subcommands: `todo task create|ls|show|edit|mv|transfer|rm|log`
+- Other subcommand groups: `board`, `col`, `project`, `dep`, `group`, `tag`, `export`
 
 ## TUI
 

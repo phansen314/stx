@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .active_board import clear_active_board_id, get_active_board_id, set_active_board_id
+from .active_board import active_board_path, clear_active_board_id, get_active_board_id, set_active_board_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import presenters, service
-from .export import export_markdown
+from .export import export_full_json, export_markdown
 from .formatting import format_group_num, format_task_num, parse_date
 from .models import Board
 
@@ -106,7 +106,7 @@ def _text_err(message: str, code: str) -> None:
 # ---- Command handlers ----
 
 
-def cmd_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     col = service.get_column_by_name(conn, board.id, args.column)
     project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
@@ -125,7 +125,7 @@ def cmd_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
     return Ok(data=task, text=f"created {format_task_num(task.id)}: {task.title}")
 
 
-def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     column_id = service.get_column_by_name(conn, board.id, args.column).id if args.column else None
     project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
@@ -149,14 +149,14 @@ def cmd_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
     return Ok(data=view, text=presenters.format_board_list_view(view))
 
 
-def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     detail = service.get_task_detail(conn, task_id)
     return Ok(data=detail, text=presenters.format_task_detail(detail))
 
 
-def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     changes: dict = {}
@@ -179,7 +179,7 @@ def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
     return Ok(data=updated, text=f"updated {format_task_num(task_id)}")
 
 
-def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     col = service.get_column_by_name(conn, board.id, args.column)
@@ -192,7 +192,7 @@ def cmd_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) ->
     return Ok(data=updated, text=f"moved {format_task_num(task_id)} -> {col.name}")
 
 
-def cmd_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     target_board = service.get_board_by_name(conn, args.target_board)
@@ -217,14 +217,14 @@ def cmd_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
     )
 
 
-def cmd_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     archived = service.update_task(conn, task_id, {"archived": True}, source="cli")
     return Ok(data=archived, text=f"archived {format_task_num(task_id)}")
 
 
-def cmd_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     history = service.list_task_history(conn, task_id)
@@ -516,16 +516,81 @@ def cmd_context(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
 
 
 def cmd_export(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    md = export_markdown(conn)
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(md)
-        return Ok(
-            data={"output_path": str(args.output), "bytes": len(md.encode())},
-            text=f"wrote {args.output}",
-        )
-    return Ok(data={"markdown": md}, text=md)
+    if args.md:
+        content = export_markdown(conn)
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content)
+            return Ok(
+                data={"output_path": str(args.output), "bytes": len(content.encode())},
+                text=f"wrote {args.output}",
+            )
+        return Ok(data={"markdown": content}, text=content)
+    else:
+        dump = export_full_json(conn)
+        content = json.dumps(dump, indent=2)
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content)
+            return Ok(
+                data={"output_path": str(args.output), "bytes": len(content.encode())},
+                text=f"wrote {args.output}",
+            )
+        return Ok(data=dump, text=content)
+
+
+# ---- Backup ----
+
+
+def cmd_backup(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    dest = Path(args.dest)
+    if dest.exists() and not args.overwrite:
+        raise ValueError(f"destination already exists: {dest} (use --overwrite to overwrite)")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    target = sqlite3.connect(str(dest))
+    try:
+        conn.backup(target)
+    finally:
+        target.close()
+    return Ok(
+        data={"dest": str(dest), "bytes": dest.stat().st_size},
+        text=f"backed up to {dest}",
+    )
+
+
+# ---- Info ----
+
+
+def cmd_info(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    ab_path = active_board_path(db_path)
+    wal = db_path.with_name(db_path.name + "-wal")
+    shm = db_path.with_name(db_path.name + "-shm")
+    entries = [
+        ("database", db_path),
+        ("wal sidecar", wal),
+        ("shm sidecar", shm),
+        ("active-board pointer", ab_path),
+    ]
+    data = {
+        "db": str(db_path),
+        "wal": str(wal),
+        "shm": str(shm),
+        "active_board": str(ab_path),
+        "existing": [str(p) for _, p in entries if p.exists()],
+        "reset_command": "python scripts/wipe_db.py",
+    }
+    width = max(len(label) for label, _ in entries)
+    lines = ["sticky-notes files:"]
+    for label, p in entries:
+        marker = "exists" if p.exists() else "missing"
+        lines.append(f"  {label:<{width}}  {p}  [{marker}]")
+    lines.append("")
+    lines.append("To wipe all state: python scripts/wipe_db.py")
+    return Ok(data=data, text="\n".join(lines))
 
 
 # ---- TUI ----
@@ -543,14 +608,14 @@ def cmd_tui(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -
 
 
 HANDLERS: dict[str, CommandHandler] = {
-    "create": cmd_create,
-    "ls": cmd_ls,
-    "show": cmd_show,
-    "edit": cmd_edit,
-    "mv": cmd_mv,
-    "transfer": cmd_transfer,
-    "rm": cmd_rm,
-    "log": cmd_log,
+    "task_create": cmd_task_create,
+    "task_ls": cmd_task_ls,
+    "task_show": cmd_task_show,
+    "task_edit": cmd_task_edit,
+    "task_mv": cmd_task_mv,
+    "task_transfer": cmd_task_transfer,
+    "task_rm": cmd_task_rm,
+    "task_log": cmd_task_log,
     "board_create": cmd_board_create,
     "board_ls": cmd_board_ls,
     "board_use": cmd_board_use,
@@ -579,6 +644,8 @@ HANDLERS: dict[str, CommandHandler] = {
     "tag_rm": cmd_tag_rm,
     "context": cmd_context,
     "export": cmd_export,
+    "backup": cmd_backup,
+    "info": cmd_info,
     "tui": cmd_tui,
 }
 
@@ -593,10 +660,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers()
 
-    # ---- Top-level task commands ----
+    # ---- Task subcommands ----
 
-    p_create = sub.add_parser("create", help="create a task")
-    p_create.set_defaults(command="create")
+    p_task = sub.add_parser("task", help="task management")
+    task_sub = p_task.add_subparsers()
+
+    p_create = task_sub.add_parser("create", help="create a task")
+    p_create.set_defaults(command="task_create")
     p_create.add_argument("title")
     p_create.add_argument("--desc", "-d", default=None)
     p_create.add_argument("--column", "-c", required=True, help="column name")
@@ -605,8 +675,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--due", default=None, help="YYYY-MM-DD")
     p_create.add_argument("--tag", "-t", action="append", default=None, help="tag name (repeatable)")
 
-    p_ls = sub.add_parser("ls", help="list tasks")
-    p_ls.set_defaults(command="ls")
+    p_ls = task_sub.add_parser("ls", help="list tasks")
+    p_ls.set_defaults(command="task_ls")
     p_ls.add_argument("--all", "-a", action="store_true", help="include archived")
     p_ls.add_argument("--archived", action="store_true", help="show only archived")
     p_ls.add_argument("--column", "-c", default=None, help="filter by column name")
@@ -616,13 +686,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
     p_ls.add_argument("--tag", "-t", default=None, help="filter by tag name")
 
-    p_show = sub.add_parser("show", help="show task detail")
-    p_show.set_defaults(command="show")
+    p_show = task_sub.add_parser("show", help="show task detail")
+    p_show.set_defaults(command="task_show")
     p_show.add_argument("task_num")
     p_show.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
-    p_edit = sub.add_parser("edit", help="edit a task")
-    p_edit.set_defaults(command="edit")
+    p_edit = task_sub.add_parser("edit", help="edit a task")
+    p_edit.set_defaults(command="task_edit")
     p_edit.add_argument("task_num")
     p_edit.add_argument("--by-title", action="store_true", help="resolve task by title string")
     p_edit.add_argument("--title", default=None)
@@ -633,16 +703,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
 
-    p_mv = sub.add_parser("mv", help="move task to column (within board)")
-    p_mv.set_defaults(command="mv")
+    p_mv = task_sub.add_parser("mv", help="move task to column (within board)")
+    p_mv.set_defaults(command="task_mv")
     p_mv.add_argument("task_num")
     p_mv.add_argument("column", help="column name")
     p_mv.add_argument("position", type=int, nargs="?", default=None)
     p_mv.add_argument("--by-title", action="store_true", help="resolve task by title string")
     p_mv.add_argument("--project", "-p", default=None, help="also change task project")
 
-    p_transfer = sub.add_parser("transfer", help="move task to a different board")
-    p_transfer.set_defaults(command="transfer")
+    p_transfer = task_sub.add_parser("transfer", help="move task to a different board")
+    p_transfer.set_defaults(command="task_transfer")
     p_transfer.add_argument("task_num")
     p_transfer.add_argument("--board", dest="target_board", required=True, help="target board name")
     p_transfer.add_argument("--column", "-c", required=True, help="column on target board")
@@ -650,13 +720,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_transfer.add_argument("--dry-run", action="store_true", default=False, help="preview without executing")
     p_transfer.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
-    p_rm = sub.add_parser("rm", help="archive a task")
-    p_rm.set_defaults(command="rm")
+    p_rm = task_sub.add_parser("rm", help="archive a task")
+    p_rm.set_defaults(command="task_rm")
     p_rm.add_argument("task_num")
     p_rm.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
-    p_log = sub.add_parser("log", help="show task change log")
-    p_log.set_defaults(command="log")
+    p_log = task_sub.add_parser("log", help="show task change log")
+    p_log.set_defaults(command="task_log")
     p_log.add_argument("task_num")
     p_log.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
@@ -825,9 +895,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---- Export ----
 
-    p_export = sub.add_parser("export", help="export database to markdown")
+    p_export = sub.add_parser("export", help="export database as JSON (default) or markdown (--md)")
     p_export.set_defaults(command="export")
+    p_export.add_argument("--md", action="store_true", help="export as markdown instead of JSON")
     p_export.add_argument("-o", "--output", help="write to file instead of stdout")
+
+    # ---- Backup ----
+
+    p_backup = sub.add_parser("backup", help="atomic binary DB snapshot (safe pre-migration backup)")
+    p_backup.set_defaults(command="backup")
+    p_backup.add_argument("dest", help="destination .db file path")
+    p_backup.add_argument("--overwrite", action="store_true", help="overwrite destination if it exists")
+
+    # ---- Info ----
+
+    p_info = sub.add_parser("info", help="show sticky-notes file locations")
+    p_info.set_defaults(command="info")
 
     # ---- TUI ----
 
