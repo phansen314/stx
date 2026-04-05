@@ -116,7 +116,7 @@ original. The following are NOT carried over:
   the `TaskField` enum: title, description, column, project, priority, due date,
   position, archived, start date, finish date, group.
 - **Each history entry records old value, new value, and source** (e.g., "cli",
-  "tui", function name for internal operations).
+  "tui").
 
 ## Error Translation
 

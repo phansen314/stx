@@ -27,7 +27,7 @@ src/sticky_notes/
   repository.py      # raw SQL queries, one function per operation
   connection.py      # SQLite connection factory, schema init, migration runner
   models.py          # domain dataclasses (New*, persisted)
-  service_models.py  # Ref/ListItem/Detail dataclasses + view aggregates (BoardListView)
+  service_models.py  # Ref/ListItem/Detail dataclasses + view aggregates (BoardListView, BoardContext)
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
@@ -100,7 +100,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 ## Key Design Conventions
 
 - **Separate pre-insert and persisted types** — `NewTask` (no `id`/`created_at`) vs `Task` (full row). Never use `None` as a stand-in for "not yet assigned."
-- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`column`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `BoardListView` is the aggregate view model for `cmd_ls` — board + ordered columns + TaskListItems.
+- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`column`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `BoardListView` is the aggregate view model for `cmd_ls` — board + ordered columns + TaskListItems. `BoardContext` is the aggregate view model for `cmd_context` — `BoardListView` + projects + tags + groups, for one-call AI session startup.
 - **All dataclasses are frozen** — immutability throughout. Changes produce new instances via DB.
 - **Defaults on pre-insert dataclasses** — optional/defaultable fields on `New*` types carry defaults directly. No factory layer needed.
 - **Service models are flat, not inherited** — `TaskListItem`, `TaskDetail`, `ProjectDetail`, and `GroupDetail` redeclare their parent entity's fields rather than inheriting from `Task` / `Project` / `Group`. Tradeoff: adding a column to `tasks` touches both `TaskListItem` and `TaskDetail` in addition to `Task` and `row_to_task`. The win is that hydrated fields can be plain required annotations (e.g. `column: Column` on `TaskDetail`) without dataclass field-ordering gymnastics. An earlier inheritance-based version required `column: Column = None  # type: ignore` with a runtime `__post_init__` check — flat redeclaration removes that hack.
