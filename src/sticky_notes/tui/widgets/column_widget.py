@@ -4,8 +4,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from sticky_notes.models import Column
-from sticky_notes.service_models import TaskRef
+from sticky_notes.models import Column, Task
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.widgets.task_card import TaskCard
 
@@ -21,7 +20,7 @@ class ColumnWidget(Vertical):
     }
     """
 
-    def __init__(self, column: Column, tasks: tuple[TaskRef, ...]) -> None:
+    def __init__(self, column: Column, tasks: tuple[Task, ...]) -> None:
         super().__init__()
         self.column = column
         self._tasks = tasks
@@ -31,5 +30,5 @@ class ColumnWidget(Vertical):
             f"{escape_markup(self.column.name)} ({len(self._tasks)})",
             classes="column-header",
         )
-        for task_ref in self._tasks:
-            yield TaskCard(task_ref)
+        for task in self._tasks:
+            yield TaskCard(task)

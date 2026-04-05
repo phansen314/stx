@@ -11,7 +11,9 @@ class TaskFilter:
     priority: int | None = None
     search: str | None = None
     tag_id: int | None = None
+    group_id: int | None = None
     include_archived: bool = False
+    only_archived: bool = False
 
 
 class TaskField(StrEnum):

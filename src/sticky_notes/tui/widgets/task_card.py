@@ -5,7 +5,7 @@ from textual.message import Message
 from textual.widgets import Static
 
 from sticky_notes.formatting import format_priority, format_task_num
-from sticky_notes.service_models import TaskRef
+from sticky_notes.models import Task
 from sticky_notes.tui.markup import escape_markup
 
 
@@ -84,12 +84,12 @@ class TaskCard(Static):
             self.task_id = task_id
             super().__init__()
 
-    def __init__(self, task_ref: TaskRef) -> None:
-        self.task_ref = task_ref
+    def __init__(self, task_data: Task) -> None:
+        self.task_data = task_data
         label = (
-            f"{format_task_num(task_ref.id)}  "
-            f"{escape_markup(format_priority(task_ref.priority))}  "
-            f"{escape_markup(task_ref.title)}"
+            f"{format_task_num(task_data.id)}  "
+            f"{escape_markup(format_priority(task_data.priority))}  "
+            f"{escape_markup(task_data.title)}"
         )
         super().__init__(label)
 
@@ -100,16 +100,16 @@ class TaskCard(Static):
         self.post_message(self.MoveRequest(direction))
 
     def action_show_detail(self) -> None:
-        self.post_message(self.ShowRequest(self.task_ref.id))
+        self.post_message(self.ShowRequest(self.task_data.id))
 
     def action_edit(self) -> None:
-        self.post_message(self.EditRequest(self.task_ref.id))
+        self.post_message(self.EditRequest(self.task_data.id))
 
     def action_archive(self) -> None:
-        self.post_message(self.ArchiveRequest(self.task_ref.id))
+        self.post_message(self.ArchiveRequest(self.task_data.id))
 
     def action_move_board(self) -> None:
-        self.post_message(self.MoveBoardRequest(self.task_ref.id))
+        self.post_message(self.MoveBoardRequest(self.task_data.id))
 
     def on_focus(self) -> None:
-        self.post_message(self.FocusChanged(self.task_ref.id))
+        self.post_message(self.FocusChanged(self.task_data.id))

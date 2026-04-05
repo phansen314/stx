@@ -10,8 +10,7 @@ from textual.widgets import Static
 
 from sticky_notes import service
 from sticky_notes.active_board import get_active_board_id, set_active_board_id
-from sticky_notes.models import Column, TaskFilter
-from sticky_notes.service_models import TaskRef
+from sticky_notes.models import Column, Task, TaskFilter
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.widgets.column_widget import ColumnWidget
 from sticky_notes.tui.widgets.task_card import TaskCard
@@ -29,7 +28,7 @@ class Direction(StrEnum):
 
 class ColumnSlot(NamedTuple):
     column: Column
-    tasks: tuple[TaskRef, ...]
+    tasks: tuple[Task, ...]
 
 
 class BoardView(Vertical):
@@ -128,14 +127,14 @@ class BoardView(Vertical):
             include_archived=config.show_archived,
             project_id=self._project_filter_id,
         )
-        tasks = service.list_task_refs_filtered(
+        tasks = service.list_tasks_filtered(
             conn, self._board_id, task_filter=task_filter
         )
 
-        tasks_by_column: dict[int, list[TaskRef]] = {col.id: [] for col in columns}
-        for task_ref in tasks:
-            if task_ref.column_id in tasks_by_column:
-                tasks_by_column[task_ref.column_id].append(task_ref)
+        tasks_by_column: dict[int, list[Task]] = {col.id: [] for col in columns}
+        for task in tasks:
+            if task.column_id in tasks_by_column:
+                tasks_by_column[task.column_id].append(task)
 
         self._columns = [
             ColumnSlot(col, tuple(tasks_by_column[col.id])) for col in columns
@@ -283,8 +282,8 @@ class BoardView(Vertical):
     def _sync_indices_from_task_id(self, task_id: int) -> bool:
         """Update _col_idx/_task_idx to match the given task_id. Returns True if found."""
         for col_idx, slot in enumerate(self._columns):
-            for task_idx, task_ref in enumerate(slot.tasks):
-                if task_ref.id == task_id:
+            for task_idx, task in enumerate(slot.tasks):
+                if task.id == task_id:
                     self._col_idx = col_idx
                     self._task_idx = task_idx
                     return True
@@ -405,8 +404,6 @@ class BoardView(Vertical):
     def _handle_move_board(self, task_id: int, result: dict | None) -> None:
         if result is None:
             return
-        import sqlite3
-
         try:
             service.move_task_to_board(
                 self.typed_app.conn,
@@ -416,7 +413,7 @@ class BoardView(Vertical):
                 project_id=result.get("project_id"),
                 source="tui",
             )
-        except (ValueError, sqlite3.IntegrityError) as exc:
+        except ValueError as exc:
             self.typed_app.notify(str(exc), severity="error")
             return
         self.run_worker(self.reload())

@@ -10,8 +10,7 @@ from textual.widgets import Footer, Header, Static
 
 from sticky_notes import service
 from sticky_notes.active_board import get_active_board_id, set_active_board_id
-from sticky_notes.models import TaskFilter
-from sticky_notes.service_models import TaskRef
+from sticky_notes.models import Task, TaskFilter
 from sticky_notes.tui.widgets.task_card import TaskCard
 
 if TYPE_CHECKING:
@@ -67,12 +66,12 @@ class AllTasksScreen(Screen):
             include_archived=config.show_archived,
             project_id=self._project_filter_id,
         )
-        tasks = service.list_task_refs_filtered(
+        tasks = service.list_tasks_filtered(
             conn, self._board_id, task_filter=task_filter
         )
 
-        # Group: project_id -> column_id -> list[TaskRef]
-        grouped: dict[int | None, dict[int, list[TaskRef]]] = {}
+        # Group: project_id -> column_id -> list[Task]
+        grouped: dict[int | None, dict[int, list[Task]]] = {}
         for task in tasks:
             proj_group = grouped.setdefault(task.project_id, {})
             col_group = proj_group.setdefault(task.column_id, [])
@@ -111,8 +110,8 @@ class AllTasksScreen(Screen):
                     Static(f"  {col_name} ({len(col_tasks)})",
                            classes="column-sub-header")
                 )
-                for task_ref in col_tasks:
-                    card = TaskCard(task_ref)
+                for task in col_tasks:
+                    card = TaskCard(task)
                     widgets.append(card)
                     self._cards.append(card)
 
@@ -132,7 +131,7 @@ class AllTasksScreen(Screen):
 
     def _focus_card_by_id(self, task_id: int) -> None:
         for idx, card in enumerate(self._cards):
-            if card.task_ref.id == task_id:
+            if card.task_data.id == task_id:
                 self._card_idx = idx
                 self._focus_current()
                 return
@@ -239,10 +238,10 @@ class AllTasksScreen(Screen):
 
     async def _archive_and_reload(self, task_id: int) -> None:
         service.update_task(self.typed_app.conn, task_id, {"archived": True}, "tui")
-        remaining = [c for c in self._cards if c.task_ref.id != task_id]
+        remaining = [c for c in self._cards if c.task_data.id != task_id]
         if remaining:
             idx = min(self._card_idx, len(remaining) - 1)
-            await self.reload(focus_task_id=remaining[idx].task_ref.id)
+            await self.reload(focus_task_id=remaining[idx].task.id)
         else:
             await self.reload()
 
@@ -269,7 +268,7 @@ class AllTasksScreen(Screen):
         if not columns:
             return
         if self._cards and self._card_idx < len(self._cards):
-            col_id = self._cards[self._card_idx].task_ref.column_id
+            col_id = self._cards[self._card_idx].task_data.column_id
         else:
             col_id = columns[0].id
 

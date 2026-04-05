@@ -20,14 +20,15 @@ TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Con
 ```
 src/sticky_notes/
   __main__.py        # entry point (todo command)
-  cli.py             # argparse CLI — commands, output formatting
-  formatting.py      # shared formatting: format_task_num, format_priority, parse_date, format_timestamp
+  cli.py             # argparse CLI — thin controllers: parse args, delegate to service, hand payloads to presenters
+  presenters.py      # pure functions: structured types → text. No DB access.
+  formatting.py      # shared formatting primitives: format_task_num, format_priority, parse_date, format_timestamp
   service.py         # business logic, transaction boundaries
   repository.py      # raw SQL queries, one function per operation
   connection.py      # SQLite connection factory, schema init, migration runner
   models.py          # domain dataclasses (New*, persisted)
-  service_models.py  # Ref/Detail dataclasses for service layer
-  mappers.py         # row→model, model→ref, ref→detail converters
+  service_models.py  # Ref/ListItem/Detail dataclasses + view aggregates (BoardListView)
+  mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
   migrations/        # numbered SQL migration files (001_*.sql, 002_*.sql, ...)
@@ -54,6 +55,7 @@ tests/
   test_connection.py
   test_export.py
   test_mappers.py
+  test_presenters.py # pure-function tests for text rendering (DB-free)
   test_repository.py
   test_service.py
   test_tui.py        # TUI tests: config, app, settings, board, nav, move, archive, detail, create, edit
@@ -66,12 +68,12 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 **Active board:** persisted at `~/.local/share/sticky-notes/active-board`. CLI resolves board from `--board`/`-b` flag, falling back to this file. Set via `todo board create` or `todo board use`.
 
 **Command structure:**
-- Top-level task commands: `add`, `ls`, `show`, `edit`, `mv`, `done`, `rm`, `log`
+- Top-level task commands: `add`, `ls`, `show`, `edit`, `mv`, `rm`, `log`
 - Subcommand groups: `board`, `col`, `project`, `dep`, `tag`, `export`
 
 ## TUI
 
-Entry point: `todo --tui` (or `todo --tui --db path/to/db`).
+Entry point: `todo tui` (or `todo tui --db path/to/db`).
 
 **Architecture:** `StickyNotesApp` → `BoardView` (main widget) → `ColumnWidget` → `TaskCard`. Screens are `ModalScreen[T]` overlays that dismiss with typed results via callbacks.
 
@@ -98,12 +100,12 @@ Entry point: `todo --tui` (or `todo --tui --db path/to/db`).
 ## Key Design Conventions
 
 - **Separate pre-insert and persisted types** — `NewTask` (no `id`/`created_at`) vs `Task` (full row). Never use `None` as a stand-in for "not yet assigned."
-- **Ref vs Detail service models** — `TaskRef` carries relationship IDs (cheap, for lists). `TaskDetail` carries hydrated objects (expensive, for detail views).
+- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`column`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `BoardListView` is the aggregate view model for `cmd_ls` — board + ordered columns + TaskListItems.
 - **All dataclasses are frozen** — immutability throughout. Changes produce new instances via DB.
 - **Defaults on pre-insert dataclasses** — optional/defaultable fields on `New*` types carry defaults directly. No factory layer needed.
-- **Service models inherit from domain models** — `TaskRef(Task)`, `TaskDetail(TaskRef)`, etc. Inheritance chain: `Task → TaskRef → TaskDetail`. Child fields use defaults to satisfy dataclass field ordering. Access task fields directly (`ref.title`), not via composition.
+- **Service models are flat, not inherited** — `TaskListItem`, `TaskDetail`, `ProjectDetail`, and `GroupDetail` redeclare their parent entity's fields rather than inheriting from `Task` / `Project` / `Group`. Tradeoff: adding a column to `tasks` touches both `TaskListItem` and `TaskDetail` in addition to `Task` and `row_to_task`. The win is that hydrated fields can be plain required annotations (e.g. `column: Column` on `TaskDetail`) without dataclass field-ordering gymnastics. An earlier inheritance-based version required `column: Column = None  # type: ignore` with a runtime `__post_init__` check — flat redeclaration removes that hack.
 - **Mappers are plain functions** — explicit conversion at each layer boundary (row→model, model→ref, ref→detail). Models are pure data containers with no methods — conversion logic stays in `mappers.py`, not as classmethods. Accept the boilerplate to keep separation clean.
-- **`shallow_fields()` helper** — extracts parent dataclass fields as a dict for constructing derived types (Ref, Detail). Lives in `mappers.py`.
+- **`shallow_fields()` helper** — extracts a dataclass's fields as a dict for splatting into derived types (`TaskListItem`, `TaskDetail`, `GroupRef`, etc.). Lives in `mappers.py`.
 - **Repository update allowlists** — each entity has a `_*_UPDATABLE` frozenset guarding which fields can be passed to update functions.
 - **Task history / audit trail** — `_record_changes()` in the service layer auto-records `TaskHistory` entries for changed fields. `TaskField` enum defines trackable fields.
 - **Transaction context manager** — service layer controls transaction boundaries. Repository functions receive a connection and never commit/rollback. On rollback failure, `raise exc from rollback_exc` — the original error is primary, rollback failure is attached as `__cause__`. This is intentional.

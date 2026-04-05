@@ -17,7 +17,7 @@ from helpers import (
 )
 from sticky_notes.repository import set_task_group_id
 from sticky_notes.connection import transaction
-from sticky_notes.export import export_markdown
+from sticky_notes.export import export_markdown, _md_escape
 
 
 # ---- Helpers ----
@@ -237,3 +237,46 @@ class TestExportGroups:
             insert_task(conn, bid, "Ungrouped", col, project_id=pid)
         md = export_markdown(conn)
         assert "1 ungrouped task" in md
+
+
+class TestMdEscape:
+    def test_pipe_escaped(self) -> None:
+        assert _md_escape("foo | bar") == r"foo \| bar"
+
+    def test_backtick_escaped(self) -> None:
+        assert _md_escape("foo `bar`") == r"foo \`bar\`"
+
+    def test_newline_replaced(self) -> None:
+        assert _md_escape("line1\nline2") == "line1<br>line2"
+
+    def test_plain_unchanged(self) -> None:
+        assert _md_escape("hello world") == "hello world"
+
+
+class TestExportMdEscaping:
+    def test_pipe_in_title_escaped(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Col", position=0)
+            insert_task(conn, bid, "foo | bar", col)
+        md = export_markdown(conn)
+        assert r"foo \| bar" in md
+        assert "foo | bar |" not in md  # raw pipe must not appear in table cell
+
+    def test_newline_in_title_replaced(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            col = insert_column(conn, bid, "Col", position=0)
+            insert_task(conn, bid, "line1\nline2", col)
+        md = export_markdown(conn)
+        assert "line1<br>line2" in md
+
+    def test_backtick_in_project_description_escaped(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        with transaction(conn):
+            bid = insert_board(conn, "B")
+            insert_column(conn, bid, "Col", position=0)
+            insert_project(conn, bid, "P", description="use `cmd` here")
+        md = export_markdown(conn)
+        assert r"use \`cmd\` here" in md

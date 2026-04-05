@@ -37,6 +37,7 @@ from sticky_notes.repository import (
     get_group_by_title,
     get_project,
     get_project_by_name,
+    get_group_ancestry,
     get_reachable_task_ids,
     get_subtree_group_ids,
     get_tag,
@@ -783,6 +784,14 @@ class TestListTasksFiltered:
         assert len(result) == 1
         assert result[0].id == t1.id
 
+    def test_filter_by_group(self, conn: sqlite3.Connection) -> None:
+        board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
+        grp = insert_group(conn, NewGroup(project_id=proj.id, title="frontend"))
+        set_task_group_id(conn, t1.id, grp.id)
+        set_task_group_id(conn, t3.id, grp.id)
+        result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(group_id=grp.id))
+        assert {t.id for t in result} == {t1.id, t3.id}
+
 
 # ---- Tag ----
 
@@ -889,6 +898,22 @@ class TestTaskTagRepository:
         add_tag_to_task(conn, task.id, tag1.id)
         add_tag_to_task(conn, task.id, tag2.id)
         ids = list_tag_ids_by_task(conn, task.id)
+        assert set(ids) == {tag1.id, tag2.id}
+
+    def test_list_tag_ids_excludes_archived_by_default(self, conn: sqlite3.Connection) -> None:
+        _, _, task, tag1, tag2 = self._setup(conn)
+        add_tag_to_task(conn, task.id, tag1.id)
+        add_tag_to_task(conn, task.id, tag2.id)
+        update_tag(conn, tag1.id, {"archived": True})
+        ids = list_tag_ids_by_task(conn, task.id)
+        assert set(ids) == {tag2.id}
+
+    def test_list_tag_ids_include_archived(self, conn: sqlite3.Connection) -> None:
+        _, _, task, tag1, tag2 = self._setup(conn)
+        add_tag_to_task(conn, task.id, tag1.id)
+        add_tag_to_task(conn, task.id, tag2.id)
+        update_tag(conn, tag1.id, {"archived": True})
+        ids = list_tag_ids_by_task(conn, task.id, include_archived=True)
         assert set(ids) == {tag1.id, tag2.id}
 
     def test_list_tags_by_task(self, conn: sqlite3.Connection) -> None:
@@ -1218,6 +1243,25 @@ class TestGroupTreeRepository:
         update_group(conn, child.id, {"archived": True})
         ids = get_subtree_group_ids(conn, root.id)
         assert set(ids) == {root.id, child.id}
+
+    def test_get_group_ancestry(self, conn: sqlite3.Connection) -> None:
+        _, proj = self._setup(conn)
+        root = insert_group(conn, NewGroup(project_id=proj.id, title="root"))
+        mid = insert_group(conn, NewGroup(project_id=proj.id, title="mid", parent_id=root.id))
+        leaf = insert_group(conn, NewGroup(project_id=proj.id, title="leaf", parent_id=mid.id))
+        ancestry = get_group_ancestry(conn, leaf.id)
+        assert [g.id for g in ancestry] == [root.id, mid.id, leaf.id]
+
+    def test_get_group_ancestry_root(self, conn: sqlite3.Connection) -> None:
+        _, proj = self._setup(conn)
+        root = insert_group(conn, NewGroup(project_id=proj.id, title="root"))
+        ancestry = get_group_ancestry(conn, root.id)
+        assert len(ancestry) == 1
+        assert ancestry[0].id == root.id
+
+    def test_get_group_ancestry_missing(self, conn: sqlite3.Connection) -> None:
+        ancestry = get_group_ancestry(conn, 9999)
+        assert ancestry == ()
 
     def test_reparent_children(self, conn: sqlite3.Connection) -> None:
         _, proj = self._setup(conn)

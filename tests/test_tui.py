@@ -496,13 +496,13 @@ class TestBoardTaskMovement:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id_before = focused.task_ref.id
+            task_id_before = focused.task_data.id
             await pilot.press("shift+right")
             await pilot.pause()
             await pilot.pause()
             focused_after = app.focused
             assert isinstance(focused_after, TaskCard)
-            assert focused_after.task_ref.id == task_id_before
+            assert focused_after.task_data.id == task_id_before
 
     async def test_move_last_task_empties_column(
         self, seeded_tui_db: tuple[Path, dict]
@@ -544,8 +544,8 @@ class TestBoardTaskMovement:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
-            original_col = focused.task_ref.column_id
+            task_id = focused.task_data.id
+            original_col = focused.task_data.column_id
             await pilot.press("shift+right")
             await pilot.pause()
             await pilot.pause()
@@ -588,7 +588,7 @@ class TestBoardTaskMovement:
             board = _board(app)
             columns = board._get_columns()
             target_card = board._get_cards(columns[1])[0]
-            target_task_id = target_card.task_ref.id
+            target_task_id = target_card.task_data.id
             await pilot.click(target_card)
             await pilot.pause()
             # Indices should have synced to (1, 0)
@@ -603,7 +603,7 @@ class TestBoardTaskMovement:
             assert board.focused_position[0] == 2
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            assert focused.task_ref.id == target_task_id
+            assert focused.task_data.id == target_task_id
 
     async def test_click_then_arrow_navigates_from_clicked_card(
         self, seeded_tui_db: tuple[Path, dict]
@@ -710,7 +710,7 @@ class TestArchiveTask:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
+            task_id = focused.task_data.id
             await pilot.press("d")
             await pilot.pause()
             await pilot.pause()
@@ -810,8 +810,8 @@ class TestTaskDetailModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
-            task_title = focused.task_ref.title
+            task_id = focused.task_data.id
+            task_title = focused.task_data.title
             await pilot.press("enter")
             await pilot.pause()
             title_widget = app.screen.query_one("#detail-title", Static)
@@ -871,7 +871,7 @@ class TestTaskDetailModal:
             await pilot.pause()
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            assert focused.task_ref.title == "User CRUD"
+            assert focused.task_data.title == "User CRUD"
             await pilot.press("enter")
             await pilot.pause()
             texts = [str(w.render()) for w in app.screen.query(Static)]
@@ -1029,7 +1029,7 @@ class TestTaskCreateModal:
             await pilot.pause()
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            assert focused.task_ref.title == "Focus me"
+            assert focused.task_data.title == "Focus me"
 
     async def test_created_task_in_database(
         self, seeded_tui_db: tuple[Path, dict]
@@ -1110,7 +1110,7 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            original_title = focused.task_ref.title
+            original_title = focused.task_data.title
             await pilot.press("e")
             await pilot.pause()
             title_input = app.screen.query_one("#form-input-title", Input)
@@ -1138,7 +1138,7 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
+            task_id = focused.task_data.id
             await pilot.press("e")
             await pilot.pause()
             title_input = app.screen.query_one("#form-input-title", Input)
@@ -1164,8 +1164,8 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
-            original_title = focused.task_ref.title
+            task_id = focused.task_data.id
+            original_title = focused.task_data.title
             await pilot.press("e")
             await pilot.pause()
             await pilot.press("escape")
@@ -1187,7 +1187,7 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
+            task_id = focused.task_data.id
             await pilot.press("e")
             await pilot.pause()
             title_input = app.screen.query_one("#form-input-title", Input)
@@ -1197,7 +1197,7 @@ class TestTaskEditModal:
             await pilot.pause()
             focused_after = app.focused
             assert isinstance(focused_after, TaskCard)
-            assert focused_after.task_ref.id == task_id
+            assert focused_after.task_data.id == task_id
 
     async def test_detail_to_edit_flow(
         self, seeded_tui_db: tuple[Path, dict]
@@ -1209,7 +1209,7 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            original_title = focused.task_ref.title
+            original_title = focused.task_data.title
             # Open detail
             await pilot.press("enter")
             await pilot.pause()
@@ -1231,8 +1231,8 @@ class TestTaskEditModal:
             await _wait_for_board(pilot)
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            task_id = focused.task_ref.id
-            original_priority = focused.task_ref.priority
+            task_id = focused.task_data.id
+            original_priority = focused.task_data.priority
             await pilot.press("e")
             await pilot.pause()
             # Change priority via the Select widget
@@ -1625,14 +1625,14 @@ class TestAllTasksScreen:
             assert screen._card_idx == 0
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            first_task_id = focused.task_ref.id
+            first_task_id = focused.task_data.id
             # Move down
             await pilot.press("down")
             await pilot.pause()
             assert screen._card_idx == 1
             focused = app.focused
             assert isinstance(focused, TaskCard)
-            assert focused.task_ref.id != first_task_id
+            assert focused.task_data.id != first_task_id
             # Move back up
             await pilot.press("up")
             await pilot.pause()
@@ -1827,7 +1827,7 @@ class TestMoveTaskToBoard:
             board_view = app.query_one(BoardView)
             # Navigate to scaffold task (done column, no deps)
             cards = app.query(TaskCard)
-            scaffold_card = [c for c in cards if c.task_ref.title == "Scaffold project"][0]
+            scaffold_card = [c for c in cards if c.task_data.title == "Scaffold project"][0]
             scaffold_card.focus()
             await pilot.pause()
             await pilot.press("m")

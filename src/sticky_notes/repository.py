@@ -332,7 +332,9 @@ def list_tasks_filtered(
     clauses = ["board_id = ?"]
     params: list[object] = [board_id]
     f = task_filter or TaskFilter()
-    if not f.include_archived:
+    if f.only_archived:
+        clauses.append("archived = 1")
+    elif not f.include_archived:
         clauses.append("archived = 0")
     if f.column_id is not None:
         clauses.append("column_id = ?")
@@ -349,6 +351,9 @@ def list_tasks_filtered(
     if f.tag_id is not None:
         clauses.append("id IN (SELECT task_id FROM task_tags WHERE tag_id = ?)")
         params.append(f.tag_id)
+    if f.group_id is not None:
+        clauses.append("group_id = ?")
+        params.append(f.group_id)
     where = " AND ".join(clauses)
     rows = conn.execute(
         f"SELECT * FROM tasks WHERE {where} ORDER BY position, id",
@@ -626,12 +631,20 @@ def remove_tag_from_task(
     )
 
 
+def remove_all_task_tags_by_tag(conn: sqlite3.Connection, tag_id: int) -> None:
+    """Remove all task assignments for a tag (used before archiving)."""
+    conn.execute("DELETE FROM task_tags WHERE tag_id = ?", (tag_id,))
+
+
 def list_tag_ids_by_task(
     conn: sqlite3.Connection,
     task_id: int,
+    *,
+    include_archived: bool = False,
 ) -> tuple[int, ...]:
+    archive_clause = "" if include_archived else " JOIN tags t ON t.id = tt.tag_id AND t.archived = 0"
     rows = conn.execute(
-        "SELECT tag_id FROM task_tags WHERE task_id = ?",
+        f"SELECT tt.tag_id FROM task_tags tt{archive_clause} WHERE tt.task_id = ?",
         (task_id,),
     ).fetchall()
     return tuple(r["tag_id"] for r in rows)
@@ -844,15 +857,25 @@ def list_groups_by_board(
     board_id: int,
     *,
     include_archived: bool = False,
+    title: str | None = None,
 ) -> tuple[Group, ...]:
-    """Return all groups for projects on a board, ordered by position."""
+    """Return all groups for projects on a board, ordered by position.
+
+    If *title* is given, only groups whose title matches are returned.
+    The match is case-insensitive because the groups.title column has
+    COLLATE NOCASE in the schema.
+    """
     archive_clause = "" if include_archived else " AND g.archived = 0"
+    title_clause = " AND g.title = ?" if title is not None else ""
+    params: list[object] = [board_id]
+    if title is not None:
+        params.append(title)
     rows = conn.execute(
         "SELECT g.* FROM groups g "
         "JOIN projects p ON g.project_id = p.id "
-        f"WHERE p.board_id = ?{archive_clause} "
+        f"WHERE p.board_id = ?{archive_clause}{title_clause} "
         "ORDER BY g.position, g.id",
-        (board_id,),
+        params,
     ).fetchall()
     return tuple(row_to_group(r) for r in rows)
 
@@ -900,6 +923,25 @@ def get_subtree_group_ids(
         (group_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
+
+
+def get_group_ancestry(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> tuple[Group, ...]:
+    """Return groups from root to the given group, inclusive."""
+    rows = conn.execute(
+        "WITH RECURSIVE ancestry AS ("
+        "  SELECT id, project_id, title, parent_id, position, archived, created_at, 0 AS depth "
+        "  FROM groups WHERE id = ? "
+        "  UNION ALL "
+        "  SELECT g.id, g.project_id, g.title, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
+        "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
+        ") SELECT id, project_id, title, parent_id, position, archived, created_at "
+        "FROM ancestry ORDER BY depth DESC",
+        (group_id,),
+    ).fetchall()
+    return tuple(row_to_group(r) for r in rows)
 
 
 def reparent_children(

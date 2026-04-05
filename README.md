@@ -20,22 +20,17 @@ TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Con
 # Install in editable mode
 pip install -e .
 
-# Create a board (automatically becomes the active board)
-todo board create work
-
-# Add default columns
-todo col add "To Do"
-todo col add "In Progress"
-todo col add "Done"
+# Create a board with seed columns
+todo board create work --columns "To Do","In Progress","Done"
 
 # Add and manage tasks
-todo add "Write README"
+todo create "Write README" -c "To Do"
 todo ls
 todo mv task-0001 "In Progress"
-todo done task-0001
+todo mv task-0001 "Done"
 
 # Launch the TUI
-todo --tui
+todo tui
 ```
 
 ## CLI Usage
@@ -50,17 +45,15 @@ Entry point: `todo`
 
 | Command | Description |
 |---------|-------------|
-| `todo add <title>` | Add a task to the first column |
+| `todo create <title> -c <col>` | Create a task in the named column (required) |
 | `todo ls` | List tasks on the active board |
 | `todo show <task>` | Show task detail with history and dependencies |
 | `todo edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo mv <task> <column>` | Move task to a column |
-| `todo mv <task> <col> --board <board>` | Move task to a different board (copies and archives original) |
-| `todo mv <task> --project <project>` | Change task's project within the current board |
-| `todo mv <task> <col> --dry-run` | Preview a move without executing (shows dependency warnings) |
-| `todo done <task>` | Move task to the last column |
+| `todo mv <task> <column> [pos]` | Move task to a column (within-board only) |
 | `todo rm <task>` | Archive a task |
 | `todo log <task>` | Show task change history |
+
+Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
 
 ### List Filters
 
@@ -69,6 +62,7 @@ Entry point: `todo`
 | Flag | Description |
 |------|-------------|
 | `--all` / `-a` | Include archived tasks |
+| `--archived` | Show only archived tasks |
 | `--column` / `-c` | Filter by column name |
 | `--project` / `-p` | Filter by project name |
 | `--priority` / `-P` | Filter by priority (1-5) |
@@ -78,30 +72,32 @@ Entry point: `todo`
 
 | Command | Description |
 |---------|-------------|
-| `todo board ...` | `create`, `ls`, `use`, `rename`, `archive` |
-| `todo col ...` | `add`, `ls`, `rename`, `archive` |
-| `todo project ...` | `create`, `ls`, `show`, `archive` |
-| `todo dep ...` | `add`, `rm` |
+| `todo board ...` | `create [--columns a,b,c]`, `ls`, `use`, `rename`, `rm` |
+| `todo col ...` | `create`, `ls`, `rename`, `rm [--reassign-to COL\|--force]` |
+| `todo project ...` | `create`, `ls`, `show`, `rm` |
+| `todo dep ...` | `create`, `rm` |
+| `todo tag ...` | `create`, `ls`, `rm [--unassign]` |
+| `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `rm`, `mv`, `assign`, `unassign` |
 | `todo export` | Export database to Markdown with Mermaid dependency graphs |
 
-### Cross-Board Moves
+### Cross-Board Transfer
 
-Tasks can be moved between boards. The move creates a copy on the target board and archives the original. Dependencies must be removed before moving:
+Tasks can be transferred between boards. The transfer creates a copy on the target board and archives the original. Dependencies must be removed first.
 
 ```sh
-# Move task to another board
-todo mv task-0001 "Backlog" --board ops
+# Transfer task to another board
+todo transfer task-0001 --board ops --column Backlog
 
-# Move with project assignment on the target board
-todo mv task-0001 "Backlog" --board ops --project infra
+# Transfer with project assignment on the target board
+todo transfer task-0001 --board ops --column Backlog --project infra
 
-# Preview before moving (checks for blocking dependencies)
-todo mv task-0001 "Backlog" --board ops --dry-run
+# Preview before transferring (checks for blocking dependencies)
+todo transfer task-0001 --board ops --column Backlog --dry-run
 ```
 
 ## TUI
 
-Launch with `todo --tui` (or `todo --tui --db path/to/db`).
+Launch with `todo tui` (or `todo tui --db path/to/db`).
 
 The TUI provides a full kanban board view with keyboard-driven navigation and modal dialogs.
 
@@ -149,8 +145,7 @@ The `todo` CLI can be used by Claude Code to persistently track multi-step plans
 Setup:
 
 ```sh
-todo board create Claude
-todo col add Backlog && todo col add "In Progress" && todo col add Done
+todo board create claude --columns Backlog,"In Progress",Done
 ```
 
 Then add to your `~/.claude/CLAUDE.md`:
@@ -159,14 +154,14 @@ Then add to your `~/.claude/CLAUDE.md`:
 ## Workflow Tracking with sticky-notes
 
 For multi-step plans (5+ steps), use the `todo` CLI to track progress persistently.
-All work lives on the **"Claude" board** which has three columns: Backlog, In Progress, Done.
+All work lives on the **"claude" board** which has three columns: Backlog, In Progress, Done.
 
-1. Switch to the Claude board: `todo board use Claude`
+1. Switch to the claude board: `todo board use claude`
 2. Create a project for the plan: `todo project create "<plan name>"`
-3. Create one task per plan step: `todo add "<step>" --project "<plan>" --priority N`
-4. Add dependencies where ordering matters: `todo dep add task-NNNN task-MMMM`
+3. Create one task per plan step: `todo create "<step>" -c Backlog --project "<plan>" -P N`
+4. Add dependencies where ordering matters: `todo dep create task-NNNN task-MMMM`
 5. Move tasks to "In Progress" when starting: `todo mv task-NNNN "In Progress"`
-6. Mark tasks done when complete: `todo done task-NNNN`
+6. Mark tasks done when complete: `todo mv task-NNNN Done`
 7. Run `todo export` at milestones for a full status snapshot
 ```
 
@@ -216,5 +211,5 @@ For manual TUI testing with seeded data:
 
 ```sh
 python tests/seed.py tmp/test.db
-todo --tui --db tmp/test.db
+todo tui --db tmp/test.db
 ```

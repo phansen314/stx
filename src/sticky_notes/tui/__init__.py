@@ -6,9 +6,9 @@ from pathlib import Path
 from sticky_notes.tui.app import StickyNotesApp
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     db_path: Path | None = None
-    args = sys.argv[1:]
+    args = argv if argv is not None else sys.argv[1:]
     for i, arg in enumerate(args):
         if arg == "--db" and i + 1 < len(args):
             db_path = Path(args[i + 1])

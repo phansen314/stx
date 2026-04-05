@@ -16,7 +16,13 @@ def read_schema() -> str:
 
     raw = importlib.resources.files("sticky_notes").joinpath("schema.sql").read_text()
     task_field_values = ", ".join(f"'{f.value}'" for f in TaskField)
-    return raw.replace("__TASK_FIELD_VALUES__", task_field_values)
+    result = raw.replace("__TASK_FIELD_VALUES__", task_field_values)
+    if "__TASK_FIELD_VALUES__" in result:
+        raise AssertionError(
+            "schema.sql placeholder __TASK_FIELD_VALUES__ was not replaced; "
+            "was the placeholder renamed in schema.sql?"
+        )
+    return result
 
 
 def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -71,6 +77,11 @@ def _read_migration(version: int) -> str:
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"database schema version {current} is newer than this "
+            f"build ({SCHEMA_VERSION}); refusing to downgrade"
+        )
     for target_version in range(current + 1, SCHEMA_VERSION + 1):
         sql = _read_migration(target_version)
         conn.execute("PRAGMA foreign_keys = OFF")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import re
 import sqlite3
 from typing import NamedTuple
 
@@ -17,20 +16,22 @@ from helpers import (
 )
 from sticky_notes.connection import read_schema, transaction
 from sticky_notes.mappers import (
-    shallow_fields,
-    project_ref_to_detail,
-    project_to_ref,
+    group_to_detail,
+    group_to_ref,
+    project_to_detail,
     row_to_board,
     row_to_column,
     row_to_project,
     row_to_task,
     row_to_task_history,
-    task_ref_to_detail,
-    task_to_ref,
+    shallow_fields,
+    task_to_detail,
+    task_to_list_item,
 )
 from sticky_notes.models import (
     Board,
     Column,
+    Group,
     NewBoard,
     NewColumn,
     NewProject,
@@ -41,7 +42,7 @@ from sticky_notes.models import (
     TaskField,
     TaskHistory,
 )
-from sticky_notes.service_models import ProjectDetail, ProjectRef, TaskDetail, TaskRef
+from sticky_notes.service_models import GroupDetail, GroupRef, ProjectDetail, TaskDetail, TaskListItem
 
 
 # ---- Seed helpers ----
@@ -223,7 +224,7 @@ class TestRowToTaskHistory:
 
 
 class TestShallowFields:
-    def test_extracts_base_class_fields(self) -> None:
+    def test_extracts_all_fields(self) -> None:
         task = Task(
             id=1, board_id=1, title="t", project_id=None, description=None,
             column_id=1, priority=1, due_date=None, position=0,
@@ -236,28 +237,6 @@ class TestShallowFields:
             "archived", "created_at", "start_date", "finish_date", "group_id",
         }
 
-    def test_filters_subclass_fields_when_parent_specified(self) -> None:
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(2,), blocks_ids=(3,),
-        )
-        fields = shallow_fields(ref, Task)
-        assert "blocked_by_ids" not in fields
-        assert "blocks_ids" not in fields
-
-    def test_includes_subclass_fields_when_subclass_specified(self) -> None:
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(2,), blocks_ids=(3,),
-        )
-        fields = shallow_fields(ref, TaskRef)
-        assert fields["blocked_by_ids"] == (2,)
-        assert fields["blocks_ids"] == (3,)
-
     def test_rejects_non_dataclass(self) -> None:
         with pytest.raises(TypeError, match="is not a dataclass"):
             shallow_fields("not a dataclass", str)
@@ -268,81 +247,133 @@ class TestShallowFields:
             shallow_fields(board, Task)
 
 
-# ---- Model → ref tests ----
+# ---- Mapper tests ----
 
 
-class TestTaskToRef:
-    def test_creates_ref(self) -> None:
-        task = Task(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-        )
-        ref = task_to_ref(task, blocked_by_ids=(2,), blocks_ids=(3,))
-        assert isinstance(ref, TaskRef)
-        assert ref.title == "t"
-        assert ref.blocked_by_ids == (2,)
-        assert ref.blocks_ids == (3,)
-
-    def test_ref_input_replaces_dependency_ids(self) -> None:
-        """Passing a TaskRef replaces its dependency IDs with the new ones."""
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(99,), blocks_ids=(88,),
-        )
-        new_ref = task_to_ref(ref, blocked_by_ids=(2,), blocks_ids=(3,))
-        assert new_ref.blocked_by_ids == (2,)
-        assert new_ref.blocks_ids == (3,)
+def _task() -> Task:
+    return Task(
+        id=1, board_id=1, title="t", project_id=None, description=None,
+        column_id=1, priority=1, due_date=None, position=0,
+        archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
+    )
 
 
-class TestTaskRefToDetail:
+def _col() -> Column:
+    return Column(id=1, board_id=1, name="todo", position=0, archived=False, created_at=0)
+
+
+def _group() -> Group:
+    return Group(id=1, project_id=1, title="g", parent_id=None, position=0, archived=False, created_at=0)
+
+
+class TestTaskToListItem:
+    def test_creates_list_item(self) -> None:
+        item = task_to_list_item(_task(), project_name="MyProj", tag_names=("a", "b"))
+        assert isinstance(item, TaskListItem)
+        assert item.title == "t"
+        assert item.project_name == "MyProj"
+        assert item.tag_names == ("a", "b")
+
+    def test_task_fields_copied(self) -> None:
+        task = _task()
+        item = task_to_list_item(task, project_name=None, tag_names=())
+        for f in dataclasses.fields(task):
+            assert getattr(item, f.name) == getattr(task, f.name)
+
+    def test_defaults(self) -> None:
+        item = task_to_list_item(_task(), project_name=None, tag_names=())
+        assert item.project_name is None
+        assert item.tag_names == ()
+
+
+class TestTaskToDetail:
     def test_creates_detail(self) -> None:
-        col = Column(
-            id=1, board_id=1, name="todo", position=0,
-            archived=False, created_at=0,
-        )
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(), blocks_ids=(),
-        )
-        detail = task_ref_to_detail(
-            ref, column=col, project=None,
+        col = _col()
+        detail = task_to_detail(
+            _task(), column=col, project=None, group=None,
             blocked_by=(), blocks=(), history=(),
         )
         assert isinstance(detail, TaskDetail)
         assert detail.column == col
         assert detail.title == "t"
 
-
-class TestProjectToRef:
-    def test_creates_ref(self) -> None:
-        project = Project(
-            id=1, board_id=1, name="p", description=None,
-            archived=False, created_at=0,
+    def test_task_fields_copied(self) -> None:
+        task = _task()
+        detail = task_to_detail(
+            task, column=_col(), project=None, group=None,
+            blocked_by=(), blocks=(), history=(),
         )
-        ref = project_to_ref(project, task_ids=(1, 2))
-        assert isinstance(ref, ProjectRef)
-        assert ref.task_ids == (1, 2)
-        assert ref.name == "p"
+        for f in dataclasses.fields(task):
+            assert getattr(detail, f.name) == getattr(task, f.name)
+
+    def test_hydrated_defaults(self) -> None:
+        detail = task_to_detail(
+            _task(), column=_col(), project=None, group=None,
+            blocked_by=(), blocks=(), history=(),
+        )
+        assert detail.project is None
+        assert detail.group is None
+        assert detail.blocked_by == ()
+        assert detail.blocks == ()
+        assert detail.history == ()
+        assert detail.tags == ()
+
+    def test_column_is_required_at_construction(self) -> None:
+        """column is a plain required field — omitting it is a TypeError from Python."""
+        with pytest.raises(TypeError):
+            task_to_detail(  # type: ignore[call-arg]
+                _task(), project=None, group=None,
+                blocked_by=(), blocks=(), history=(),
+            )
 
 
-class TestProjectRefToDetail:
+class TestProjectToDetail:
     def test_creates_detail(self) -> None:
-        ref = ProjectRef(
-            id=1, board_id=1, name="p", description=None,
-            archived=False, created_at=0, task_ids=(1,),
-        )
-        detail = project_ref_to_detail(ref, tasks=())
+        project = Project(id=1, board_id=1, name="p", description=None, archived=False, created_at=0)
+        task = _task()
+        detail = project_to_detail(project, tasks=(task,))
         assert isinstance(detail, ProjectDetail)
-        assert detail.task_ids == (1,)
-        assert detail.tasks == ()
+        assert detail.name == "p"
+        assert detail.tasks == (task,)
 
-    def test_project_detail_inherits_from_project_ref(self) -> None:
-        assert issubclass(ProjectDetail, ProjectRef)
+    def test_project_fields_copied(self) -> None:
+        project = Project(id=1, board_id=1, name="p", description=None, archived=False, created_at=0)
+        detail = project_to_detail(project, tasks=())
+        for f in dataclasses.fields(project):
+            assert getattr(detail, f.name) == getattr(project, f.name)
+
+
+class TestGroupToRef:
+    def test_creates_ref(self) -> None:
+        group = _group()
+        ref = group_to_ref(group, task_ids=(1, 2), child_ids=(3,))
+        assert isinstance(ref, GroupRef)
+        assert ref.title == "g"
+        assert ref.task_ids == (1, 2)
+        assert ref.child_ids == (3,)
+
+    def test_group_fields_copied(self) -> None:
+        group = _group()
+        ref = group_to_ref(group, task_ids=(), child_ids=())
+        for f in dataclasses.fields(group):
+            assert getattr(ref, f.name) == getattr(group, f.name)
+
+
+class TestGroupToDetail:
+    def test_creates_detail(self) -> None:
+        group = _group()
+        child = Group(id=2, project_id=1, title="child", parent_id=1, position=0, archived=False, created_at=0)
+        detail = group_to_detail(group, tasks=(), children=(child,), parent=None)
+        assert isinstance(detail, GroupDetail)
+        assert detail.title == "g"
+        assert detail.children == (child,)
+        assert detail.parent is None
+
+    def test_group_fields_copied(self) -> None:
+        group = _group()
+        detail = group_to_detail(group, tasks=(), children=(), parent=None)
+        for f in dataclasses.fields(group):
+            assert getattr(detail, f.name) == getattr(group, f.name)
 
 
 # ---- Pre-insert default tests ----
@@ -374,39 +405,6 @@ class TestPreInsertDefaults:
     def test_new_task_history_defaults(self) -> None:
         hist = NewTaskHistory(task_id=1, field=TaskField.TITLE, new_value="v", source="tui")
         assert hist.old_value is None
-
-
-# ---- TaskDetail column required ----
-
-
-class TestTaskDetailColumn:
-    def test_column_is_required(self) -> None:
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(), blocks_ids=(),
-        )
-        with pytest.raises(TypeError, match="column is required"):
-            TaskDetail(**shallow_fields(ref, TaskRef))
-
-    def test_other_fields_default(self) -> None:
-        col = Column(
-            id=1, board_id=1, name="c", position=0,
-            archived=False, created_at=0,
-        )
-        ref = TaskRef(
-            id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
-            blocked_by_ids=(), blocks_ids=(),
-        )
-        detail = TaskDetail(**shallow_fields(ref, TaskRef), column=col)
-        assert detail.column == col
-        assert detail.project is None
-        assert detail.blocked_by == ()
-        assert detail.blocks == ()
-        assert detail.history == ()
 
 
 # ---- Cross-layer consistency tests ----

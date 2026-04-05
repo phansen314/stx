@@ -513,6 +513,16 @@ class TestMigrations:
         version_after = conn.execute("PRAGMA user_version").fetchone()[0]
         assert version_before == version_after == SCHEMA_VERSION
 
+    def test_downgrade_rejected(self, tmp_path: Path) -> None:
+        """DB schema newer than this build must raise RuntimeError."""
+        db_path = tmp_path / "future.db"
+        conn = get_connection(db_path)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        conn.commit()
+        with pytest.raises(RuntimeError, match="newer than this build"):
+            _run_migrations(conn)
+        conn.close()
+
 
 class TestTaskHistoryFieldConstraint:
     def test_rejects_invalid_field_value(
