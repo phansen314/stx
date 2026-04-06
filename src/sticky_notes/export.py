@@ -21,19 +21,19 @@ def _md_escape(value: str) -> str:
     return value
 
 
-def _render_columns_section(
-    cols: tuple,
-    tasks_by_col: dict,
+def _render_statuses_section(
+    statuses: tuple,
+    tasks_by_status: dict,
 ) -> list[str]:
     lines = [
-        "### Columns",
+        "### Statuses",
         "",
-        "| # | Column | Tasks |",
+        "| # | Status | Tasks |",
         "|---|--------|-------|",
     ]
-    for i, c in enumerate(cols, 1):
-        count = len(tasks_by_col.get(c.id, []))
-        lines.append(f"| {i} | {_md_escape(c.name)} | {count} |")
+    for i, s in enumerate(statuses, 1):
+        count = len(tasks_by_status.get(s.id, []))
+        lines.append(f"| {i} | {_md_escape(s.name)} | {count} |")
     lines.append("")
     return lines
 
@@ -133,18 +133,18 @@ def _render_groups_section(
 
 
 def _render_tasks_section(
-    cols: tuple,
-    tasks_by_col: dict,
+    statuses: tuple,
+    tasks_by_status: dict,
     proj_map: dict,
     tag_map: dict,
     task_tag_map: dict,
 ) -> list[str]:
     lines = ["### Tasks", ""]
-    for c in cols:
-        col_tasks = tasks_by_col.get(c.id, [])
+    for s in statuses:
+        col_tasks = tasks_by_status.get(s.id, [])
         if not col_tasks:
             continue
-        lines.append(f"#### {_md_escape(c.name)}")
+        lines.append(f"#### {_md_escape(s.name)}")
         lines.append("")
         lines.append("| Task | Title | Priority | Project | Tags | Due |")
         lines.append("|------|-------|----------|---------|------|-----|")
@@ -200,7 +200,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
     with transaction(conn):
         boards = service.list_boards(conn, include_archived=True)
 
-        columns: list[dict] = []
+        statuses: list[dict] = []
         projects: list[dict] = []
         tasks: list[dict] = []
         tags: list[dict] = []
@@ -208,9 +208,9 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
 
         for board in boards:
             bid = board.id
-            columns.extend(
-                dataclasses.asdict(c)
-                for c in service.list_columns(conn, bid, include_archived=True)
+            statuses.extend(
+                dataclasses.asdict(s)
+                for s in service.list_statuses(conn, bid, include_archived=True)
             )
             projects.extend(
                 dataclasses.asdict(p)
@@ -239,7 +239,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         "schema_version": SCHEMA_VERSION,
         "exported_at": int(time.time()),
         "boards": [dataclasses.asdict(b) for b in boards],
-        "columns": columns,
+        "statuses": statuses,
         "projects": projects,
         "tasks": tasks,
         "tags": tags,
@@ -267,7 +267,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines.append(f"## Board: {_md_escape(board.name)}")
         lines.append("")
 
-        cols = service.list_columns(conn, bid)
+        statuses = service.list_statuses(conn, bid)
         tasks = service.list_tasks(conn, bid)
         task_ids = {t.id for t in tasks}
         projects = service.list_projects(conn, bid)
@@ -276,15 +276,15 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         tag_map = {t.id: t.name for t in tags}
         task_tag_map = repo.batch_tag_ids_by_task(conn, tuple(task_ids))
 
-        tasks_by_col: dict[int, list] = {}
+        tasks_by_status: dict[int, list] = {}
         for t in tasks:
-            tasks_by_col.setdefault(t.column_id, []).append(t)
+            tasks_by_status.setdefault(t.status_id, []).append(t)
 
-        lines += _render_columns_section(cols, tasks_by_col)
+        lines += _render_statuses_section(statuses, tasks_by_status)
         lines += _render_projects_section(projects, tasks)
         lines += _render_tags_section(tags, task_tag_map)
         lines += _render_groups_section(conn, projects)
-        lines += _render_tasks_section(cols, tasks_by_col, proj_map, tag_map, task_tag_map)
+        lines += _render_tasks_section(statuses, tasks_by_status, proj_map, tag_map, task_tag_map)
 
         board_deps = [
             (tid, did)

@@ -12,7 +12,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 
 from sticky_notes import service
 from sticky_notes.formatting import format_timestamp, parse_date
-from sticky_notes.models import Column, Project
+from sticky_notes.models import Project, Status
 
 
 def _validate_date(value: str) -> bool:
@@ -87,16 +87,16 @@ class TaskFormModal(ModalScreen[dict | None]):
         board_id: int,
         *,
         mode: Literal["create", "edit"] = "create",
-        column_id: int | None = None,
+        status_id: int | None = None,
         defaults: dict | None = None,
         default_priority: int = 1,
     ) -> None:
         super().__init__()
         self._mode = mode
-        self._column_id = column_id
+        self._status_id = status_id
         self._defaults = defaults or {}
         self._default_priority = default_priority
-        self._columns: tuple[Column, ...] = service.list_columns(conn, board_id)
+        self._statuses: tuple[Status, ...] = service.list_statuses(conn, board_id)
         self._projects: tuple[Project, ...] = service.list_projects(conn, board_id)
 
     def compose(self) -> ComposeResult:
@@ -151,15 +151,15 @@ class TaskFormModal(ModalScreen[dict | None]):
             )
 
             if self._mode == "create":
-                column_options = [(c.name, c.id) for c in self._columns]
-                default_col = self._column_id if self._column_id is not None else (
-                    self._columns[0].id if self._columns else Select.BLANK
+                status_options = [(s.name, s.id) for s in self._statuses]
+                default_status = self._status_id if self._status_id is not None else (
+                    self._statuses[0].id if self._statuses else Select.BLANK
                 )
-                yield Static("Column", classes="form-label")
+                yield Static("Status", classes="form-label")
                 yield Select(
-                    column_options,
-                    value=default_col,
-                    id="form-select-column",
+                    status_options,
+                    value=default_status,
+                    id="form-select-status",
                     allow_blank=False,
                     classes="form-field",
                 )
@@ -216,8 +216,8 @@ class TaskFormModal(ModalScreen[dict | None]):
         }
 
         if self._mode == "create":
-            column_select = self.query_one("#form-select-column", Select)
-            result["column_id"] = column_select.value
+            status_select = self.query_one("#form-select-status", Select)
+            result["status_id"] = status_select.value
 
         self.dismiss(result)
 

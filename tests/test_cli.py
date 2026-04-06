@@ -166,50 +166,49 @@ class TestBoardCommands:
         assert "error:" in err
 
 
-# ---- Column commands ----
+# ---- Status commands ----
 
 
-class TestColumnCommands:
+class TestStatusCommands:
     def test_add(self, cli):
         cli("board", "create", "dev")
-        out, _ = cli("col", "create", "backlog")
-        assert "created column 'backlog'" in out
+        out, _ = cli("status", "create", "backlog")
+        assert "created status 'backlog'" in out
 
-    def test_add_with_position(self, cli):
+    def test_list_statuses_ordered_alphabetically(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "backlog", "--pos", "0")
-        cli("col", "create", "done", "--pos", "2")
-        cli("col", "create", "in progress", "--pos", "1")
-        out, _ = cli("col", "ls")
-        lines = out.strip().split("\n")
-        assert "backlog" in lines[0]
-        assert "in progress" in lines[1]
-        assert "done" in lines[2]
+        cli("status", "create", "backlog")
+        cli("status", "create", "done")
+        cli("status", "create", "in progress")
+        out, _ = cli("status", "ls")
+        assert "backlog" in out
+        assert "done" in out
+        assert "in progress" in out
 
     def test_ls(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        cli("col", "create", "done", "--pos", "1")
-        out, _ = cli("col", "ls")
+        cli("status", "create", "todo")
+        cli("status", "create", "done")
+        out, _ = cli("status", "ls")
         assert "todo" in out
         assert "done" in out
 
     def test_ls_empty(self, cli):
         cli("board", "create", "dev")
-        out, _ = cli("col", "ls")
-        assert "no columns" in out  # _empty("column") = "no columns"
+        out, _ = cli("status", "ls")
+        assert "no statuses" in out
 
     def test_rename(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        out, _ = cli("col", "rename", "todo", "backlog")
-        assert "renamed column 'todo' -> 'backlog'" in out
+        cli("status", "create", "todo")
+        out, _ = cli("status", "rename", "todo", "backlog")
+        assert "renamed status 'todo' -> 'backlog'" in out
 
     def test_archive(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        out, _ = cli("col", "rm", "todo")
-        assert "archived column 'todo'" in out
+        cli("status", "create", "todo")
+        out, _ = cli("status", "rm", "todo")
+        assert "archived status 'todo'" in out
 
 
 # ---- Task shortcuts ----
@@ -219,34 +218,34 @@ class TestTaskCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo", "--pos", "0")
-        cli("col", "create", "in progress", "--pos", "1")
-        cli("col", "create", "done", "--pos", "2")
+        cli("status", "create", "todo")
+        cli("status", "create", "in progress")
+        cli("status", "create", "done")
 
     def test_add_default_column(self, cli):
-        out, _ = cli("task", "create", "Fix login bug", "-c", "todo")
+        out, _ = cli("task", "create", "Fix login bug", "-S", "todo")
         assert "created task-0001" in out
 
     def test_add_explicit_column(self, cli):
-        out, _ = cli("task", "create", "My task", "-c", "in progress")
+        out, _ = cli("task", "create", "My task", "-S", "in progress")
         assert "created task-0001" in out
 
     def test_add_with_project(self, cli):
         cli("project", "create", "backend")
-        out, _ = cli("task", "create", "Fix bug", "-p", "backend", "-c", "todo")
+        out, _ = cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
         assert "created task-0001" in out
 
     def test_add_with_priority_and_due(self, cli):
-        out, _ = cli("task", "create", "Important", "--priority", "3", "--due", "2026-04-01", "-c", "todo")
+        out, _ = cli("task", "create", "Important", "--priority", "3", "--due", "2026-04-01", "-S", "todo")
         assert "created task-0001" in out
 
     def test_add_with_desc(self, cli):
-        out, _ = cli("task", "create", "Fix it", "-d", "Full description here", "-c", "todo")
+        out, _ = cli("task", "create", "Fix it", "-d", "Full description here", "-S", "todo")
         assert "created task-0001" in out
 
     def test_ls_grouped_by_column(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "in progress")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "in progress")
         out, _ = cli("task", "ls")
         assert "== todo ==" in out
         assert "Task A" in out
@@ -257,33 +256,33 @@ class TestTaskCommands:
 
     def test_ls_shows_project(self, cli):
         cli("project", "create", "backend")
-        cli("task", "create", "Fix bug", "-p", "backend", "-c", "todo")
+        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "@backend" in out
 
     def test_ls_shows_priority(self, cli):
-        cli("task", "create", "Fix bug", "--priority", "3", "-c", "todo")
+        cli("task", "create", "Fix bug", "--priority", "3", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "[P3]" in out
 
     def test_show(self, cli):
-        cli("task", "create", "Fix login bug", "--priority", "2", "--due", "2026-04-01", "-c", "todo")
+        cli("task", "create", "Fix login bug", "--priority", "2", "--due", "2026-04-01", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "task-0001" in out
         assert "Fix login bug" in out
         assert "Priority:    2" in out
         assert "Due:         2026-04-01" in out
-        assert "Column:      todo" in out
+        assert "Status:      todo" in out
 
     def test_show_with_project(self, cli):
         cli("project", "create", "backend")
-        cli("task", "create", "Fix bug", "-p", "backend", "-c", "todo")
+        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "Project:     backend" in out
 
     def test_show_with_deps(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
         cli("dep", "create", "2", "1")
         out, _ = cli("task", "show", "2")
         assert "Blocked by:  task-0001" in out
@@ -292,71 +291,71 @@ class TestTaskCommands:
         assert "Blocks:      task-0002" in out2
 
     def test_show_with_description(self, cli):
-        cli("task", "create", "Fix bug", "-d", "Detailed description", "-c", "todo")
+        cli("task", "create", "Fix bug", "-d", "Detailed description", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "Description:" in out
         assert "Detailed description" in out
 
     def test_edit_title(self, cli):
-        cli("task", "create", "Old title", "-c", "todo")
+        cli("task", "create", "Old title", "-S", "todo")
         out, _ = cli("task", "edit", "1", "--title", "New title")
         assert "updated task-0001" in out
         show_out, _ = cli("task", "show", "1")
         assert "New title" in show_out
 
     def test_edit_priority(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         cli("task", "edit", "1", "--priority", "5")
         out, _ = cli("task", "show", "1")
         assert "Priority:    5" in out
 
     def test_edit_desc(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         cli("task", "edit", "1", "-d", "new desc")
         out, _ = cli("task", "show", "1")
         assert "new desc" in out
 
     def test_edit_due(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         cli("task", "edit", "1", "--due", "2026-06-01")
         out, _ = cli("task", "show", "1")
         assert "Due:         2026-06-01" in out
 
     def test_edit_project(self, cli):
         cli("project", "create", "backend")
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         cli("task", "edit", "1", "-p", "backend")
         out, _ = cli("task", "show", "1")
         assert "Project:     backend" in out
 
     def test_edit_nothing(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         out, _ = cli("task", "edit", "1")  # no-op: returns task unchanged, exit 0
         assert "updated task-0001" in out
 
     def test_mv(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "mv", "1", "in progress")
         assert "moved task-0001 -> in progress" in out
 
     def test_mv_case_insensitive(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "mv", "1", "In Progress")
         assert "moved task-0001 -> in progress" in out
 
     def test_rm(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "rm", "1")
         assert "archived task-0001" in out
 
     def test_rm_hides_from_ls(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         cli("task", "rm", "1")
         out, _ = cli("task", "ls")
         assert "Task A" not in out
 
     def test_log(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         cli("task", "edit", "1", "--title", "Task B")
         out, _ = cli("task", "log", "1")
         assert "title:" in out
@@ -365,7 +364,7 @@ class TestTaskCommands:
         assert "(cli)" in out
 
     def test_log_empty(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "log", "1")
         assert "no history" in out
 
@@ -374,7 +373,7 @@ class TestTaskCommands:
         assert "error:" in err
 
     def test_task_num_formats(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out1, _ = cli("task", "show", "task-0001")
         out2, _ = cli("task", "show", "#1")
         out3, _ = cli("task", "show", "0001")
@@ -383,7 +382,7 @@ class TestTaskCommands:
         assert "Task A" in out3
 
     def test_show_by_title(self, cli):
-        cli("task", "create", "Fix login bug", "-c", "todo")
+        cli("task", "create", "Fix login bug", "-S", "todo")
         out, _ = cli("task", "show", "Fix login bug", "--by-title")
         assert "task-0001" in out
         assert "Fix login bug" in out
@@ -393,8 +392,8 @@ class TestTaskCommands:
         assert "error:" in err
 
     def test_dep_create_by_title(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
         out, _ = cli("dep", "create", "Task B", "Task A", "--by-title")
         assert "task-0002 now blocked by task-0001" in out
 
@@ -427,9 +426,9 @@ class TestProjectCommands:
         assert "no projects" in out
 
     def test_show(self, cli):
-        cli("col", "create", "todo")
+        cli("status", "create", "todo")
         cli("project", "create", "backend", "-d", "API layer")
-        cli("task", "create", "Fix bug", "-p", "backend", "-c", "todo")
+        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
         out, _ = cli("project", "show", "backend")
         assert "backend" in out
         assert "API layer" in out
@@ -449,17 +448,17 @@ class TestDependencyCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
+        cli("status", "create", "todo")
 
     def test_add(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
         out, _ = cli("dep", "create", "2", "1")
         assert "task-0002 now blocked by task-0001" in out
 
     def test_rm(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
         cli("dep", "create", "2", "1")
         out, _ = cli("dep", "rm", "2", "1")
         assert "removed dependency" in out
@@ -488,23 +487,23 @@ class TestErrorHandling:
         _, err = cli("task", "show", "abc", expect_exit=1)
         assert "error:" in err
 
-    def test_column_not_found(self, cli):
+    def test_status_not_found(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        _, err = cli("task", "create", "Task", "-c", "nonexistent", expect_exit=1)
+        cli("status", "create", "todo")
+        _, err = cli("task", "create", "Task", "-S", "nonexistent", expect_exit=1)
         assert "not found" in err
 
     def test_project_not_found(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        _, err = cli("task", "create", "Task", "-c", "todo", "-p", "nonexistent", expect_exit=1)
+        cli("status", "create", "todo")
+        _, err = cli("task", "create", "Task", "-S", "todo", "-p", "nonexistent", expect_exit=1)
         assert "not found" in err
 
-    def test_archive_column_with_active_tasks_blocked(self, cli):
+    def test_archive_status_with_active_tasks_blocked(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
-        cli("task", "create", "Task", "-c", "todo")
-        _, err = cli("col", "rm", "todo", expect_exit=1)
+        cli("status", "create", "todo")
+        cli("task", "create", "Task", "-S", "todo")
+        _, err = cli("status", "rm", "todo", expect_exit=1)
         assert "active task" in err
 
 
@@ -515,20 +514,20 @@ class TestBoardFlag:
     def test_board_flag(self, cli):
         cli("board", "create", "dev")
         cli("board", "create", "ops")
-        cli("-b", "dev", "col", "create", "todo")
-        out, _ = cli("-b", "dev", "col", "ls")
+        cli("-b", "dev", "status", "create", "todo")
+        out, _ = cli("-b", "dev", "status", "ls")
         assert "todo" in out
 
     def test_board_flag_overrides_active(self, cli):
         cli("board", "create", "dev")
         cli("board", "create", "ops")
         # ops is now active (last created)
-        cli("-b", "dev", "col", "create", "backlog")
-        out, _ = cli("-b", "dev", "col", "ls")
+        cli("-b", "dev", "status", "create", "backlog")
+        out, _ = cli("-b", "dev", "status", "ls")
         assert "backlog" in out
-        # ops has no columns
-        out2, _ = cli("col", "ls")
-        assert "no columns" in out2
+        # ops has no statuses
+        out2, _ = cli("status", "ls")
+        assert "no statuses" in out2
 
 
 # ---- Help output ----
@@ -537,22 +536,22 @@ class TestBoardFlag:
 class TestLsFilters:
     def _setup_board(self, cli):
         cli("board", "create", "work")
-        cli("col", "create", "backlog")
-        cli("col", "create", "doing")
+        cli("status", "create", "backlog")
+        cli("status", "create", "doing")
         cli("project", "create", "alpha")
 
-    def test_filter_by_column(self, cli):
+    def test_filter_by_status(self, cli):
         self._setup_board(cli)
-        cli("task", "create", "task1", "-c", "backlog")
-        cli("task", "create", "task2", "-c", "doing")
-        out, _ = cli("task", "ls", "-c", "backlog")
+        cli("task", "create", "task1", "-S", "backlog")
+        cli("task", "create", "task2", "-S", "doing")
+        out, _ = cli("task", "ls", "-S", "backlog")
         assert "task1" in out
         assert "task2" not in out or "task2" not in out.split("== backlog ==")[0]
 
     def test_filter_by_project(self, cli):
         self._setup_board(cli)
-        cli("task", "create", "task1", "-p", "alpha", "-c", "backlog")
-        cli("task", "create", "task2", "-c", "backlog")
+        cli("task", "create", "task1", "-p", "alpha", "-S", "backlog")
+        cli("task", "create", "task2", "-S", "backlog")
         out, _ = cli("task", "ls", "-p", "alpha")
         assert "task1" in out
         # task2 not in any non-empty column section
@@ -561,8 +560,8 @@ class TestLsFilters:
 
     def test_filter_by_priority(self, cli):
         self._setup_board(cli)
-        cli("task", "create", "low", "--priority", "1", "-c", "backlog")
-        cli("task", "create", "high", "--priority", "3", "-c", "backlog")
+        cli("task", "create", "low", "--priority", "1", "-S", "backlog")
+        cli("task", "create", "high", "--priority", "3", "-S", "backlog")
         out, _ = cli("task", "ls", "-P", "3")
         assert "high" in out
         lines = [l for l in out.splitlines() if "low" in l]
@@ -570,8 +569,8 @@ class TestLsFilters:
 
     def test_filter_by_search(self, cli):
         self._setup_board(cli)
-        cli("task", "create", "Fix login bug", "-c", "backlog")
-        cli("task", "create", "Add search feature", "-c", "backlog")
+        cli("task", "create", "Fix login bug", "-S", "backlog")
+        cli("task", "create", "Add search feature", "-S", "backlog")
         out, _ = cli("task", "ls", "-s", "login")
         assert "Fix login bug" in out
         lines = [l for l in out.splitlines() if "search feature" in l]
@@ -579,17 +578,17 @@ class TestLsFilters:
 
     def test_combined_filters(self, cli):
         self._setup_board(cli)
-        cli("task", "create", "task1", "-c", "backlog", "--priority", "3")
-        cli("task", "create", "task2", "-c", "backlog", "--priority", "1")
-        cli("task", "create", "task3", "-c", "doing", "--priority", "3")
-        out, _ = cli("task", "ls", "-c", "backlog", "-P", "3")
+        cli("task", "create", "task1", "-S", "backlog", "--priority", "3")
+        cli("task", "create", "task2", "-S", "backlog", "--priority", "1")
+        cli("task", "create", "task3", "-S", "doing", "--priority", "3")
+        out, _ = cli("task", "ls", "-S", "backlog", "-P", "3")
         assert "task1" in out
         lines = [l for l in out.splitlines() if l.strip().startswith("task-")]
         assert len(lines) == 1
 
-    def test_invalid_column_name(self, cli):
+    def test_invalid_status_name(self, cli):
         self._setup_board(cli)
-        _, err = cli("task", "ls", "-c", "nonexistent", expect_exit=1)
+        _, err = cli("task", "ls", "-S", "nonexistent", expect_exit=1)
         assert "not found" in err
 
     def test_invalid_project_name(self, cli):
@@ -602,66 +601,66 @@ class TestMvBoard:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo", "--pos", "0")
-        cli("col", "create", "done", "--pos", "1")
+        cli("status", "create", "todo")
+        cli("status", "create", "done")
 
     def test_transfer_to_board(self, cli):
         cli("board", "create", "ops")
         cli("board", "use", "ops")
-        cli("col", "create", "backlog")
+        cli("status", "create", "backlog")
         cli("board", "use", "dev")
-        cli("task", "create", "Task A", "-c", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--column", "backlog")
+        cli("task", "create", "Task A", "-S", "todo")
+        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog")
         assert "board 'ops'" in out
-        assert "column 'backlog'" in out
+        assert "status 'backlog'" in out
 
     def test_transfer_to_board_with_project(self, cli):
         cli("board", "create", "ops")
         cli("board", "use", "ops")
-        cli("col", "create", "backlog")
+        cli("status", "create", "backlog")
         cli("project", "create", "infra")
         cli("board", "use", "dev")
-        cli("task", "create", "Task A", "-c", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--column", "backlog", "-p", "infra")
+        cli("task", "create", "Task A", "-S", "todo")
+        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "-p", "infra")
         assert "board 'ops'" in out
 
     def test_transfer_no_column_fails(self, cli):
         cli("board", "create", "ops")
         cli("board", "use", "dev")
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         _, err = cli("task", "transfer", "1", "--board", "ops", expect_exit=2)
-        assert "--column" in err or "required" in err
+        assert "--status" in err or "required" in err
 
     def test_mv_project_only_use_edit(self, cli):
         cli("project", "create", "backend")
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "edit", "1", "-p", "backend")
         assert "updated" in out
 
     def test_mv_no_column_fails(self, cli):
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
         _, err = cli("task", "mv", "1", expect_exit=2)
         assert "error" in err.lower() or "usage" in err.lower()
 
     def test_transfer_dry_run(self, cli):
         cli("board", "create", "ops")
         cli("board", "use", "ops")
-        cli("col", "create", "backlog")
+        cli("status", "create", "backlog")
         cli("board", "use", "dev")
-        cli("task", "create", "Task A", "-c", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--column", "backlog", "--dry-run")
+        cli("task", "create", "Task A", "-S", "todo")
+        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "--dry-run")
         assert "dry-run" in out
         assert "transfer OK" in out
 
     def test_transfer_dry_run_with_deps(self, cli):
         cli("board", "create", "ops")
         cli("board", "use", "ops")
-        cli("col", "create", "backlog")
+        cli("status", "create", "backlog")
         cli("board", "use", "dev")
-        cli("task", "create", "Task A", "-c", "todo")
-        cli("task", "create", "Task B", "-c", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
         cli("dep", "create", "2", "1")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--column", "backlog", "--dry-run")
+        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "--dry-run")
         assert "dependencies" in out
         assert "FAIL" in out
 
@@ -674,7 +673,7 @@ class TestGroupCLI:
     def _setup(self, cli):
         self.cli = cli
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
+        cli("status", "create", "todo")
         cli("project", "create", "sprint1")
 
     def test_create_group(self):
@@ -705,7 +704,7 @@ class TestGroupCLI:
     def test_list_groups_tree(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("group", "ls", "--project", "sprint1", "--tree")
         assert "Frontend" in out
@@ -714,7 +713,7 @@ class TestGroupCLI:
 
     def test_show_group(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
         assert "Group: Frontend" in out
@@ -739,7 +738,7 @@ class TestGroupCLI:
 
     def test_archive_orphans_tasks(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         self.cli("group", "rm", "Frontend", "--project", "sprint1")
         # Task should still exist but not in any group
@@ -761,13 +760,13 @@ class TestGroupCLI:
 
     def test_assign_task(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         out, _ = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         assert "assigned task-0001 to group 'Frontend'" in out
 
     def test_assign_auto_sets_project(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "No project task", "-c", "todo")
+        self.cli("task", "create", "No project task", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("task", "show", "task-0001")
         assert "sprint1" in out
@@ -775,20 +774,20 @@ class TestGroupCLI:
     def test_assign_cross_project_raises(self):
         self.cli("project", "create", "sprint2")
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Task", "--project", "sprint2", "-c", "todo")
+        self.cli("task", "create", "Task", "--project", "sprint2", "-S", "todo")
         _, err = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=1)
         assert "project" in err
 
     def test_unassign_task(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("group", "unassign", "task-0001")
         assert "unassigned" in out
 
     def test_show_displays_group(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("task", "show", "task-0001")
         assert "Group:" in out
@@ -796,8 +795,8 @@ class TestGroupCLI:
 
     def test_ls_group_filter(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Grouped", "--project", "sprint1", "-c", "todo")
-        self.cli("task", "create", "Ungrouped", "--project", "sprint1", "-c", "todo")
+        self.cli("task", "create", "Grouped", "--project", "sprint1", "-S", "todo")
+        self.cli("task", "create", "Ungrouped", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("task", "ls", "--group", "Frontend")
         assert "Grouped" in out
@@ -824,8 +823,8 @@ class TestTagCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo", "--pos", "0")
-        cli("col", "create", "done", "--pos", "1")
+        cli("status", "create", "todo")
+        cli("status", "create", "done")
 
     # -- Tag subcommands --
 
@@ -868,66 +867,66 @@ class TestTagCommands:
     # -- Tags on add --
 
     def test_add_with_tag(self, cli):
-        cli("task", "create", "Fix bug", "--tag", "bug", "-c", "todo")
+        cli("task", "create", "Fix bug", "--tag", "bug", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "bug" in out
 
     def test_add_with_multiple_tags(self, cli):
-        cli("task", "create", "Fix bug", "-t", "bug", "-t", "urgent", "-c", "todo")
+        cli("task", "create", "Fix bug", "-t", "bug", "-t", "urgent", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "bug" in out
         assert "urgent" in out
 
     def test_add_tag_auto_creates(self, cli):
-        cli("task", "create", "Fix", "-t", "new-tag", "-c", "todo")
+        cli("task", "create", "Fix", "-t", "new-tag", "-S", "todo")
         out, _ = cli("tag", "ls")
         assert "new-tag" in out
 
     # -- Tags on edit --
 
     def test_edit_add_tag(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         cli("task", "edit", "1", "--tag", "bug")
         out, _ = cli("task", "show", "1")
         assert "bug" in out
 
     def test_edit_untag(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-c", "todo")
+        cli("task", "create", "Task", "-t", "bug", "-S", "todo")
         cli("task", "edit", "1", "--untag", "bug")
         out, _ = cli("task", "show", "1")
         assert "Tags:" not in out
 
     def test_edit_tag_only_no_field_changes(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         out, _ = cli("task", "edit", "1", "-t", "bug")
         assert "updated" in out
 
     def test_edit_untag_not_found(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         _, err = cli("task", "edit", "1", "--untag", "nonexistent", expect_exit=1)
         assert "not found" in err
 
     def test_edit_nothing_is_noop(self, cli):
-        cli("task", "create", "Task", "-c", "todo")
+        cli("task", "create", "Task", "-S", "todo")
         out, _ = cli("task", "edit", "1")  # no-op: returns unchanged task, exit 0
         assert "updated task-0001" in out
 
     # -- Tags on ls --
 
     def test_ls_filter_by_tag(self, cli):
-        cli("task", "create", "Tagged", "-t", "bug", "-c", "todo")
-        cli("task", "create", "Untagged", "-c", "todo")
+        cli("task", "create", "Tagged", "-t", "bug", "-S", "todo")
+        cli("task", "create", "Untagged", "-S", "todo")
         out, _ = cli("task", "ls", "--tag", "bug")
         assert "Tagged" in out
         assert "Untagged" not in out
 
     def test_ls_shows_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-c", "todo")
+        cli("task", "create", "Task", "-t", "bug", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "[bug]" in out
 
     def test_ls_shows_multiple_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-t", "urgent", "-c", "todo")
+        cli("task", "create", "Task", "-t", "bug", "-t", "urgent", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "[bug, urgent]" in out
 
@@ -938,7 +937,7 @@ class TestTagCommands:
     # -- Tags on show --
 
     def test_show_displays_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-t", "feature", "-c", "todo")
+        cli("task", "create", "Task", "-t", "bug", "-t", "feature", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "Tags:" in out
         assert "bug" in out
@@ -959,7 +958,7 @@ class TestHelp:
 class TestContext:
     def test_context_text_output(self, cli):
         cli("board", "create", "dev")
-        cli("col", "create", "todo")
+        cli("status", "create", "todo")
         cli("project", "create", "backend")
         cli("tag", "create", "bug")
         cli("group", "create", "G1", "-p", "backend")
@@ -997,16 +996,16 @@ class TestJsonOutput:
 
     def test_add(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        data = self._json(cli, "task", "create", "My task", "-c", "Todo")
+        cli("status", "create", "Todo")
+        data = self._json(cli, "task", "create", "My task", "-S", "Todo")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["title"] == "My task"
 
     def test_edit(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "Original", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "Original", "-S", "todo")
         data = self._json(cli, "task", "edit", "1", "--title", "Updated")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
@@ -1014,8 +1013,8 @@ class TestJsonOutput:
 
     def test_rm(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "rm", "1")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
@@ -1029,7 +1028,7 @@ class TestJsonOutput:
 
     def test_col_create(self, cli):
         cli("board", "create", "B")
-        data = self._json(cli, "col", "create", "Backlog")
+        data = self._json(cli, "status", "create", "Backlog")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["name"] == "Backlog"
@@ -1043,9 +1042,9 @@ class TestJsonOutput:
 
     def test_dep_create(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
-        cli("task", "create", "T2", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
+        cli("task", "create", "T2", "-S", "todo")
         data = self._json(cli, "dep", "create", "1", "2")
         assert data["ok"] is True
         assert data["data"]["task_id"] == 1
@@ -1062,16 +1061,16 @@ class TestJsonOutput:
 
     def test_ls(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "Task A", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "Task A", "-S", "todo")
         data = self._json(cli, "task", "ls")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["board"]["name"] == "B"
-        assert len(payload["columns"]) == 1
-        assert payload["columns"][0]["column"]["name"] == "Todo"
-        assert len(payload["columns"][0]["tasks"]) == 1
-        assert payload["columns"][0]["tasks"][0]["title"] == "Task A"
+        assert len(payload["statuses"]) == 1
+        assert payload["statuses"][0]["status"]["name"] == "Todo"
+        assert len(payload["statuses"][0]["tasks"]) == 1
+        assert payload["statuses"][0]["tasks"][0]["title"] == "Task A"
 
     def test_board_ls(self, cli):
         cli("board", "create", "B1")
@@ -1085,9 +1084,9 @@ class TestJsonOutput:
 
     def test_col_ls(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("col", "create", "Done")
-        data = self._json(cli, "col", "ls")
+        cli("status", "create", "Todo")
+        cli("status", "create", "Done")
+        data = self._json(cli, "status", "ls")
         assert data["ok"] is True
         assert isinstance(data["data"], list)
         assert len(data["data"]) == 2
@@ -1103,15 +1102,15 @@ class TestJsonOutput:
 
     def test_log_empty(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "log", "1")
         assert data["ok"] is True
         assert isinstance(data["data"], list)
 
     def test_group_ls(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
         data = self._json(cli, "group", "ls")
@@ -1135,21 +1134,21 @@ class TestJsonOutput:
 
     def test_show(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "Task A", "--priority", "3", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "Task A", "--priority", "3", "-S", "todo")
         data = self._json(cli, "task", "show", "1")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["title"] == "Task A"
         assert payload["priority"] == 3
-        assert "column" in payload
-        assert payload["column"]["name"] == "Todo"
+        assert "status" in payload
+        assert payload["status"]["name"] == "Todo"
         assert "group_id" in payload
 
     def test_show_with_tags(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "Task A", "-t", "bug", "-t", "feature", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "Task A", "-t", "bug", "-t", "feature", "-S", "todo")
         data = self._json(cli, "task", "show", "1")
         assert data["ok"] is True
         payload = data["data"]
@@ -1159,9 +1158,9 @@ class TestJsonOutput:
 
     def test_project_show(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1", "-d", "desc")
-        cli("task", "create", "T1", "-p", "P1", "-c", "todo")
+        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
         data = self._json(cli, "project", "show", "P1")
         assert data["ok"] is True
         payload = data["data"]
@@ -1171,7 +1170,7 @@ class TestJsonOutput:
 
     def test_group_show(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
         data = self._json(cli, "group", "show", "G1")
@@ -1182,31 +1181,31 @@ class TestJsonOutput:
 
     def test_mv_within_board(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("col", "create", "Done")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("status", "create", "Done")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "mv", "1", "Done")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
 
     def test_transfer_cross_board(self, cli):
         cli("board", "create", "B1")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         cli("board", "create", "B2")
-        cli("col", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--column", "Inbox")
+        cli("status", "create", "Inbox")
+        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--status", "Inbox")
         assert data["ok"] is True
         assert data["data"]["task"]["title"] == "T1"
         assert data["data"]["source_task_id"] == 1
 
     def test_transfer_dry_run(self, cli):
         cli("board", "create", "B1")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         cli("board", "create", "B2")
-        cli("col", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--column", "Inbox", "--dry-run")
+        cli("status", "create", "Inbox")
+        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--status", "Inbox", "--dry-run")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["can_move"] is True
@@ -1216,9 +1215,9 @@ class TestJsonOutput:
 
     def test_mv_project_only_use_edit(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "edit", "1", "--project", "P1")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
@@ -1229,8 +1228,8 @@ class TestJsonOutput:
     def test_edit_no_changes(self, cli):
         import json
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         out, _ = cli("--json", "task", "edit", "1")
         data = json.loads(out)
         assert data["ok"] is True
@@ -1240,8 +1239,8 @@ class TestJsonOutput:
 
     def test_log_with_history(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         cli("task", "edit", "1", "--title", "Updated")
         data = self._json(cli, "task", "log", "1")
         assert data["ok"] is True
@@ -1254,8 +1253,8 @@ class TestJsonOutput:
 
     def test_export_json_default(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "export")
         assert data["ok"] is True
         payload = data["data"]
@@ -1265,8 +1264,8 @@ class TestJsonOutput:
 
     def test_export_md_flag(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "export", "--md")
         assert data["ok"] is True
         payload = data["data"]
@@ -1277,10 +1276,10 @@ class TestJsonOutput:
 
     def test_group_assign(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
-        cli("task", "create", "T1", "-p", "P1", "-c", "todo")
+        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
         data = self._json(cli, "group", "assign", "1", "G1", "-p", "P1")
         assert data["ok"] is True
         assert data["data"]["task"]["id"] == 1
@@ -1288,10 +1287,10 @@ class TestJsonOutput:
 
     def test_group_unassign(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
-        cli("task", "create", "T1", "-p", "P1", "-c", "todo")
+        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
         cli("group", "assign", "1", "G1", "-p", "P1")
         data = self._json(cli, "group", "unassign", "1")
         assert data["ok"] is True
@@ -1301,16 +1300,16 @@ class TestJsonOutput:
 
     def test_context(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("tag", "create", "bug")
         cli("group", "create", "G1", "-p", "P1")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "context")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["view"]["board"]["name"] == "B"
-        assert len(payload["view"]["columns"]) == 1
+        assert len(payload["view"]["statuses"]) == 1
         assert len(payload["projects"]) == 1
         assert payload["projects"][0]["name"] == "P1"
         assert len(payload["tags"]) == 1
@@ -1396,8 +1395,8 @@ class TestExportJson:
     def test_export_json_stdout(self, cli):
         import json
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         out, _ = cli("export")
         data = json.loads(out)
         assert "schema_version" in data
@@ -1406,7 +1405,7 @@ class TestExportJson:
     def test_export_json_to_file(self, cli, tmp_path):
         import json
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         out_file = tmp_path / "dump.json"
         cli("export", "-o", str(out_file))
         assert out_file.exists()
@@ -1425,7 +1424,7 @@ class TestExportJson:
 
     def test_export_md_stdout(self, cli):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
+        cli("status", "create", "Todo")
         out, _ = cli("export", "--md")
         assert "# Sticky Notes Export" in out
 
@@ -1458,8 +1457,8 @@ class TestExportParentDir:
 class TestBackup:
     def test_backup_creates_file(self, cli, tmp_path):
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         dest = tmp_path / "backup.db"
         out, _ = cli("backup", str(dest))
         assert dest.exists()
@@ -1468,8 +1467,8 @@ class TestBackup:
     def test_backup_file_is_valid_sqlite(self, cli, tmp_path):
         import sqlite3 as _sqlite3
         cli("board", "create", "B")
-        cli("col", "create", "Todo")
-        cli("task", "create", "T1", "-c", "todo")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
         dest = tmp_path / "backup.db"
         cli("backup", str(dest))
         conn = _sqlite3.connect(str(dest))
@@ -1521,7 +1520,7 @@ class TestInfo:
 
     def test_info_text_existence_markers(self, cli, db_path):
         cli("board", "create", "X")
-        cli("col", "create", "todo")
+        cli("status", "create", "todo")
         out, _ = cli("info")
         assert "[exists]" in out
         assert str(db_path) in out

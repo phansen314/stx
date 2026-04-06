@@ -7,7 +7,7 @@ import pytest
 
 from helpers import (
     insert_board,
-    insert_column,
+    insert_status,
     insert_group,
     insert_project,
     insert_tag,
@@ -30,8 +30,8 @@ def _seed_board(conn: sqlite3.Connection) -> int:
     """Create a board with columns, projects, tasks, and a dependency."""
     with transaction(conn):
         bid = insert_board(conn, "Work")
-        col_todo = insert_column(conn, bid, "Todo", position=0)
-        col_done = insert_column(conn, bid, "Done", position=1)
+        col_todo = insert_status(conn, bid, "Todo")
+        col_done = insert_status(conn, bid, "Done")
         pid = insert_project(conn, bid, "Backend", description="API work")
         t1 = insert_task(
             conn, bid, "Set up CI", col_todo,
@@ -76,9 +76,9 @@ class TestExportFull:
 
     def test_column_table(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert "### Columns" in md
-        assert "| 1 | Todo | 1 |" in md
-        assert "| 2 | Done | 1 |" in md
+        assert "### Statuses" in md
+        assert "| 1 | Done | 1 |" in md
+        assert "| 2 | Todo | 1 |" in md
 
     def test_project_table(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
@@ -106,21 +106,21 @@ class TestExportEdgeCases:
         """A column with zero tasks should not get a #### heading."""
         with transaction(conn):
             bid = insert_board(conn, "B")
-            insert_column(conn, bid, "Empty", position=0)
+            insert_status(conn, bid, "Empty")
         md = export_markdown(conn)
         assert "#### Empty" not in md
 
     def test_no_projects_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            insert_column(conn, bid, "Col", position=0)
+            insert_status(conn, bid, "Col")
         md = export_markdown(conn)
         assert "### Projects" not in md
 
     def test_no_deps_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Solo", col)
         md = export_markdown(conn)
         assert "### Dependencies" not in md
@@ -129,7 +129,7 @@ class TestExportEdgeCases:
     def test_archived_tasks_excluded(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Hidden", col)
         with transaction(conn):
             conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (tid,))
@@ -139,7 +139,7 @@ class TestExportEdgeCases:
     def test_project_with_no_description(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            insert_column(conn, bid, "Col", position=0)
+            insert_status(conn, bid, "Col")
             insert_project(conn, bid, "NoDesc", description=None)
         md = export_markdown(conn)
         assert "| NoDesc |  | 0 |" in md
@@ -148,7 +148,7 @@ class TestExportEdgeCases:
         with transaction(conn):
             for name in ("Alpha", "Beta"):
                 bid = insert_board(conn, name)
-                insert_column(conn, bid, "Col", position=0)
+                insert_status(conn, bid, "Col")
         md = export_markdown(conn)
         assert "## Board: Alpha" in md
         assert "## Board: Beta" in md
@@ -158,8 +158,8 @@ class TestExportEdgeCases:
         with transaction(conn):
             b1 = insert_board(conn, "B1")
             b2 = insert_board(conn, "B2")
-            c1 = insert_column(conn, b1, "C", position=0)
-            c2 = insert_column(conn, b2, "C", position=0)
+            c1 = insert_status(conn, b1, "C")
+            c2 = insert_status(conn, b2, "C")
             t1 = insert_task(conn, b1, "T1", c1)
             t2 = insert_task(conn, b2, "T2", c2)
         with pytest.raises(sqlite3.IntegrityError):
@@ -171,7 +171,7 @@ class TestExportTags:
     def test_tags_section(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Fix bug", col)
             tag_id = insert_tag(conn, bid, "bug")
             insert_task_tag(conn, tid, tag_id)
@@ -182,7 +182,7 @@ class TestExportTags:
     def test_tags_in_task_table(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Fix bug", col)
             tag_id = insert_tag(conn, bid, "bug")
             insert_task_tag(conn, tid, tag_id)
@@ -192,7 +192,7 @@ class TestExportTags:
     def test_no_tags_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Task", col)
         md = export_markdown(conn)
         assert "### Tags" not in md
@@ -202,7 +202,7 @@ class TestExportGroups:
     def test_groups_section_with_tasks(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             gid = insert_group(conn, pid, "Frontend")
             tid = insert_task(conn, bid, "Fix UI", col, project_id=pid)
@@ -215,7 +215,7 @@ class TestExportGroups:
     def test_nested_groups(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             parent = insert_group(conn, pid, "Frontend")
             insert_group(conn, pid, "Components", parent_id=parent)
@@ -226,7 +226,7 @@ class TestExportGroups:
     def test_no_groups_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            insert_column(conn, bid, "Col", position=0)
+            insert_status(conn, bid, "Col")
             insert_project(conn, bid, "P")
         md = export_markdown(conn)
         assert "### Groups" not in md
@@ -234,7 +234,7 @@ class TestExportGroups:
     def test_ungrouped_tasks_count(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             insert_group(conn, pid, "G")
             insert_task(conn, bid, "Ungrouped", col, project_id=pid)
@@ -260,7 +260,7 @@ class TestExportMdEscaping:
     def test_pipe_in_title_escaped(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "foo | bar", col)
         md = export_markdown(conn)
         assert r"foo \| bar" in md
@@ -269,7 +269,7 @@ class TestExportMdEscaping:
     def test_newline_in_title_replaced(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Col", position=0)
+            col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "line1\nline2", col)
         md = export_markdown(conn)
         assert "line1<br>line2" in md
@@ -279,7 +279,7 @@ class TestExportMdEscaping:
     ) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            insert_column(conn, bid, "Col", position=0)
+            insert_status(conn, bid, "Col")
             insert_project(conn, bid, "P", description="use `cmd` here")
         md = export_markdown(conn)
         assert r"use \`cmd\` here" in md
@@ -301,20 +301,20 @@ class TestExportFullJson:
         result = export_full_json(conn)
         assert set(result.keys()) == {
             "schema_version", "exported_at",
-            "boards", "columns", "projects", "tasks", "tags", "groups",
+            "boards", "statuses", "projects", "tasks", "tags", "groups",
             "task_tags", "task_dependencies", "task_history",
         }
 
     def test_empty_db_all_lists_empty(self, conn: sqlite3.Connection) -> None:
         result = export_full_json(conn)
-        for key in ("boards", "columns", "projects", "tasks", "tags", "groups",
+        for key in ("boards", "statuses", "projects", "tasks", "tags", "groups",
                     "task_tags", "task_dependencies", "task_history"):
             assert result[key] == [], f"expected {key} to be empty"
 
     def test_json_serializable(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Todo", position=0)
+            col = insert_status(conn, bid, "Todo")
             pid = insert_project(conn, bid, "P", description="desc")
             tid = insert_task(conn, bid, "T1", col, project_id=pid)
             tag_id = insert_tag(conn, bid, "bug")
@@ -327,7 +327,7 @@ class TestExportFullJson:
     def test_archived_rows_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Done", position=0)
+            col = insert_status(conn, bid, "Done")
             tid = insert_task(conn, bid, "archived task", col)
             conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (tid,))
             conn.execute("UPDATE boards SET archived = 1 WHERE id = ?", (bid,))
@@ -338,8 +338,8 @@ class TestExportFullJson:
     def test_all_seeded_ids_present(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "Work")
-            col1 = insert_column(conn, bid, "Todo", position=0)
-            col2 = insert_column(conn, bid, "Done", position=1)
+            col1 = insert_status(conn, bid, "Todo")
+            col2 = insert_status(conn, bid, "Done")
             pid = insert_project(conn, bid, "Backend")
             t1 = insert_task(conn, bid, "T1", col1, project_id=pid)
             t2 = insert_task(conn, bid, "T2", col2)
@@ -357,7 +357,7 @@ class TestExportFullJson:
     def test_task_history_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Todo", position=0)
+            col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T", col)
             insert_task_history(conn, tid, field="title", old_value="old", new_value="T")
         result = export_full_json(conn)
@@ -371,7 +371,7 @@ class TestExportFullJson:
     def test_task_dependency_board_id_preserved(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "B")
-            col = insert_column(conn, bid, "Todo", position=0)
+            col = insert_status(conn, bid, "Todo")
             t1 = insert_task(conn, bid, "T1", col)
             t2 = insert_task(conn, bid, "T2", col)
             insert_task_dependency(conn, t2, t1)

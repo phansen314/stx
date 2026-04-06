@@ -23,7 +23,7 @@ class AllTasksScreen(Screen):
         Binding("n", "create_task", "New Task"),
         Binding("b", "select_board", "Switch Board"),
         Binding("p", "select_project", "Filter Project"),
-        Binding("c", "filter_columns", "Column Filter"),
+        Binding("c", "filter_statuses", "Status Filter"),
     ]
 
     @property
@@ -34,7 +34,7 @@ class AllTasksScreen(Screen):
         super().__init__(*args, **kwargs)
         self._board_id: int | None = None
         self._project_filter_id: int | None = None
-        self._column_filter_ids: frozenset[int] | None = None
+        self._status_filter_ids: frozenset[int] | None = None
         self._cards: list[TaskCard] = []
         self._card_idx: int = 0
 
@@ -57,8 +57,8 @@ class AllTasksScreen(Screen):
             container.mount(Static("No active board"))
             return
 
-        columns = service.list_columns(conn, self._board_id)
-        column_map = {col.id: col for col in columns}
+        statuses = service.list_statuses(conn, self._board_id)
+        status_map = {s.id: s for s in statuses}
         projects = service.list_projects(conn, self._board_id)
         project_map = {proj.id: proj for proj in projects}
 
@@ -70,12 +70,12 @@ class AllTasksScreen(Screen):
             conn, self._board_id, task_filter=task_filter
         )
 
-        # Group: project_id -> column_id -> list[Task]
+        # Group: project_id -> status_id -> list[Task]
         grouped: dict[int | None, dict[int, list[Task]]] = {}
         for task in tasks:
             proj_group = grouped.setdefault(task.project_id, {})
-            col_group = proj_group.setdefault(task.column_id, [])
-            col_group.append(task)
+            status_group = proj_group.setdefault(task.status_id, [])
+            status_group.append(task)
 
         # Sort: named projects alphabetically first, None last
         named_ids = sorted(
@@ -86,10 +86,18 @@ class AllTasksScreen(Screen):
         if None in grouped:
             ordered_project_ids.append(None)
 
-        # Column ordering by position, filtered if column filter is active
-        column_order = sorted(column_map.keys(), key=lambda cid: column_map[cid].position)
-        if self._column_filter_ids is not None:
-            column_order = [cid for cid in column_order if cid in self._column_filter_ids]
+        # Status ordering: config.status_order first (known IDs), then alphabetically
+        order = config.status_order
+        if order:
+            order_map = {sid: i for i, sid in enumerate(order)}
+            status_order = sorted(
+                status_map.keys(),
+                key=lambda sid: (0 if sid in order_map else 1, order_map.get(sid, 0), status_map[sid].name, sid),
+            )
+        else:
+            status_order = sorted(status_map.keys(), key=lambda sid: (status_map[sid].name, sid))
+        if self._status_filter_ids is not None:
+            status_order = [sid for sid in status_order if sid in self._status_filter_ids]
 
         widgets: list[Static | TaskCard] = []
         self._cards = []
@@ -100,17 +108,17 @@ class AllTasksScreen(Screen):
                 Static(f"── {proj_name} " + "─" * max(0, 40 - len(proj_name)),
                        classes="project-group-header")
             )
-            col_groups = grouped[pid]
-            for cid in column_order:
-                if cid not in col_groups:
+            status_groups = grouped[pid]
+            for sid in status_order:
+                if sid not in status_groups:
                     continue
-                col_tasks = col_groups[cid]
-                col_name = column_map[cid].name
+                status_tasks = status_groups[sid]
+                status_name = status_map[sid].name
                 widgets.append(
-                    Static(f"  {col_name} ({len(col_tasks)})",
+                    Static(f"  {status_name} ({len(status_tasks)})",
                            classes="column-sub-header")
                 )
-                for task in col_tasks:
+                for task in status_tasks:
                     card = TaskCard(task)
                     widgets.append(card)
                     self._cards.append(card)
@@ -263,21 +271,21 @@ class AllTasksScreen(Screen):
             return
         from sticky_notes.tui.screens.task_form import TaskFormModal
 
-        # Default column: use focused card's column, or first column
-        columns = service.list_columns(self.typed_app.conn, self._board_id)
-        if not columns:
+        # Default status: use focused card's status, or first status
+        statuses = service.list_statuses(self.typed_app.conn, self._board_id)
+        if not statuses:
             return
         if self._cards and self._card_idx < len(self._cards):
-            col_id = self._cards[self._card_idx].task_data.column_id
+            status_id = self._cards[self._card_idx].task_data.status_id
         else:
-            col_id = columns[0].id
+            status_id = statuses[0].id
 
         self.typed_app.push_screen(
             TaskFormModal(
                 self.typed_app.conn,
                 self._board_id,
                 mode="create",
-                column_id=col_id,
+                status_id=status_id,
                 default_priority=self.typed_app.config.default_priority,
             ),
             callback=self._handle_create,
@@ -290,7 +298,7 @@ class AllTasksScreen(Screen):
             self.typed_app.conn,
             board_id=self._board_id,
             title=result["title"],
-            column_id=result["column_id"],
+            status_id=result["status_id"],
             description=result.get("description"),
             priority=result.get("priority", 1),
             due_date=result.get("due_date"),
@@ -311,7 +319,7 @@ class AllTasksScreen(Screen):
             return
         set_active_board_id(self.typed_app.db_path, result)
         self._project_filter_id = None
-        self._column_filter_ids = None
+        self._status_filter_ids = None
         self.run_worker(self.reload())
 
     def action_select_project(self) -> None:
@@ -341,25 +349,25 @@ class AllTasksScreen(Screen):
         self._project_filter_id = new_filter
         self.run_worker(self.reload())
 
-    def action_filter_columns(self) -> None:
+    def action_filter_statuses(self) -> None:
         if self._board_id is None:
             return
-        from sticky_notes.tui.screens.column_filter import ColumnFilterModal
+        from sticky_notes.tui.screens.status_filter import StatusFilterModal
 
-        columns = service.list_columns(self.typed_app.conn, self._board_id)
+        statuses = service.list_statuses(self.typed_app.conn, self._board_id)
         self.typed_app.push_screen(
-            ColumnFilterModal(columns, self._column_filter_ids),
-            callback=self._handle_column_filter,
+            StatusFilterModal(statuses, self._status_filter_ids),
+            callback=self._handle_status_filter,
         )
 
-    def _handle_column_filter(self, result: frozenset[int] | None) -> None:
+    def _handle_status_filter(self, result: frozenset[int] | None) -> None:
         if result is None:
             return
-        # If all columns selected, reset to None (show all)
-        columns = service.list_columns(self.typed_app.conn, self._board_id)
-        all_ids = frozenset(c.id for c in columns)
+        # If all statuses selected, reset to None (show all)
+        statuses = service.list_statuses(self.typed_app.conn, self._board_id)
+        all_ids = frozenset(s.id for s in statuses)
         new_filter = None if result == all_ids else result
-        if new_filter == self._column_filter_ids:
+        if new_filter == self._status_filter_ids:
             return
-        self._column_filter_ids = new_filter
+        self._status_filter_ids = new_filter
         self.run_worker(self.reload())

@@ -17,16 +17,16 @@ from .mappers import (
 )
 from .models import (
     Board,
-    Column,
     Group,
     NewBoard,
-    NewColumn,
     NewGroup,
     NewProject,
+    NewStatus,
     NewTag,
     NewTask,
     NewTaskHistory,
     Project,
+    Status,
     Tag,
     Task,
     TaskField,
@@ -35,7 +35,7 @@ from .models import (
 )
 from .service_models import (
     BoardContext,
-    BoardListColumn,
+    BoardListStatus,
     BoardListView,
     GroupDetail,
     GroupRef,
@@ -59,7 +59,7 @@ _UNSET: Any = object()
 _UNIQUE_MESSAGES: dict[str, str] = {
     "boards.name": "a board with this name already exists",
     "projects.board_id, projects.name": "a project with this name already exists on this board",
-    "columns.board_id, columns.name": "a column with this name already exists on this board",
+    "statuses.board_id, statuses.name": "a status with this name already exists on this board",
     "tags.board_id, tags.name": "a tag with this name already exists on this board",
     "groups.project_id, groups.title": "a group with this title already exists in this project",
     "tasks.board_id, tasks.title": "a task with this title already exists on this board",
@@ -129,16 +129,16 @@ def _validate_task_fields(
     if start is not None and finish is not None and finish < start:
         raise ValueError("finish date must be on or after start date")
     if conn is not None and board_id is not None:
-        if "column_id" in changes:
-            col = repo.get_column(conn, changes["column_id"])
+        if "status_id" in changes:
+            col = repo.get_status(conn, changes["status_id"])
             if col is None:
-                raise LookupError(f"column {changes['column_id']} not found")
+                raise LookupError(f"status {changes['status_id']} not found")
             if col.board_id != board_id:
                 raise ValueError(
-                    f"column {col.id} belongs to board {col.board_id}, not {board_id}"
+                    f"status {col.id} belongs to board {col.board_id}, not {board_id}"
                 )
             if col.archived:
-                raise ValueError(f"column {col.id} is archived")
+                raise ValueError(f"status {col.id} is archived")
         if "project_id" in changes and changes["project_id"] is not None:
             proj = repo.get_project(conn, changes["project_id"])
             if proj is None:
@@ -219,10 +219,10 @@ def update_board(
 ) -> Board:
     with transaction(conn), _friendly_errors():
         if changes.get("archived") is True:
-            active_cols = repo.list_columns(conn, board_id)
+            active_cols = repo.list_statuses(conn, board_id)
             if active_cols:
                 raise ValueError(
-                    f"board has {len(active_cols)} active column(s); "
+                    f"board has {len(active_cols)} active status(es); "
                     "archive or remove them first"
                 )
             active_projs = repo.list_projects(conn, board_id)
@@ -240,85 +240,84 @@ def update_board(
         return repo.update_board(conn, board_id, changes)
 
 
-# ---- Column ----
+# ---- Status ----
 
 
-def create_column(
+def create_status(
     conn: sqlite3.Connection,
     board_id: int,
     name: str,
-    position: int = 0,
-) -> Column:
+) -> Status:
     with transaction(conn), _friendly_errors():
-        return repo.insert_column(conn, NewColumn(board_id=board_id, name=name, position=position))
+        return repo.insert_status(conn, NewStatus(board_id=board_id, name=name))
 
 
-def get_column(conn: sqlite3.Connection, column_id: int) -> Column:
-    col = repo.get_column(conn, column_id)
+def get_status(conn: sqlite3.Connection, status_id: int) -> Status:
+    col = repo.get_status(conn, status_id)
     if col is None:
-        raise LookupError(f"column {column_id} not found")
+        raise LookupError(f"status {status_id} not found")
     return col
 
 
-def get_column_by_name(
+def get_status_by_name(
     conn: sqlite3.Connection,
     board_id: int,
     name: str,
-) -> Column:
-    col = repo.get_column_by_name(conn, board_id, name)
+) -> Status:
+    col = repo.get_status_by_name(conn, board_id, name)
     if col is None:
-        raise LookupError(f"column {name!r} not found")
+        raise LookupError(f"status {name!r} not found")
     return col
 
 
-def list_columns(
+def list_statuses(
     conn: sqlite3.Connection,
     board_id: int,
     *,
     include_archived: bool = False,
-) -> tuple[Column, ...]:
-    return repo.list_columns(conn, board_id, include_archived=include_archived)
+) -> tuple[Status, ...]:
+    return repo.list_statuses(conn, board_id, include_archived=include_archived)
 
 
-def update_column(
+def update_status(
     conn: sqlite3.Connection,
-    column_id: int,
+    status_id: int,
     changes: dict[str, Any],
-) -> Column:
+) -> Status:
     with transaction(conn), _friendly_errors():
         if changes.get("archived") is True:
-            active_tasks = repo.list_tasks_by_column(conn, column_id)
+            active_tasks = repo.list_tasks_by_status(conn, status_id)
             if active_tasks:
                 raise ValueError(
-                    f"column has {len(active_tasks)} active task(s); "
+                    f"status has {len(active_tasks)} active task(s); "
                     "move or archive them first"
                 )
-        return repo.update_column(conn, column_id, changes)
+        return repo.update_status(conn, status_id, changes)
 
 
-def archive_column(
+def archive_status(
     conn: sqlite3.Connection,
-    column_id: int,
+    status_id: int,
     *,
-    reassign_to_column_id: int | None = None,
+    reassign_to_status_id: int | None = None,
     force: bool = False,
-) -> Column:
-    """Archive a column, optionally handling active tasks via reassign or force-archive."""
+) -> Status:
+    """Archive a status, optionally handling active tasks via reassign or force-archive."""
     with transaction(conn), _friendly_errors():
-        active_tasks = repo.list_tasks_by_column(conn, column_id)
+        active_tasks = repo.list_tasks_by_status(conn, status_id)
         if active_tasks:
-            if reassign_to_column_id is not None:
+            if reassign_to_status_id is not None:
                 for task in active_tasks:
-                    repo.update_task(conn, task.id, {"column_id": reassign_to_column_id})
+                    repo.update_task(conn, task.id, {"status_id": reassign_to_status_id})
             elif force:
                 for task in active_tasks:
                     repo.update_task(conn, task.id, {"archived": True})
             else:
                 raise ValueError(
-                    f"column has {len(active_tasks)} active task(s); "
-                    "use --reassign-to OTHER_COL or --force to override"
+                    f"status has {len(active_tasks)} active task(s); "
+                    "use --reassign-to OTHER_STATUS or --force to override"
                 )
-        return repo.update_column(conn, column_id, {"archived": True})
+        return repo.update_status(conn, status_id, {"archived": True})
 
 
 # ---- Project ----
@@ -398,7 +397,7 @@ def create_task(
     conn: sqlite3.Connection,
     board_id: int,
     title: str,
-    column_id: int,
+    status_id: int,
     *,
     project_id: int | None = None,
     description: str | None = None,
@@ -424,7 +423,7 @@ def create_task(
             NewTask(
                 board_id=board_id,
                 title=title,
-                column_id=column_id,
+                status_id=status_id,
                 project_id=project_id,
                 description=description,
                 priority=priority,
@@ -477,7 +476,7 @@ def resolve_task_id(
 
 def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     task = get_task(conn, task_id)
-    column = get_column(conn, task.column_id)
+    status = get_status(conn, task.status_id)
     project = repo.get_project(conn, task.project_id) if task.project_id is not None else None
     group = repo.get_group(conn, task.group_id) if task.group_id is not None else None
     blocked_by = repo.list_blocked_by_tasks(conn, task_id)
@@ -486,7 +485,7 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     tags = repo.list_tags_by_task(conn, task_id)
     return task_to_detail(
         task,
-        column=column,
+        status=status,
         project=project,
         group=group,
         blocked_by=blocked_by,
@@ -518,7 +517,7 @@ def get_board_list_view(
     conn: sqlite3.Connection,
     board_id: int,
     *,
-    column_id: int | None = None,
+    status_id: int | None = None,
     project_id: int | None = None,
     tag_id: int | None = None,
     group_id: int | None = None,
@@ -528,12 +527,12 @@ def get_board_list_view(
     only_archived: bool = False,
 ) -> BoardListView:
     """Denormalized board view for list rendering. Groups task list items by
-    column (in column position order) with project and tag names pre-resolved,
+    status (alphabetical by name) with project and tag names pre-resolved,
     so callers don't need to re-query projects/tags for display. When
-    include_archived is True, archived columns are included as well."""
+    include_archived is True, archived statuses are included as well."""
     board = get_board(conn, board_id)
     task_filter = TaskFilter(
-        column_id=column_id,
+        status_id=status_id,
         project_id=project_id,
         priority=priority,
         search=search,
@@ -543,7 +542,7 @@ def get_board_list_view(
         only_archived=only_archived,
     )
     tasks = repo.list_tasks_filtered(conn, board_id, task_filter=task_filter)
-    cols = repo.list_columns(conn, board_id, include_archived=include_archived or only_archived)
+    statuses = repo.list_statuses(conn, board_id, include_archived=include_archived or only_archived)
     projects = repo.list_projects(conn, board_id, include_archived=True)
     proj_name_by_id: dict[int, str] = {p.id: p.name for p in projects}
     tags = repo.list_tags(conn, board_id, include_archived=True)
@@ -552,9 +551,9 @@ def get_board_list_view(
     task_ids = tuple(t.id for t in tasks)
     tag_map = repo.batch_tag_ids_by_task(conn, task_ids)
 
-    items_by_col: dict[int, list[Task]] = {c.id: [] for c in cols}
+    items_by_status: dict[int, list[Task]] = {s.id: [] for s in statuses}
     for task in tasks:
-        bucket = items_by_col.get(task.column_id)
+        bucket = items_by_status.get(task.status_id)
         if bucket is not None:
             bucket.append(task)
 
@@ -565,11 +564,11 @@ def get_board_list_view(
         )
         return task_to_list_item(task, project_name=proj_name, tag_names=tag_names)
 
-    columns = tuple(
-        BoardListColumn(column=c, tasks=tuple(_to_item(t) for t in items_by_col[c.id]))
-        for c in cols
+    status_list = tuple(
+        BoardListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
+        for s in statuses
     )
-    return BoardListView(board=board, columns=columns)
+    return BoardListView(board=board, statuses=status_list)
 
 
 def get_board_context(conn: sqlite3.Connection, board_id: int) -> BoardContext:
@@ -624,15 +623,15 @@ def update_task(
 def move_task(
     conn: sqlite3.Connection,
     task_id: int,
-    column_id: int,
+    status_id: int,
     position: int,
     source: str,
     *,
     project_id: Any = _UNSET,
 ) -> Task:
-    """Move a task to (column_id, position). If project_id is provided (including None),
+    """Move a task to (status_id, position). If project_id is provided (including None),
     also reassign the task's project in the same transaction."""
-    changes: dict[str, Any] = {"column_id": column_id, "position": position}
+    changes: dict[str, Any] = {"status_id": status_id, "position": position}
     if project_id is not _UNSET:
         changes["project_id"] = project_id
     return update_task(conn, task_id, changes, source)
@@ -642,7 +641,7 @@ def _validate_move_to_board(
     conn: sqlite3.Connection,
     task_id: int,
     target_board_id: int,
-    target_column_id: int,
+    target_status_id: int,
     project_id: int | None,
 ) -> tuple[Task, bool, str | None, tuple[int, ...]]:
     """Check move-to-board preconditions. Non-mutating.
@@ -660,13 +659,13 @@ def _validate_move_to_board(
             f"task {task_id} has dependencies ({', '.join(str(d) for d in dep_ids)}); "
             "remove them before moving to another board"
         ), dep_ids
-    target_col = repo.get_column(conn, target_column_id)
+    target_col = repo.get_status(conn, target_status_id)
     if target_col is None or target_col.board_id != target_board_id:
         return task, False, (
-            f"column {target_column_id} does not belong to board {target_board_id}"
+            f"status {target_status_id} does not belong to board {target_board_id}"
         ), dep_ids
     if target_col.archived:
-        return task, False, f"column {target_column_id} is archived", dep_ids
+        return task, False, f"status {target_status_id} is archived", dep_ids
     if project_id is not None:
         proj = repo.get_project(conn, project_id)
         if proj is None or proj.board_id != target_board_id:
@@ -682,20 +681,20 @@ def preview_move_to_board(
     conn: sqlite3.Connection,
     task_id: int,
     target_board_id: int,
-    target_column_id: int,
+    target_status_id: int,
     *,
     project_id: int | None = None,
 ) -> MoveToBoardPreview:
     """Dry-run the same validation as move_task_to_board. Does not mutate."""
     task, can_move, reason, dep_ids = _validate_move_to_board(
-        conn, task_id, target_board_id, target_column_id, project_id,
+        conn, task_id, target_board_id, target_status_id, project_id,
     )
     return MoveToBoardPreview(
         task_id=task.id,
         task_title=task.title,
         source_board_id=task.board_id,
         target_board_id=target_board_id,
-        target_column_id=target_column_id,
+        target_status_id=target_status_id,
         can_move=can_move,
         blocking_reason=reason,
         dependency_ids=dep_ids,
@@ -707,14 +706,14 @@ def move_task_to_board(
     conn: sqlite3.Connection,
     task_id: int,
     target_board_id: int,
-    target_column_id: int,
+    target_status_id: int,
     *,
     project_id: int | None = None,
     source: str,
 ) -> Task:
     with transaction(conn), _friendly_errors():
         old, can_move, reason, _ = _validate_move_to_board(
-            conn, task_id, target_board_id, target_column_id, project_id,
+            conn, task_id, target_board_id, target_status_id, project_id,
         )
         if not can_move:
             raise ValueError(reason)
@@ -724,7 +723,7 @@ def move_task_to_board(
             NewTask(
                 board_id=target_board_id,
                 title=old.title,
-                column_id=target_column_id,
+                status_id=target_status_id,
                 project_id=project_id,
                 description=old.description,
                 priority=old.priority,

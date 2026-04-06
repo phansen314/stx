@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = (
@@ -17,6 +17,7 @@ class TuiConfig:
     confirm_archive: bool = True
     default_priority: int = 1
     auto_refresh_seconds: int = 30
+    status_order: list[int] = field(default_factory=list)
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TuiConfig:
@@ -42,4 +43,7 @@ def save_config(config: TuiConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
             lines.append(f"{field.name} = {value}")
         elif isinstance(value, str):
             lines.append(f'{field.name} = "{value}"')
+        elif isinstance(value, list):
+            items = ", ".join(str(v) for v in value)
+            lines.append(f"{field.name} = [{items}]")
     path.write_text("\n".join(lines) + "\n")

@@ -80,7 +80,7 @@ class TaskDetailModal(ModalScreen[int | None]):
         )
 
         meta_lines = [
-            f"  Column:      {escape_markup(detail.column.name)}",
+            f"  Status:      {escape_markup(detail.status.name)}",
         ]
         if detail.project:
             meta_lines.append(f"  Project:     {escape_markup(detail.project.name)}")

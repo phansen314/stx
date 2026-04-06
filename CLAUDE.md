@@ -13,7 +13,7 @@ CLI commands ────────┐
 TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
 ```
 
-**Data hierarchy:** Board → Column → Task (and Board → Project → Task, Board → Tag ↔ Task). Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
+**Data hierarchy:** Board → Status → Task (and Board → Project → Task, Board → Tag ↔ Task). Statuses are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead.
 
 ## Project Structure
 
@@ -48,7 +48,7 @@ src/sticky_notes/
       task_card.py   # TaskCard — focusable card with keybindings and messages
 
 tests/
-  conftest.py        # fixtures (fresh DB, seeded board/columns/tasks)
+  conftest.py        # fixtures (fresh DB, seeded board/statuses/tasks)
   helpers.py         # raw SQL insert helpers for test setup
   seed.py            # seed_board() for TUI test fixtures and manual testing
   test_cli.py        # CLI integration tests
@@ -69,7 +69,7 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 
 **Command structure:**
 - Task subcommands: `todo task create|ls|show|edit|mv|transfer|rm|log`
-- Other subcommand groups: `board`, `col`, `project`, `dep`, `group`, `tag`, `export`
+- Other subcommand groups: `board`, `status`, `project`, `dep`, `group`, `tag`, `export`
 
 ## TUI
 
@@ -95,15 +95,15 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - `BoardView._board_id` cached during `_load_board()` — handlers use it instead of fishing from column slots
 - `TaskFormModal` takes `conn` + `board_id` in constructor (pre-mount data fetching), `default_priority` as explicit param — no `typed_app` access before mount
 - Edit diffs form result against current DB state for minimal `update_task` changes dict
-- Config at `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority
+- Config at `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order
 
 ## Key Design Conventions
 
 - **Separate pre-insert and persisted types** — `NewTask` (no `id`/`created_at`) vs `Task` (full row). Never use `None` as a stand-in for "not yet assigned."
-- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`column`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `BoardListView` is the aggregate view model for `cmd_ls` — board + ordered columns + TaskListItems. `BoardContext` is the aggregate view model for `cmd_context` — `BoardListView` + projects + tags + groups, for one-call AI session startup.
+- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`status`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `BoardListView` is the aggregate view model for `cmd_ls` — board + ordered statuses + TaskListItems. `BoardContext` is the aggregate view model for `cmd_context` — `BoardListView` + projects + tags + groups, for one-call AI session startup.
 - **All dataclasses are frozen** — immutability throughout. Changes produce new instances via DB.
 - **Defaults on pre-insert dataclasses** — optional/defaultable fields on `New*` types carry defaults directly. No factory layer needed.
-- **Service models are flat, not inherited** — `TaskListItem`, `TaskDetail`, `ProjectDetail`, and `GroupDetail` redeclare their parent entity's fields rather than inheriting from `Task` / `Project` / `Group`. Tradeoff: adding a column to `tasks` touches both `TaskListItem` and `TaskDetail` in addition to `Task` and `row_to_task`. The win is that hydrated fields can be plain required annotations (e.g. `column: Column` on `TaskDetail`) without dataclass field-ordering gymnastics. An earlier inheritance-based version required `column: Column = None  # type: ignore` with a runtime `__post_init__` check — flat redeclaration removes that hack.
+- **Service models are flat, not inherited** — `TaskListItem`, `TaskDetail`, `ProjectDetail`, and `GroupDetail` redeclare their parent entity's fields rather than inheriting from `Task` / `Project` / `Group`. Tradeoff: adding a column to `tasks` touches both `TaskListItem` and `TaskDetail` in addition to `Task` and `row_to_task`. The win is that hydrated fields can be plain required annotations (e.g. `status: Status` on `TaskDetail`) without dataclass field-ordering gymnastics. An earlier inheritance-based version required `status: Status = None  # type: ignore` with a runtime `__post_init__` check — flat redeclaration removes that hack.
 - **Mappers are plain functions** — explicit conversion at each layer boundary (row→model, model→ref, ref→detail). Models are pure data containers with no methods — conversion logic stays in `mappers.py`, not as classmethods. Accept the boilerplate to keep separation clean.
 - **`shallow_fields()` helper** — extracts a dataclass's fields as a dict for splatting into derived types (`TaskListItem`, `TaskDetail`, `GroupRef`, etc.). Lives in `mappers.py`.
 - **Repository update allowlists** — each entity has a `_*_UPDATABLE` frozenset guarding which fields can be passed to update functions.
@@ -114,8 +114,8 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - **Active board file** — persisted at `~/.local/share/sticky-notes/active-board`. CLI resolves board from `--board` flag or this file.
 - **Tags** — board-scoped, many-to-many with tasks via `task_tags` junction table. `tag_task` auto-creates the tag if it doesn't exist. Composite FKs enforce same-board scoping at the DB level.
 - **Error translation** — `_friendly_errors()` context manager in the service layer catches `IntegrityError` and translates to `ValueError` with human-readable messages. `_UNIQUE_MESSAGES` dict maps constraint patterns to messages.
-- **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (column/project exists, on correct board, not archived) before hitting the DB.
-- **Migrations** — numbered SQL files in `src/sticky_notes/migrations/` (e.g., `003_schema_hardening.sql`). `_run_migrations()` discovers files by version prefix, wraps each in FK-off + transaction + FK-revalidate. SQL files contain only DDL/DML — no PRAGMAs, no transaction control. `SCHEMA_VERSION` is explicit; a test asserts it matches the highest migration file number. Fresh databases skip migrations entirely (`init_db` runs `schema.sql` and stamps `SCHEMA_VERSION`).
+- **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (status/project exists, on correct board, not archived) before hitting the DB.
+- **Migrations** — numbered SQL files in `src/sticky_notes/migrations/` (e.g., `004_column_to_status.sql`). `_run_migrations()` discovers files by version prefix, wraps each in FK-off + transaction + FK-revalidate. SQL files contain only DDL/DML — no PRAGMAs, no transaction control. `SCHEMA_VERSION` is explicit; a test asserts it matches the highest migration file number. Fresh databases skip migrations entirely (`init_db` runs `schema.sql` and stamps `SCHEMA_VERSION`). When recreating tables with FK deps (e.g. `tasks`), cascade-recreate dependent tables (`task_dependencies`, `task_tags`); use `CASE` in INSERT to transform field values rather than UPDATE before recreate (avoids violating the old CHECK constraint).
 - **Export** — `export.py` renders the full database to Markdown with Mermaid dependency graphs.
 - **DB path** — `~/.local/share/sticky-notes/sticky-notes.db` (XDG-compliant).
 - **WAL journal mode** — enables concurrent reads from TUI and CLI.

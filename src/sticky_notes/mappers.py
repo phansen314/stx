@@ -6,9 +6,9 @@ from typing import Any
 
 from .models import (
     Board,
-    Column,
     Group,
     Project,
+    Status,
     Tag,
     Task,
     TaskField,
@@ -48,12 +48,11 @@ def row_to_project(row: Row) -> Project:
     )
 
 
-def row_to_column(row: Row) -> Column:
-    return Column(
+def row_to_status(row: Row) -> Status:
+    return Status(
         id=row["id"],
         board_id=row["board_id"],
         name=row["name"],
-        position=row["position"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
     )
@@ -66,7 +65,7 @@ def row_to_task(row: Row) -> Task:
         title=row["title"],
         project_id=row["project_id"],
         description=row["description"],
-        column_id=row["column_id"],
+        status_id=row["status_id"],
         priority=row["priority"],
         due_date=row["due_date"],
         position=row["position"],
@@ -158,7 +157,7 @@ def group_to_ref(
 def task_to_detail(
     task: Task,
     *,
-    column: Column,
+    status: Status,
     project: Project | None,
     group: Group | None,
     blocked_by: tuple[Task, ...],
@@ -168,7 +167,7 @@ def task_to_detail(
 ) -> TaskDetail:
     return TaskDetail(
         **shallow_fields(task, Task),
-        column=column,
+        status=status,
         project=project,
         group=group,
         blocked_by=blocked_by,

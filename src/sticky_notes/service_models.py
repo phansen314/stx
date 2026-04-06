@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import Board, Column, Group, Project, Tag, Task, TaskHistory
+from .models import Board, Group, Project, Status, Tag, Task, TaskHistory
 
 
 # ---- List view types ----
@@ -17,7 +17,7 @@ class TaskListItem:
     title: str
     project_id: int | None
     description: str | None
-    column_id: int
+    status_id: int
     priority: int
     due_date: int | None
     position: int
@@ -46,15 +46,15 @@ class GroupRef:
 
 
 @dataclass(frozen=True)
-class BoardListColumn:
-    column: Column
+class BoardListStatus:
+    status: Status
     tasks: tuple[TaskListItem, ...]
 
 
 @dataclass(frozen=True)
 class BoardListView:
     board: Board
-    columns: tuple[BoardListColumn, ...]
+    statuses: tuple[BoardListStatus, ...]
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class TaskDetail:
     title: str
     project_id: int | None
     description: str | None
-    column_id: int
+    status_id: int
     priority: int
     due_date: int | None
     position: int
@@ -85,7 +85,7 @@ class TaskDetail:
     start_date: int | None
     finish_date: int | None
     group_id: int | None
-    column: Column
+    status: Status
     project: Project | None
     group: Group | None
     blocked_by: tuple[Task, ...]
@@ -128,7 +128,7 @@ class MoveToBoardPreview:
     task_title: str
     source_board_id: int
     target_board_id: int
-    target_column_id: int
+    target_status_id: int
     can_move: bool
     blocking_reason: str | None
     dependency_ids: tuple[int, ...]

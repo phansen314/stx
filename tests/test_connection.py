@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 import pytest
 
-from helpers import insert_board, insert_column, insert_task
+from helpers import insert_board, insert_status, insert_task
 from sticky_notes.connection import (
     SCHEMA_VERSION,
     _run_migrations,
@@ -43,7 +43,7 @@ class TestInitDb:
             ).fetchall()
         }
         assert tables == {
-            "boards", "projects", "columns",
+            "boards", "projects", "statuses",
             "tasks", "task_dependencies", "task_history",
             "tags", "task_tags",
             "groups",
@@ -130,7 +130,7 @@ class TestSelfDependencyConstraint:
     def test_task_cannot_depend_on_itself(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
-            col_id = insert_column(conn, board_id, "col")
+            col_id = insert_status(conn, board_id, "col")
             task_id = insert_task(conn, board_id, "t", col_id)
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
@@ -143,7 +143,7 @@ class TestSelfDependencyConstraint:
     def test_valid_dependency_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
-            col_id = insert_column(conn, board_id, "col")
+            col_id = insert_status(conn, board_id, "col")
             t1 = insert_task(conn, board_id, "t1", col_id)
             t2 = insert_task(conn, board_id, "t2", col_id)
         with transaction(conn):
@@ -157,25 +157,25 @@ class TestSelfDependencyConstraint:
         assert row["depends_on_id"] == t2
 
 
-class TestColumnArchived:
-    def test_column_has_archived_default_zero(self, conn: sqlite3.Connection) -> None:
+class TestStatusArchived:
+    def test_status_has_archived_default_zero(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
-            insert_column(conn, board_id, "col")
+            insert_status(conn, board_id, "col")
         row = conn.execute(
-            "SELECT archived FROM columns WHERE name = 'col'",
+            "SELECT archived FROM statuses WHERE name = 'col'",
         ).fetchone()
         assert row["archived"] == 0
 
-    def test_column_archived_can_be_set(self, conn: sqlite3.Connection) -> None:
+    def test_status_archived_can_be_set(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
             conn.execute(
-                "INSERT INTO columns (board_id, name, archived) VALUES (?, 'col', 1)",
+                "INSERT INTO statuses (board_id, name, archived) VALUES (?, 'col', 1)",
                 (board_id,),
             )
         row = conn.execute(
-            "SELECT archived FROM columns WHERE name = 'col'",
+            "SELECT archived FROM statuses WHERE name = 'col'",
         ).fetchone()
         assert row["archived"] == 1
 
@@ -187,10 +187,10 @@ class TestForeignKeyEnforcement:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO columns (board_id, name) VALUES (999, 'col')",
+                    "INSERT INTO statuses (board_id, name) VALUES (999, 'col')",
                 )
 
-    def test_rejects_task_with_nonexistent_column(
+    def test_rejects_task_with_nonexistent_status(
         self, conn: sqlite3.Connection,
     ) -> None:
         with transaction(conn):
@@ -198,7 +198,7 @@ class TestForeignKeyEnforcement:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO tasks (board_id, title, column_id) "
+                    "INSERT INTO tasks (board_id, title, status_id) "
                     "VALUES (?, 't', 999)",
                     (board_id,),
                 )
@@ -208,7 +208,7 @@ class TestCrossBoardConstraints:
     def test_dependency_same_board_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "b")
-            cid = insert_column(conn, bid)
+            cid = insert_status(conn, bid)
             t1 = insert_task(conn, bid, "t1", cid)
             t2 = insert_task(conn, bid, "t2", cid)
         with transaction(conn):
@@ -226,8 +226,8 @@ class TestCrossBoardConstraints:
         with transaction(conn):
             b1 = insert_board(conn, "b1")
             b2 = insert_board(conn, "b2")
-            c1 = insert_column(conn, b1)
-            c2 = insert_column(conn, b2)
+            c1 = insert_status(conn, b1)
+            c2 = insert_status(conn, b2)
             t1 = insert_task(conn, b1, "t1", c1)
             t2 = insert_task(conn, b2, "t2", c2)
         with pytest.raises(sqlite3.IntegrityError):
@@ -241,7 +241,7 @@ class TestCrossBoardConstraints:
     def test_tag_same_board_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_board(conn, "b")
-            cid = insert_column(conn, bid)
+            cid = insert_status(conn, bid)
             tid = insert_task(conn, bid, "t", cid)
             tag_id = conn.execute(
                 "INSERT INTO tags (board_id, name) VALUES (?, 'bug')", (bid,)
@@ -260,7 +260,7 @@ class TestCrossBoardConstraints:
         with transaction(conn):
             b1 = insert_board(conn, "b1")
             b2 = insert_board(conn, "b2")
-            c1 = insert_column(conn, b1)
+            c1 = insert_status(conn, b1)
             tid = insert_task(conn, b1, "t", c1)
             tag_id = conn.execute(
                 "INSERT INTO tags (board_id, name) VALUES (?, 'bug')", (b2,)
@@ -501,7 +501,7 @@ class TestMigrations:
         with pytest.raises(sqlite3.IntegrityError):
             # Task in project 1 cannot be assigned to group in project 2
             conn.execute(
-                "INSERT INTO tasks (board_id, title, column_id, project_id, group_id) "
+                "INSERT INTO tasks (board_id, title, status_id, project_id, group_id) "
                 "VALUES (1, 'bad', 1, 1, 2)"
             )
         conn.close()
@@ -530,7 +530,7 @@ class TestTaskHistoryFieldConstraint:
     ) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
-            col_id = insert_column(conn, board_id, "col")
+            col_id = insert_status(conn, board_id, "col")
             task_id = insert_task(conn, board_id, "t", col_id)
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
@@ -545,7 +545,7 @@ class TestTaskHistoryFieldConstraint:
     ) -> None:
         with transaction(conn):
             board_id = insert_board(conn, "b")
-            col_id = insert_column(conn, board_id, "col")
+            col_id = insert_status(conn, board_id, "col")
             task_id = insert_task(conn, board_id, "t", col_id)
         with transaction(conn):
             conn.execute(

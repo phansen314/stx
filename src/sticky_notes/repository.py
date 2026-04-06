@@ -7,25 +7,25 @@ from typing import Any
 
 from .mappers import (
     row_to_board,
-    row_to_column,
     row_to_group,
     row_to_project,
+    row_to_status,
     row_to_tag,
     row_to_task,
     row_to_task_history,
 )
 from .models import (
     Board,
-    Column,
     Group,
     NewBoard,
-    NewColumn,
     NewGroup,
     NewProject,
+    NewStatus,
     NewTag,
     NewTask,
     NewTaskHistory,
     Project,
+    Status,
     Tag,
     Task,
     TaskFilter,
@@ -35,7 +35,7 @@ from .models import (
 # ---- Updatable-field allowlists ----
 
 _BOARD_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
-_COLUMN_UPDATABLE: frozenset[str] = frozenset({"name", "position", "archived"})
+_STATUS_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _PROJECT_UPDATABLE: frozenset[str] = frozenset({"name", "description", "archived"})
 # group_id is intentionally excluded — assignment goes through
 # set_task_group_id / assign_task_to_group which enforce project-matching
@@ -43,7 +43,7 @@ _PROJECT_UPDATABLE: frozenset[str] = frozenset({"name", "description", "archived
 _TASK_UPDATABLE: frozenset[str] = frozenset({
     "title",
     "description",
-    "column_id",
+    "status_id",
     "project_id",
     "priority",
     "due_date",
@@ -134,61 +134,61 @@ def update_board(
     return row_to_board(row)
 
 
-# ---- Column functions ----
+# ---- Status functions ----
 
 
-def insert_column(conn: sqlite3.Connection, new: NewColumn) -> Column:
+def insert_status(conn: sqlite3.Connection, new: NewStatus) -> Status:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO columns (board_id, name, position) VALUES (:board_id, :name, :position)",
+        "INSERT INTO statuses (board_id, name) VALUES (:board_id, :name)",
         d,
     )
-    row = conn.execute("SELECT * FROM columns WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return row_to_column(row)
+    row = conn.execute("SELECT * FROM statuses WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return row_to_status(row)
 
 
-def get_column_by_name(
+def get_status_by_name(
     conn: sqlite3.Connection,
     board_id: int,
     name: str,
-) -> Column | None:
+) -> Status | None:
     row = conn.execute(
-        "SELECT * FROM columns WHERE board_id = ? AND name = ? AND archived = 0",
+        "SELECT * FROM statuses WHERE board_id = ? AND name = ? AND archived = 0",
         (board_id, name),
     ).fetchone()
-    return row_to_column(row) if row else None
+    return row_to_status(row) if row else None
 
 
-def get_column(conn: sqlite3.Connection, column_id: int) -> Column | None:
-    row = conn.execute("SELECT * FROM columns WHERE id = ?", (column_id,)).fetchone()
-    return row_to_column(row) if row else None
+def get_status(conn: sqlite3.Connection, status_id: int) -> Status | None:
+    row = conn.execute("SELECT * FROM statuses WHERE id = ?", (status_id,)).fetchone()
+    return row_to_status(row) if row else None
 
 
-def list_columns(
+def list_statuses(
     conn: sqlite3.Connection,
     board_id: int,
     *,
     include_archived: bool = False,
-) -> tuple[Column, ...]:
+) -> tuple[Status, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM columns WHERE board_id = ?{archive_clause} ORDER BY position, id",
+        f"SELECT * FROM statuses WHERE board_id = ?{archive_clause} ORDER BY name, id",
         (board_id,),
     ).fetchall()
-    return tuple(row_to_column(r) for r in rows)
+    return tuple(row_to_status(r) for r in rows)
 
 
-def update_column(
+def update_status(
     conn: sqlite3.Connection,
-    column_id: int,
+    status_id: int,
     changes: dict[str, Any],
-) -> Column:
-    sql, params = _build_update("columns", column_id, changes, _COLUMN_UPDATABLE)
+) -> Status:
+    sql, params = _build_update("statuses", status_id, changes, _STATUS_UPDATABLE)
     cur = conn.execute(sql, params)
     if cur.rowcount == 0:
-        raise LookupError(f"column {column_id} not found")
-    row = conn.execute("SELECT * FROM columns WHERE id = ?", (column_id,)).fetchone()
-    return row_to_column(row)
+        raise LookupError(f"status {status_id} not found")
+    row = conn.execute("SELECT * FROM statuses WHERE id = ?", (status_id,)).fetchone()
+    return row_to_status(row)
 
 
 # ---- Project functions ----
@@ -256,8 +256,8 @@ def insert_task(conn: sqlite3.Connection, new: NewTask) -> Task:
     d = _asdict_for_insert(new)
     cur = conn.execute(
         "INSERT INTO tasks "
-        "(board_id, title, column_id, project_id, description, priority, due_date, position, start_date, finish_date) "
-        "VALUES (:board_id, :title, :column_id, :project_id, :description, :priority, :due_date, :position, :start_date, :finish_date)",
+        "(board_id, title, status_id, project_id, description, priority, due_date, position, start_date, finish_date) "
+        "VALUES (:board_id, :title, :status_id, :project_id, :description, :priority, :due_date, :position, :start_date, :finish_date)",
         d,
     )
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -295,16 +295,16 @@ def list_tasks(
     return tuple(row_to_task(r) for r in rows)
 
 
-def list_tasks_by_column(
+def list_tasks_by_status(
     conn: sqlite3.Connection,
-    column_id: int,
+    status_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM tasks WHERE column_id = ?{archive_clause} ORDER BY position, id",
-        (column_id,),
+        f"SELECT * FROM tasks WHERE status_id = ?{archive_clause} ORDER BY position, id",
+        (status_id,),
     ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
@@ -336,9 +336,9 @@ def list_tasks_filtered(
         clauses.append("archived = 1")
     elif not f.include_archived:
         clauses.append("archived = 0")
-    if f.column_id is not None:
-        clauses.append("column_id = ?")
-        params.append(f.column_id)
+    if f.status_id is not None:
+        clauses.append("status_id = ?")
+        params.append(f.status_id)
     if f.project_id is not None:
         clauses.append("project_id = ?")
         params.append(f.project_id)

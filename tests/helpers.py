@@ -13,15 +13,14 @@ def insert_board(
     return cur.lastrowid  # type: ignore[return-value]
 
 
-def insert_column(
+def insert_status(
     conn: sqlite3.Connection,
     board_id: int,
     name: str = "todo",
-    position: int = 0,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO columns (board_id, name, position) VALUES (?, ?, ?)",
-        (board_id, name, position),
+        "INSERT INTO statuses (board_id, name) VALUES (?, ?)",
+        (board_id, name),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -43,15 +42,15 @@ def insert_task(
     conn: sqlite3.Connection,
     board_id: int,
     title: str,
-    column_id: int,
+    status_id: int,
     project_id: int | None = None,
     priority: int = 1,
     due_date: int | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO tasks (board_id, title, column_id, project_id, priority, due_date) "
+        "INSERT INTO tasks (board_id, title, status_id, project_id, priority, due_date) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (board_id, title, column_id, project_id, priority, due_date),
+        (board_id, title, status_id, project_id, priority, due_date),
     )
     return cur.lastrowid  # type: ignore[return-value]
 

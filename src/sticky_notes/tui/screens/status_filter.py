@@ -7,23 +7,23 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, OptionList, Static
 from textual.widgets.option_list import Option
 
-from sticky_notes.models import Column
+from sticky_notes.models import Status
 
 
-class ColumnFilterModal(ModalScreen[frozenset[int] | None]):
-    """Multi-select modal for filtering which columns are visible.
+class StatusFilterModal(ModalScreen[frozenset[int] | None]):
+    """Multi-select modal for filtering which statuses are visible.
 
     Dismisses with:
-    - frozenset[int]: selected column IDs (confirm)
+    - frozenset[int]: selected status IDs (confirm)
     - None: cancel (no change)
     """
 
     DEFAULT_CSS = """
-    ColumnFilterModal {
+    StatusFilterModal {
         align: center middle;
     }
 
-    ColumnFilterModal #filter-container {
+    StatusFilterModal #filter-container {
         width: 50;
         max-height: 60%;
         border: thick $primary;
@@ -31,13 +31,13 @@ class ColumnFilterModal(ModalScreen[frozenset[int] | None]):
         padding: 1 2;
     }
 
-    ColumnFilterModal #filter-title {
+    StatusFilterModal #filter-title {
         text-style: bold;
         text-align: center;
         margin-bottom: 1;
     }
 
-    ColumnFilterModal #filter-buttons {
+    StatusFilterModal #filter-buttons {
         width: 100%;
         align: center middle;
         height: 3;
@@ -53,43 +53,43 @@ class ColumnFilterModal(ModalScreen[frozenset[int] | None]):
 
     def __init__(
         self,
-        columns: tuple[Column, ...],
+        statuses: tuple[Status, ...],
         selected_ids: frozenset[int] | None,
     ) -> None:
         super().__init__()
-        self._columns = columns
+        self._statuses = statuses
         self._selected: set[int] = (
-            set(selected_ids) if selected_ids is not None else {c.id for c in columns}
+            set(selected_ids) if selected_ids is not None else {s.id for s in statuses}
         )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="filter-container"):
-            yield Static("Filter Columns", id="filter-title")
-            yield OptionList(*self._build_options(), id="column-filter-list")
+            yield Static("Filter Statuses", id="filter-title")
+            yield OptionList(*self._build_options(), id="status-filter-list")
             with Horizontal(id="filter-buttons"):
                 yield Button("OK", variant="primary", id="filter-ok")
 
     def _build_options(self) -> list[Option]:
         options: list[Option] = []
-        for col in self._columns:
-            marker = "\\[x]" if col.id in self._selected else "\\[ ]"
-            options.append(Option(f"{marker} {col.name}", id=str(col.id)))
+        for s in self._statuses:
+            marker = "\\[x]" if s.id in self._selected else "\\[ ]"
+            options.append(Option(f"{marker} {s.name}", id=str(s.id)))
         return options
 
     def on_mount(self) -> None:
-        self.query_one("#column-filter-list", OptionList).focus()
+        self.query_one("#status-filter-list", OptionList).focus()
 
     def _toggle_highlighted(self) -> None:
-        option_list = self.query_one("#column-filter-list", OptionList)
+        option_list = self.query_one("#status-filter-list", OptionList)
         idx = option_list.highlighted
         if idx is None:
             return
         option = option_list.get_option_at_index(idx)
-        col_id = int(option.id)
-        if col_id in self._selected:
-            self._selected.discard(col_id)
+        status_id = int(option.id)
+        if status_id in self._selected:
+            self._selected.discard(status_id)
         else:
-            self._selected.add(col_id)
+            self._selected.add(status_id)
         # Rebuild options preserving highlight position
         option_list.clear_options()
         option_list.add_options(self._build_options())

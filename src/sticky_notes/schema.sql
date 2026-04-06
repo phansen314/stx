@@ -15,11 +15,10 @@ CREATE TABLE IF NOT EXISTS projects (
     UNIQUE (id, board_id)
 );
 
-CREATE TABLE IF NOT EXISTS columns (
+CREATE TABLE IF NOT EXISTS statuses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE RESTRICT,
     name TEXT NOT NULL COLLATE NOCASE,
-    position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     UNIQUE (id, board_id)
@@ -43,7 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     project_id INTEGER,
     title TEXT NOT NULL COLLATE NOCASE,
     description TEXT,
-    column_id INTEGER NOT NULL,
+    status_id INTEGER NOT NULL,
     priority INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 5),
     due_date INTEGER,
     position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
@@ -54,7 +53,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     group_id INTEGER,
     CHECK (start_date IS NULL OR finish_date IS NULL OR finish_date >= start_date),
     CHECK (group_id IS NULL OR project_id IS NOT NULL),
-    FOREIGN KEY (column_id, board_id) REFERENCES columns(id, board_id) ON DELETE RESTRICT,
+    FOREIGN KEY (status_id, board_id) REFERENCES statuses(id, board_id) ON DELETE RESTRICT,
     FOREIGN KEY (project_id, board_id) REFERENCES projects(id, board_id) ON DELETE RESTRICT,
     FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE RESTRICT,
     FOREIGN KEY (group_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT,
@@ -105,8 +104,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_boards_name_active
     ON boards(name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_board_name_active
     ON projects(board_id, name) WHERE archived = 0;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_columns_board_name_active
-    ON columns(board_id, name) WHERE archived = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_board_name_active
+    ON statuses(board_id, name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_board_name_active
     ON tags(board_id, name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_project_title_active
@@ -116,14 +115,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_board_title_active
 
 -- Composite covering indexes aligned to actual query patterns
 -- (each covers WHERE <fk> = ? AND archived = 0 ORDER BY <sort>)
-CREATE INDEX IF NOT EXISTS idx_tasks_column_archived_position
-    ON tasks(column_id, archived, position, id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status_archived_position
+    ON tasks(status_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_board_archived_position
     ON tasks(board_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_archived_position
     ON tasks(project_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_columns_board_archived_position
-    ON columns(board_id, archived, position, id);
+CREATE INDEX IF NOT EXISTS idx_statuses_board_archived_name
+    ON statuses(board_id, archived, name, id);
 CREATE INDEX IF NOT EXISTS idx_groups_parent_archived_position
     ON groups(parent_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_groups_project_archived_position

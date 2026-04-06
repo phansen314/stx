@@ -6,7 +6,7 @@ from enum import StrEnum
 
 @dataclass(frozen=True)
 class TaskFilter:
-    column_id: int | None = None
+    status_id: int | None = None
     project_id: int | None = None
     priority: int | None = None
     search: str | None = None
@@ -19,7 +19,7 @@ class TaskFilter:
 class TaskField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"
-    COLUMN_ID = "column_id"
+    STATUS_ID = "status_id"
     PROJECT_ID = "project_id"
     PRIORITY = "priority"
     DUE_DATE = "due_date"
@@ -46,17 +46,16 @@ class NewProject:
 
 
 @dataclass(frozen=True)
-class NewColumn:
+class NewStatus:
     board_id: int
     name: str
-    position: int = 0
 
 
 @dataclass(frozen=True)
 class NewTask:
     board_id: int
     title: str
-    column_id: int
+    status_id: int
     project_id: int | None = None
     description: str | None = None
     priority: int = 1
@@ -120,11 +119,10 @@ class Project:
 
 
 @dataclass(frozen=True)
-class Column:
+class Status:
     id: int
     board_id: int
     name: str
-    position: int
     archived: bool
     created_at: int
 
@@ -136,7 +134,7 @@ class Task:
     title: str
     project_id: int | None
     description: str | None
-    column_id: int
+    status_id: int
     priority: int
     due_date: int | None
     position: int

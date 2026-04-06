@@ -108,14 +108,14 @@ def _text_err(message: str, code: str) -> None:
 
 def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    col = service.get_column_by_name(conn, board.id, args.column)
+    col = service.get_status_by_name(conn, board.id, args.status)
     project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
     due = parse_date(args.due) if args.due else None
     task = service.create_task(
         conn,
         board_id=board.id,
         title=args.title,
-        column_id=col.id,
+        status_id=col.id,
         project_id=project_id,
         description=args.desc,
         priority=args.priority,
@@ -127,7 +127,7 @@ def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path:
 
 def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    column_id = service.get_column_by_name(conn, board.id, args.column).id if args.column else None
+    status_id = service.get_status_by_name(conn, board.id, args.status).id if args.status else None
     project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
     tag_id = service.get_tag_by_name(conn, board.id, args.tag).id if args.tag else None
     group_id = (
@@ -137,7 +137,7 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
     only_archived = getattr(args, "archived", False)
     view = service.get_board_list_view(
         conn, board.id,
-        column_id=column_id,
+        status_id=status_id,
         project_id=project_id,
         tag_id=tag_id,
         group_id=group_id,
@@ -182,7 +182,7 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: P
 def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
-    col = service.get_column_by_name(conn, board.id, args.column)
+    col = service.get_status_by_name(conn, board.id, args.status)
     position = args.position if args.position is not None else 0
     if args.project:
         project_id = service.get_project_by_name(conn, board.id, args.project).id
@@ -196,7 +196,7 @@ def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     board = _resolve_board(conn, args, db_path)
     task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
     target_board = service.get_board_by_name(conn, args.target_board)
-    target_col = service.get_column_by_name(conn, target_board.id, args.column)
+    target_col = service.get_status_by_name(conn, target_board.id, args.status)
     project_id = (
         service.get_project_by_name(conn, target_board.id, args.project).id
         if args.project else None
@@ -213,7 +213,7 @@ def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     )
     return Ok(
         data={"task": new, "source_task_id": task_id},
-        text=f"transferred {format_task_num(task_id)} -> board '{target_board.name}' / column '{target_col.name}' (new {format_task_num(new.id)})",
+        text=f"transferred {format_task_num(task_id)} -> board '{target_board.name}' / status '{target_col.name}' (new {format_task_num(new.id)})",
     )
 
 
@@ -237,10 +237,9 @@ def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
 def cmd_board_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = service.create_board(conn, args.name)
     set_active_board_id(db_path, board.id)
-    if args.columns:
-        col_names = [c.strip() for c in args.columns.split(",") if c.strip()]
-        for i, name in enumerate(col_names):
-            service.create_column(conn, board.id, name, position=i)
+    if args.statuses:
+        for name in [s.strip() for s in args.statuses.split(",") if s.strip()]:
+            service.create_status(conn, board.id, name)
     return Ok(data=board, text=f"created board '{board.name}' (active)")
 
 
@@ -280,42 +279,41 @@ def cmd_board_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
     return Ok(data=updated, text=f"archived board '{board.name}'")
 
 
-# ---- Column subcommands ----
+# ---- Status subcommands ----
 
 
-def cmd_col_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_status_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    position = args.pos if args.pos is not None else 0
-    col = service.create_column(conn, board.id, args.name, position=position)
-    return Ok(data=col, text=f"created column '{col.name}'")
+    col = service.create_status(conn, board.id, args.name)
+    return Ok(data=col, text=f"created status '{col.name}'")
 
 
-def cmd_col_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_status_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    cols = service.list_columns(conn, board.id)
-    return Ok(data=cols, text=presenters.format_column_list(cols))
+    statuses = service.list_statuses(conn, board.id)
+    return Ok(data=statuses, text=presenters.format_status_list(statuses))
 
 
-def cmd_col_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_status_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    col = service.get_column_by_name(conn, board.id, args.old_name)
-    updated = service.update_column(conn, col.id, {"name": args.new_name})
-    return Ok(data=updated, text=f"renamed column '{args.old_name}' -> '{args.new_name}'")
+    col = service.get_status_by_name(conn, board.id, args.old_name)
+    updated = service.update_status(conn, col.id, {"name": args.new_name})
+    return Ok(data=updated, text=f"renamed status '{args.old_name}' -> '{args.new_name}'")
 
 
-def cmd_col_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_status_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     board = _resolve_board(conn, args, db_path)
-    col = service.get_column_by_name(conn, board.id, args.name)
+    col = service.get_status_by_name(conn, board.id, args.name)
     reassign_to_id = None
     if args.reassign_to:
-        reassign_col = service.get_column_by_name(conn, board.id, args.reassign_to)
+        reassign_col = service.get_status_by_name(conn, board.id, args.reassign_to)
         reassign_to_id = reassign_col.id
-    updated = service.archive_column(
+    updated = service.archive_status(
         conn, col.id,
-        reassign_to_column_id=reassign_to_id,
+        reassign_to_status_id=reassign_to_id,
         force=args.force,
     )
-    return Ok(data=updated, text=f"archived column '{col.name}'")
+    return Ok(data=updated, text=f"archived status '{col.name}'")
 
 
 # ---- Project subcommands ----
@@ -621,10 +619,10 @@ HANDLERS: dict[str, CommandHandler] = {
     "board_use": cmd_board_use,
     "board_rename": cmd_board_rename,
     "board_rm": cmd_board_rm,
-    "col_create": cmd_col_create,
-    "col_ls": cmd_col_ls,
-    "col_rename": cmd_col_rename,
-    "col_rm": cmd_col_rm,
+    "status_create": cmd_status_create,
+    "status_ls": cmd_status_ls,
+    "status_rename": cmd_status_rename,
+    "status_rm": cmd_status_rm,
     "project_create": cmd_project_create,
     "project_ls": cmd_project_ls,
     "project_show": cmd_project_show,
@@ -669,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.set_defaults(command="task_create")
     p_create.add_argument("title")
     p_create.add_argument("--desc", "-d", default=None)
-    p_create.add_argument("--column", "-c", required=True, help="column name")
+    p_create.add_argument("--status", "-S", required=True, help="status name")
     p_create.add_argument("--project", "-p", default=None)
     p_create.add_argument("--priority", "-P", type=int, default=1)
     p_create.add_argument("--due", default=None, help="YYYY-MM-DD")
@@ -679,7 +677,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.set_defaults(command="task_ls")
     p_ls.add_argument("--all", "-a", action="store_true", help="include archived")
     p_ls.add_argument("--archived", action="store_true", help="show only archived")
-    p_ls.add_argument("--column", "-c", default=None, help="filter by column name")
+    p_ls.add_argument("--status", "-S", default=None, help="filter by status name")
     p_ls.add_argument("--project", "-p", default=None, help="filter by project name")
     p_ls.add_argument("--priority", "-P", type=int, default=None, help="filter by priority (1-5)")
     p_ls.add_argument("--search", "-s", default=None, help="search title substring")
@@ -703,10 +701,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
 
-    p_mv = task_sub.add_parser("mv", help="move task to column (within board)")
+    p_mv = task_sub.add_parser("mv", help="move task to status (within board)")
     p_mv.set_defaults(command="task_mv")
     p_mv.add_argument("task_num")
-    p_mv.add_argument("column", help="column name")
+    p_mv.add_argument("status", help="status name")
     p_mv.add_argument("position", type=int, nargs="?", default=None)
     p_mv.add_argument("--by-title", action="store_true", help="resolve task by title string")
     p_mv.add_argument("--project", "-p", default=None, help="also change task project")
@@ -715,7 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_transfer.set_defaults(command="task_transfer")
     p_transfer.add_argument("task_num")
     p_transfer.add_argument("--board", dest="target_board", required=True, help="target board name")
-    p_transfer.add_argument("--column", "-c", required=True, help="column on target board")
+    p_transfer.add_argument("--status", "-S", required=True, help="status on target board")
     p_transfer.add_argument("--project", "-p", default=None, help="project on target board")
     p_transfer.add_argument("--dry-run", action="store_true", default=False, help="preview without executing")
     p_transfer.add_argument("--by-title", action="store_true", help="resolve task by title string")
@@ -738,7 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_bc = board_sub.add_parser("create", help="create a board")
     p_bc.set_defaults(command="board_create")
     p_bc.add_argument("name")
-    p_bc.add_argument("--columns", default=None, help="comma-separated column names to create")
+    p_bc.add_argument("--statuses", default=None, help="comma-separated status names to create")
 
     p_bl = board_sub.add_parser("ls", help="list boards")
     p_bl.set_defaults(command="board_ls")
@@ -757,28 +755,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_ba.set_defaults(command="board_rm")
     p_ba.add_argument("name", nargs="?", default=None, help="board name (defaults to active)")
 
-    # ---- Column subcommands ----
+    # ---- Status subcommands ----
 
-    p_col = sub.add_parser("col", help="column management")
-    col_sub = p_col.add_subparsers()
+    p_status = sub.add_parser("status", help="status management")
+    status_sub = p_status.add_subparsers()
 
-    p_ca = col_sub.add_parser("create", help="create a column")
-    p_ca.set_defaults(command="col_create")
+    p_ca = status_sub.add_parser("create", help="create a status")
+    p_ca.set_defaults(command="status_create")
     p_ca.add_argument("name")
-    p_ca.add_argument("--pos", type=int, default=None, help="position")
 
-    p_cl = col_sub.add_parser("ls", help="list columns")
-    p_cl.set_defaults(command="col_ls")
+    p_cl = status_sub.add_parser("ls", help="list statuses")
+    p_cl.set_defaults(command="status_ls")
 
-    p_cr = col_sub.add_parser("rename", help="rename a column")
-    p_cr.set_defaults(command="col_rename")
+    p_cr = status_sub.add_parser("rename", help="rename a status")
+    p_cr.set_defaults(command="status_rename")
     p_cr.add_argument("old_name")
     p_cr.add_argument("new_name")
 
-    p_carch = col_sub.add_parser("rm", help="archive a column")
-    p_carch.set_defaults(command="col_rm")
+    p_carch = status_sub.add_parser("rm", help="archive a status")
+    p_carch.set_defaults(command="status_rm")
     p_carch.add_argument("name")
-    p_carch.add_argument("--reassign-to", default=None, metavar="COL", help="move tasks to this column")
+    p_carch.add_argument("--reassign-to", default=None, metavar="STATUS", help="move tasks to this status")
     p_carch.add_argument("--force", action="store_true", help="archive tasks instead of blocking")
 
     # ---- Project subcommands ----
@@ -890,7 +887,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---- Context ----
 
-    p_ctx = sub.add_parser("context", help="board summary: columns, tasks, projects, tags, groups")
+    p_ctx = sub.add_parser("context", help="board summary: statuses, tasks, projects, tags, groups")
     p_ctx.set_defaults(command="context")
 
     # ---- Export ----

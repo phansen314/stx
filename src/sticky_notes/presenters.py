@@ -5,7 +5,7 @@ stdout."""
 from __future__ import annotations
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import Board, Column, Project, Tag, Task, TaskHistory
+from .models import Board, Project, Status, Tag, Task, TaskHistory
 from .service_models import (
     BoardContext,
     BoardListView,
@@ -45,10 +45,10 @@ def format_board_list(boards: tuple[Board, ...], active_id: int | None) -> str:
     return "\n".join(lines)
 
 
-def format_column_list(cols: tuple[Column, ...]) -> str:
-    if not cols:
-        return _empty("column")
-    return "\n".join(f"  {c.position}  {c.name}" for c in cols)
+def format_status_list(statuses: tuple[Status, ...]) -> str:
+    if not statuses:
+        return "no statuses"
+    return "\n".join(f"  {s.name}" for s in statuses)
 
 
 def format_project_list(projects: tuple[Project, ...]) -> str:
@@ -83,7 +83,7 @@ def format_tag_list(tags: tuple[Tag, ...]) -> str:
 
 def format_task_detail(detail: TaskDetail) -> str:
     lines = [f"{format_task_num(detail.id)}  {detail.title}"]
-    lines.append(f"  Column:      {detail.column.name}")
+    lines.append(f"  Status:      {detail.status.name}")
     if detail.project:
         lines.append(f"  Project:     {detail.project.name}")
     if detail.group is not None:
@@ -112,10 +112,10 @@ def format_task_detail(detail: TaskDetail) -> str:
 
 def format_board_list_view(view: BoardListView) -> str:
     lines: list[str] = []
-    for i, col in enumerate(view.columns):
+    for i, col in enumerate(view.statuses):
         if i > 0:
             lines.append("")
-        lines.append(f"== {col.column.name} ==")
+        lines.append(f"== {col.status.name} ==")
         if not col.tasks:
             lines.append("  (empty)")
             continue
@@ -238,12 +238,12 @@ def format_group_detail(
 def format_move_preview(
     preview: MoveToBoardPreview,
     target_board_name: str,
-    target_col_name: str,
+    target_status_name: str,
 ) -> str:
     lines = [f"dry-run: would transfer {format_task_num(preview.task_id)} ({preview.task_title})"]
     lines.append(
         f"  from board {preview.source_board_id} -> "
-        f"board '{target_board_name}' / column '{target_col_name}'"
+        f"board '{target_board_name}' / status '{target_status_name}'"
     )
     if not preview.can_move:
         if preview.dependency_ids:

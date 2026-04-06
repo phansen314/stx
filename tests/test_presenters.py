@@ -3,9 +3,9 @@ from __future__ import annotations
 from sticky_notes import presenters
 from sticky_notes.models import (
     Board,
-    Column,
     Group,
     Project,
+    Status,
     Tag,
     Task,
     TaskField,
@@ -13,7 +13,7 @@ from sticky_notes.models import (
 )
 from sticky_notes.service_models import (
     BoardContext,
-    BoardListColumn,
+    BoardListStatus,
     BoardListView,
     GroupDetail,
     GroupRef,
@@ -33,8 +33,8 @@ def _board(id: int = 1, name: str = "B", archived: bool = False) -> Board:
     return Board(id=id, name=name, archived=archived, created_at=0)
 
 
-def _column(id: int, name: str, position: int = 0, archived: bool = False) -> Column:
-    return Column(id=id, board_id=1, name=name, position=position, archived=archived, created_at=0)
+def _status(id: int, name: str, archived: bool = False) -> Status:
+    return Status(id=id, board_id=1, name=name, archived=archived, created_at=0)
 
 
 def _project(id: int, name: str, description: str | None = None) -> Project:
@@ -49,12 +49,12 @@ def _tag(id: int, name: str, archived: bool = False) -> Tag:
 
 def _task(
     id: int, title: str, *,
-    column_id: int = 1, priority: int = 1,
+    status_id: int = 1, priority: int = 1,
     due_date: int | None = None, project_id: int | None = None,
 ) -> Task:
     return Task(
         id=id, board_id=1, title=title,
-        project_id=project_id, description=None, column_id=column_id,
+        project_id=project_id, description=None, status_id=status_id,
         priority=priority, due_date=due_date, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
     )
@@ -62,12 +62,12 @@ def _task(
 
 def _list_item(
     id: int, title: str, *,
-    column_id: int = 1, priority: int = 1,
+    status_id: int = 1, priority: int = 1,
     project_name: str | None = None, tag_names: tuple[str, ...] = (),
 ) -> TaskListItem:
     return TaskListItem(
         id=id, board_id=1, title=title,
-        project_id=None, description=None, column_id=column_id,
+        project_id=None, description=None, status_id=status_id,
         priority=priority, due_date=None, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
         project_name=project_name, tag_names=tag_names,
@@ -133,17 +133,18 @@ class TestFormatBoardList:
         assert "(archived)" in out
 
 
-# ---- format_column_list ----
+# ---- format_status_list ----
 
 
-class TestFormatColumnList:
+class TestFormatStatusList:
     def test_empty(self):
-        assert presenters.format_column_list(()) == "no columns"
+        assert presenters.format_status_list(()) == "no statuses"
 
-    def test_shows_position_and_name(self):
-        cols = (_column(1, "Todo", 0), _column(2, "Done", 1))
-        out = presenters.format_column_list(cols)
-        assert out == "  0  Todo\n  1  Done"
+    def test_shows_name(self):
+        statuses = (_status(1, "Todo"), _status(2, "Done"))
+        out = presenters.format_status_list(statuses)
+        assert "Todo" in out
+        assert "Done" in out
 
 
 # ---- format_project_list ----
@@ -211,9 +212,9 @@ class TestFormatTaskDetail:
     def _detail(self, **overrides) -> TaskDetail:
         base = dict(
             id=7, board_id=1, title="T", project_id=None, description=None,
-            column_id=1, priority=2, due_date=None, position=0, archived=False,
+            status_id=1, priority=2, due_date=None, position=0, archived=False,
             created_at=0, start_date=None, finish_date=None, group_id=None,
-            column=_column(1, "Todo"), project=None, group=None,
+            status=_status(1, "Todo"), project=None, group=None,
             blocked_by=(), blocks=(), history=(), tags=(),
         )
         base.update(overrides)
@@ -222,7 +223,7 @@ class TestFormatTaskDetail:
     def test_minimal(self):
         out = presenters.format_task_detail(self._detail())
         assert "task-0007  T" in out
-        assert "Column:      Todo" in out
+        assert "Status:      Todo" in out
         assert "Priority:    2" in out
         # optional fields absent
         assert "Due:" not in out
@@ -257,12 +258,12 @@ class TestFormatTaskDetail:
 
 
 class TestFormatBoardListView:
-    def test_columns_with_headers(self):
+    def test_statuses_with_headers(self):
         view = BoardListView(
             board=_board(1, "B"),
-            columns=(
-                BoardListColumn(column=_column(1, "Todo", 0), tasks=()),
-                BoardListColumn(column=_column(2, "Done", 1), tasks=()),
+            statuses=(
+                BoardListStatus(status=_status(1, "Todo"), tasks=()),
+                BoardListStatus(status=_status(2, "Done"), tasks=()),
             ),
         )
         out = presenters.format_board_list_view(view)
@@ -273,9 +274,9 @@ class TestFormatBoardListView:
     def test_task_rendering(self):
         view = BoardListView(
             board=_board(1),
-            columns=(
-                BoardListColumn(
-                    column=_column(1, "Todo"),
+            statuses=(
+                BoardListStatus(
+                    status=_status(1, "Todo"),
                     tasks=(_list_item(1, "do it", priority=3, project_name="proj", tag_names=("bug",)),),
                 ),
             ),
@@ -290,9 +291,9 @@ class TestFormatBoardListView:
     def test_no_project_or_tags(self):
         view = BoardListView(
             board=_board(1),
-            columns=(
-                BoardListColumn(
-                    column=_column(1, "Todo"),
+            statuses=(
+                BoardListStatus(
+                    status=_status(1, "Todo"),
                     tasks=(_list_item(1, "bare"),),
                 ),
             ),
@@ -307,7 +308,7 @@ class TestFormatBoardListView:
 
 class TestFormatBoardContext:
     def _ctx(self, *, name="dev", projects=(), tags=(), groups=()) -> BoardContext:
-        view = BoardListView(board=_board(1, name), columns=())
+        view = BoardListView(board=_board(1, name), statuses=())
         return BoardContext(view=view, projects=projects, tags=tags, groups=groups)
 
     def _ref(self, id: int, proj_id: int, title: str) -> GroupRef:
@@ -474,7 +475,7 @@ class TestFormatMovePreview:
     def _preview(self, **overrides) -> MoveToBoardPreview:
         base = dict(
             task_id=5, task_title="T", source_board_id=1, target_board_id=2,
-            target_column_id=3, can_move=True, blocking_reason=None,
+            target_status_id=3, can_move=True, blocking_reason=None,
             dependency_ids=(), is_archived=False,
         )
         base.update(overrides)
@@ -484,7 +485,7 @@ class TestFormatMovePreview:
         out = presenters.format_move_preview(self._preview(), "other", "Backlog")
         assert "dry-run" in out
         assert "task-0005" in out
-        assert "board 'other' / column 'Backlog'" in out
+        assert "board 'other' / status 'Backlog'" in out
         assert "transfer OK" in out
 
     def test_blocked_by_dependencies(self):

@@ -11,9 +11,9 @@ from sticky_notes.connection import get_connection, init_db
 def seed_board(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
     board = service.create_board(conn, "Coding")
 
-    todo = service.create_column(conn, board.id, "Todo", position=0)
-    in_progress = service.create_column(conn, board.id, "In Progress", position=1)
-    done = service.create_column(conn, board.id, "Done", position=2)
+    todo = service.create_status(conn, board.id, "Todo")
+    in_progress = service.create_status(conn, board.id, "In Progress")
+    done = service.create_status(conn, board.id, "Done")
 
     project = service.create_project(
         conn, board.id, "apr-api", description="April API sprint"
@@ -66,7 +66,7 @@ def seed_board(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
 
     return {
         "board_id": board.id,
-        "column_ids": {"todo": todo.id, "in_progress": in_progress.id, "done": done.id},
+        "status_ids": {"todo": todo.id, "in_progress": in_progress.id, "done": done.id},
         "project_id": project.id,
         "task_ids": {
             "design_api": t1.id,

@@ -10,7 +10,7 @@ from sticky_notes.tui.app import StickyNotesApp
 from sticky_notes.tui.config import TuiConfig, load_config, save_config
 from sticky_notes.tui.screens.all_tasks import AllTasksScreen
 from sticky_notes.tui.screens.board_select import BoardSelectModal
-from sticky_notes.tui.screens.column_filter import ColumnFilterModal
+from sticky_notes.tui.screens.status_filter import StatusFilterModal
 from sticky_notes.tui.screens.confirm_dialog import ConfirmDialog
 from sticky_notes.tui.screens.move_task import MoveTaskModal
 from sticky_notes.tui.screens.project_select import ProjectSelectModal
@@ -287,14 +287,18 @@ class TestBoardNavigation:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # Todo column has 4 tasks, go to the bottom
+            # Navigate to Todo (col 2) which has 4 tasks
+            await pilot.press("right", "right")
+            await pilot.pause()
+            assert _board(app).focused_position == (2, 0)
+            # Go to the bottom
             await pilot.press("down", "down", "down")
             await pilot.pause()
-            assert _board(app).focused_position == (0, 3)
+            assert _board(app).focused_position == (2, 3)
             # One more down should stay at bottom
             await pilot.press("down")
             await pilot.pause()
-            assert _board(app).focused_position == (0, 3)
+            assert _board(app).focused_position == (2, 3)
 
     async def test_right_arrow_moves_to_next_column(
         self, seeded_tui_db: tuple[Path, dict]
@@ -355,14 +359,18 @@ class TestBoardNavigation:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # Go to task index 3 in Todo (4 tasks: 0,1,2,3)
+            # Navigate to Todo (col 2, 4 tasks: 0,1,2,3)
+            await pilot.press("right", "right")
+            await pilot.pause()
+            assert _board(app).focused_position == (2, 0)
+            # Go to task index 3
             await pilot.press("down", "down", "down")
             await pilot.pause()
-            assert _board(app).focused_position == (0, 3)
-            # Move right to In Progress (only 2 tasks: 0,1)
-            await pilot.press("right")
+            assert _board(app).focused_position == (2, 3)
+            # Move left to In Progress (only 2 tasks: 0,1) — clamped
+            await pilot.press("left")
             await pilot.pause()
-            assert _board(app).focused_position == (1, 1)  # clamped
+            assert _board(app).focused_position == (1, 1)
 
     async def test_focused_card_has_focus_property(
         self, seeded_tui_db: tuple[Path, dict]
@@ -418,7 +426,7 @@ class TestBoardTaskMovement:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # Focus is at (0, 0) in Todo. Shift+right moves to In Progress.
+            # Focus is at (0, 0) in Done. Shift+right moves to In Progress.
             await pilot.press("shift+right")
             await pilot.pause()
             await pilot.pause()
@@ -426,9 +434,9 @@ class TestBoardTaskMovement:
             assert board.focused_position is not None
             assert board.focused_position[0] == 1
             columns = board._get_columns()
-            todo_cards = board._get_cards(columns[0])
+            done_cards = board._get_cards(columns[0])
             in_progress_cards = board._get_cards(columns[1])
-            assert len(todo_cards) == 3
+            assert len(done_cards) == 1
             assert len(in_progress_cards) == 3
 
     async def test_shift_left_moves_task_to_previous_column(
@@ -442,7 +450,7 @@ class TestBoardTaskMovement:
             await pilot.press("right")
             await pilot.pause()
             assert _board(app).focused_position == (1, 0)
-            # Move task left to Todo
+            # Move task left to Done
             await pilot.press("shift+left")
             await pilot.pause()
             await pilot.pause()
@@ -450,9 +458,9 @@ class TestBoardTaskMovement:
             assert board.focused_position is not None
             assert board.focused_position[0] == 0
             columns = board._get_columns()
-            todo_cards = board._get_cards(columns[0])
+            done_cards = board._get_cards(columns[0])
             in_progress_cards = board._get_cards(columns[1])
-            assert len(todo_cards) == 5
+            assert len(done_cards) == 3
             assert len(in_progress_cards) == 1
 
     async def test_shift_left_at_first_column_is_noop(
@@ -468,7 +476,7 @@ class TestBoardTaskMovement:
             await pilot.pause()
             assert _board(app).focused_position == (0, 0)
             columns = _board(app)._get_columns()
-            assert len(_board(app)._get_cards(columns[0])) == 4
+            assert len(_board(app)._get_cards(columns[0])) == 2
 
     async def test_shift_right_at_last_column_is_noop(
         self, seeded_tui_db: tuple[Path, dict]
@@ -545,7 +553,7 @@ class TestBoardTaskMovement:
             focused = app.focused
             assert isinstance(focused, TaskCard)
             task_id = focused.task_data.id
-            original_col = focused.task_data.column_id
+            original_col = focused.task_data.status_id
             await pilot.press("shift+right")
             await pilot.pause()
             await pilot.pause()
@@ -555,8 +563,8 @@ class TestBoardTaskMovement:
             fresh_conn = get_connection(db_path)
             task = service.get_task(fresh_conn, task_id)
             fresh_conn.close()
-            assert task.column_id != original_col
-            assert task.column_id == ids["column_ids"]["in_progress"]
+            assert task.status_id != original_col
+            assert task.status_id == ids["status_ids"]["in_progress"]
 
     async def test_move_to_adjacent_empty_column(
         self, seeded_tui_db_empty_middle: tuple[Path, dict]
@@ -598,7 +606,7 @@ class TestBoardTaskMovement:
             await pilot.pause()
             await pilot.pause()
             board = _board(app)
-            # Task moved to Done (col 2) — focus follows it
+            # Task moved to Todo (col 2) — focus follows it
             assert board.focused_position is not None
             assert board.focused_position[0] == 2
             focused = app.focused
@@ -613,17 +621,17 @@ class TestBoardTaskMovement:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # Click the second card in Todo (col 0, task 1)
+            # Click the second card in Todo (col 2, task 1)
             board = _board(app)
             columns = board._get_columns()
-            card_1 = board._get_cards(columns[0])[1]
+            card_1 = board._get_cards(columns[2])[1]
             await pilot.click(card_1)
             await pilot.pause()
-            assert board.focused_position == (0, 1)
-            # Down should go to (0, 2), not from stale (0, 0) -> (0, 1)
+            assert board.focused_position == (2, 1)
+            # Down should go to (2, 2), not from stale (0, 0) -> (0, 1)
             await pilot.press("down")
             await pilot.pause()
-            assert board.focused_position == (0, 2)
+            assert board.focused_position == (2, 2)
 
 
 # ---- Archive tests ----
@@ -829,7 +837,7 @@ class TestTaskDetailModal:
             await pilot.press("enter")
             await pilot.pause()
             texts = [str(w.render()) for w in app.screen.query(Static)]
-            assert any("Todo" in t for t in texts)
+            assert any("Done" in t for t in texts)
 
     async def test_detail_shows_priority(
         self, seeded_tui_db: tuple[Path, dict]
@@ -850,7 +858,9 @@ class TestTaskDetailModal:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # First task "Design API schema" has a description
+            # Navigate to "Design API schema" (Todo col 2, index 0) which has a description
+            await pilot.press("right", "right")
+            await pilot.pause()
             await pilot.press("enter")
             await pilot.pause()
             static_texts = [str(w.render()) for w in app.screen.query(Static)]
@@ -866,7 +876,9 @@ class TestTaskDetailModal:
         app = StickyNotesApp(db_path=db_path)
         async with app.run_test() as pilot:
             await _wait_for_board(pilot)
-            # Navigate to "User CRUD" which is blocked by "Auth middleware"
+            # Navigate to "User CRUD" in Todo (col 2, index 2) — blocked by "Auth middleware"
+            await pilot.press("right", "right")
+            await pilot.pause()
             await pilot.press("down", "down")
             await pilot.pause()
             focused = app.focused
@@ -1309,7 +1321,7 @@ class TestBoardSelectModal:
 
         conn = get_connection(db_path)
         board2 = service.create_board(conn, "Second Board")
-        service.create_column(conn, board2.id, "Backlog", position=0)
+        service.create_status(conn, board2.id, "Backlog")
         conn.close()
 
         app = StickyNotesApp(db_path=db_path)
@@ -1455,7 +1467,7 @@ class TestProjectSelectModal:
         conn = get_connection(db_path)
         proj = service.create_project(conn, ids["board_id"], "mid-only")
         service.create_task(
-            conn, ids["board_id"], "Mid task", ids["column_ids"]["in_progress"],
+            conn, ids["board_id"], "Mid task", ids["status_ids"]["in_progress"],
             project_id=proj.id, priority=1,
         )
         conn.close()
@@ -1526,7 +1538,7 @@ class TestProjectSelectModal:
 
         conn = get_connection(db_path)
         board2 = service.create_board(conn, "Other")
-        service.create_column(conn, board2.id, "Backlog", position=0)
+        service.create_status(conn, board2.id, "Backlog")
         conn.close()
 
         app = StickyNotesApp(db_path=db_path)
@@ -1650,7 +1662,7 @@ class TestAllTasksScreen:
             assert isinstance(app.screen, AllTasksScreen)
             await pilot.press("c")
             await pilot.pause()
-            assert isinstance(app.screen, ColumnFilterModal)
+            assert isinstance(app.screen, StatusFilterModal)
 
     async def test_column_filter_escape_no_change(
         self, seeded_tui_db: tuple[Path, dict]
@@ -1664,7 +1676,7 @@ class TestAllTasksScreen:
             assert len(app.screen.query(TaskCard)) == 8
             await pilot.press("c")
             await pilot.pause()
-            assert isinstance(app.screen, ColumnFilterModal)
+            assert isinstance(app.screen, StatusFilterModal)
             await pilot.press("escape")
             await pilot.pause()
             assert isinstance(app.screen, AllTasksScreen)
@@ -1683,10 +1695,8 @@ class TestAllTasksScreen:
             assert len(app.screen.query(TaskCard)) == 8
             await pilot.press("c")
             await pilot.pause()
-            assert isinstance(app.screen, ColumnFilterModal)
-            # Done is the third column (index 2) — navigate down twice
-            await pilot.press("down", "down")
-            await pilot.pause()
+            assert isinstance(app.screen, StatusFilterModal)
+            # Done is the first status (index 0) alphabetically — no navigation needed
             # Toggle it off with space
             await pilot.press("space")
             await pilot.pause()
@@ -1707,10 +1717,8 @@ class TestAllTasksScreen:
             await _wait_for_board(pilot)
             await pilot.press("a")
             await pilot.pause()
-            # Deselect Done
+            # Deselect Done (index 0 alphabetically — no navigation needed)
             await pilot.press("c")
-            await pilot.pause()
-            await pilot.press("down", "down")
             await pilot.pause()
             await pilot.press("space")
             await pilot.pause()
@@ -1721,9 +1729,7 @@ class TestAllTasksScreen:
             # Reopen and reselect Done
             await pilot.press("c")
             await pilot.pause()
-            assert isinstance(app.screen, ColumnFilterModal)
-            await pilot.press("down", "down")
-            await pilot.pause()
+            assert isinstance(app.screen, StatusFilterModal)
             await pilot.press("space")
             await pilot.pause()
             await pilot.press("enter")
@@ -1740,7 +1746,7 @@ class TestAllTasksScreen:
 
         conn = get_connection(db_path)
         board2 = service.create_board(conn, "Other")
-        service.create_column(conn, board2.id, "Backlog", position=0)
+        service.create_status(conn, board2.id, "Backlog")
         conn.close()
 
         app = StickyNotesApp(db_path=db_path)
@@ -1760,7 +1766,7 @@ class TestAllTasksScreen:
             await pilot.press("enter")
             await pilot.pause()
             await pilot.pause()
-            assert screen._column_filter_ids is not None
+            assert screen._status_filter_ids is not None
             # Switch board
             await pilot.press("b")
             await pilot.pause()
@@ -1770,7 +1776,7 @@ class TestAllTasksScreen:
             await pilot.pause()
             await pilot.pause()
             # Column filter should be reset
-            assert screen._column_filter_ids is None
+            assert screen._status_filter_ids is None
 
 
 # ---- Move task to board modal ----
@@ -1786,12 +1792,12 @@ def _seed_two_boards(tmp_path: Path) -> tuple[Path, dict]:
     ids = seed_board(c, db_path=db_path)
     # Second board with columns
     ops = service.create_board(c, "Ops")
-    ops_backlog = service.create_column(c, ops.id, "Backlog", position=0)
-    ops_doing = service.create_column(c, ops.id, "Doing", position=1)
+    ops_backlog = service.create_status(c, ops.id, "Backlog")
+    ops_doing = service.create_status(c, ops.id, "Doing")
     ops_proj = service.create_project(c, ops.id, "infra")
     c.close()
     ids["ops_board_id"] = ops.id
-    ids["ops_column_ids"] = {"backlog": ops_backlog.id, "doing": ops_doing.id}
+    ids["ops_status_ids"] = {"backlog": ops_backlog.id, "doing": ops_doing.id}
     ids["ops_project_id"] = ops_proj.id
     return db_path, ids
 

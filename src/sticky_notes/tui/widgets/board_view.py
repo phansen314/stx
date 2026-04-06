@@ -10,7 +10,7 @@ from textual.widgets import Static
 
 from sticky_notes import service
 from sticky_notes.active_board import get_active_board_id, set_active_board_id
-from sticky_notes.models import Column, Task, TaskFilter
+from sticky_notes.models import Status, Task, TaskFilter
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.widgets.column_widget import ColumnWidget
 from sticky_notes.tui.widgets.task_card import TaskCard
@@ -26,8 +26,8 @@ class Direction(StrEnum):
     RIGHT = "right"
 
 
-class ColumnSlot(NamedTuple):
-    column: Column
+class StatusSlot(NamedTuple):
+    status: Status
     tasks: tuple[Task, ...]
 
 
@@ -51,8 +51,8 @@ class BoardView(Vertical):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._columns: list[ColumnSlot] = []
-        self._col_idx: int = 0
+        self._statuses: list[StatusSlot] = []
+        self._status_idx: int = 0
         self._task_idx: int = 0
         self._pending_focus_task_id: int | None = None
         self._board_id: int | None = None
@@ -61,7 +61,7 @@ class BoardView(Vertical):
 
     @property
     def _has_cards(self) -> bool:
-        return any(slot.tasks for slot in self._columns)
+        return any(slot.tasks for slot in self._statuses)
 
     @property
     def typed_app(self) -> StickyNotesApp:
@@ -71,7 +71,7 @@ class BoardView(Vertical):
     def focused_position(self) -> tuple[int, int] | None:
         if not self._has_cards:
             return None
-        return (self._col_idx, self._task_idx)
+        return (self._status_idx, self._task_idx)
 
     def on_mount(self) -> None:
         self._load_board()
@@ -101,7 +101,7 @@ class BoardView(Vertical):
 
         self._board_id = get_active_board_id(db_path)
         if self._board_id is None:
-            self._columns = []
+            self._statuses = []
             self.mount(Static("No active board", id="no-board-message"))
             return
 
@@ -114,14 +114,23 @@ class BoardView(Vertical):
             project_label = "All Projects"
         self._header_text = f"{board_name} > {project_label}"
 
-        columns = service.list_columns(conn, self._board_id)
-        if not columns:
-            self._columns = []
+        statuses = service.list_statuses(conn, self._board_id)
+        if not statuses:
+            self._statuses = []
             self.mount(
                 Static(self._header_text, id="board-header"),
-                Static("No columns on this board", id="no-columns-message"),
+                Static("No statuses on this board", id="no-columns-message"),
             )
             return
+
+        # Apply config.status_order: known IDs first (in order), rest alphabetically
+        order = config.status_order
+        if order:
+            order_map = {sid: i for i, sid in enumerate(order)}
+            statuses = tuple(sorted(
+                statuses,
+                key=lambda s: (0 if s.id in order_map else 1, order_map.get(s.id, 0), s.name, s.id),
+            ))
 
         task_filter = TaskFilter(
             include_archived=config.show_archived,
@@ -131,18 +140,18 @@ class BoardView(Vertical):
             conn, self._board_id, task_filter=task_filter
         )
 
-        tasks_by_column: dict[int, list[Task]] = {col.id: [] for col in columns}
+        tasks_by_status: dict[int, list[Task]] = {s.id: [] for s in statuses}
         for task in tasks:
-            if task.column_id in tasks_by_column:
-                tasks_by_column[task.column_id].append(task)
+            if task.status_id in tasks_by_status:
+                tasks_by_status[task.status_id].append(task)
 
-        self._columns = [
-            ColumnSlot(col, tuple(tasks_by_column[col.id])) for col in columns
+        self._statuses = [
+            StatusSlot(s, tuple(tasks_by_status[s.id])) for s in statuses
         ]
 
         self._mount_from_model()
 
-        self._col_idx = 0
+        self._status_idx = 0
         self._task_idx = 0
         if self._has_cards:
             if self._pending_focus_task_id is not None:
@@ -156,7 +165,7 @@ class BoardView(Vertical):
         self.mount(
             Static(self._header_text, id="board-header"),
             Horizontal(
-                *[ColumnWidget(slot.column, slot.tasks) for slot in self._columns],
+                *[ColumnWidget(slot.status, slot.tasks) for slot in self._statuses],
                 id="columns-container",
             ),
         )
@@ -185,62 +194,62 @@ class BoardView(Vertical):
         return list(col.query(TaskCard))
 
     def _focus_current(self) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
-        self._col_idx = min(self._col_idx, len(self._columns) - 1)
+        self._status_idx = min(self._status_idx, len(self._statuses) - 1)
         # If current column is empty, search for first non-empty column
-        if not self._columns[self._col_idx].tasks:
+        if not self._statuses[self._status_idx].tasks:
             found = False
-            for candidate in range(self._col_idx + 1, len(self._columns)):
-                if self._columns[candidate].tasks:
-                    self._col_idx = candidate
+            for candidate in range(self._status_idx + 1, len(self._statuses)):
+                if self._statuses[candidate].tasks:
+                    self._status_idx = candidate
                     found = True
                     break
             if not found:
-                for candidate in range(self._col_idx - 1, -1, -1):
-                    if self._columns[candidate].tasks:
-                        self._col_idx = candidate
+                for candidate in range(self._status_idx - 1, -1, -1):
+                    if self._statuses[candidate].tasks:
+                        self._status_idx = candidate
                         found = True
                         break
             if not found:
                 self.focus()
                 return
-        tasks = self._columns[self._col_idx].tasks
+        tasks = self._statuses[self._status_idx].tasks
         self._task_idx = min(self._task_idx, len(tasks) - 1)
         columns = self._get_columns()
-        self._get_cards(columns[self._col_idx])[self._task_idx].focus()
+        self._get_cards(columns[self._status_idx])[self._task_idx].focus()
 
     def _cursor_up(self) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
         if self._task_idx > 0:
             self._task_idx -= 1
             self._focus_current()
 
     def _cursor_down(self) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
-        if self._task_idx < len(self._columns[self._col_idx].tasks) - 1:
+        if self._task_idx < len(self._statuses[self._status_idx].tasks) - 1:
             self._task_idx += 1
             self._focus_current()
 
     def _cursor_left(self) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
-        for candidate in range(self._col_idx - 1, -1, -1):
-            if self._columns[candidate].tasks:
-                self._col_idx = candidate
-                self._task_idx = min(self._task_idx, len(self._columns[candidate].tasks) - 1)
+        for candidate in range(self._status_idx - 1, -1, -1):
+            if self._statuses[candidate].tasks:
+                self._status_idx = candidate
+                self._task_idx = min(self._task_idx, len(self._statuses[candidate].tasks) - 1)
                 self._focus_current()
                 return
 
     def _cursor_right(self) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
-        for candidate in range(self._col_idx + 1, len(self._columns)):
-            if self._columns[candidate].tasks:
-                self._col_idx = candidate
-                self._task_idx = min(self._task_idx, len(self._columns[candidate].tasks) - 1)
+        for candidate in range(self._status_idx + 1, len(self._statuses)):
+            if self._statuses[candidate].tasks:
+                self._status_idx = candidate
+                self._task_idx = min(self._task_idx, len(self._statuses[candidate].tasks) - 1)
                 self._focus_current()
                 return
 
@@ -259,32 +268,32 @@ class BoardView(Vertical):
         self._load_board()
 
     async def _move_task(self, delta: int) -> None:
-        if not self._columns:
+        if not self._statuses:
             return
 
-        target_col_idx = self._col_idx + delta
-        if target_col_idx < 0 or target_col_idx >= len(self._columns):
+        target_col_idx = self._status_idx + delta
+        if target_col_idx < 0 or target_col_idx >= len(self._statuses):
             return
 
-        source_tasks = self._columns[self._col_idx].tasks
+        source_tasks = self._statuses[self._status_idx].tasks
         if not source_tasks:
             return
 
         task_id = source_tasks[self._task_idx].id
-        target_column_id = self._columns[target_col_idx].column.id
-        position = len(self._columns[target_col_idx].tasks)
+        target_status_id = self._statuses[target_col_idx].status.id
+        position = len(self._statuses[target_col_idx].tasks)
 
         conn = self.typed_app.conn
-        service.move_task(conn, task_id, target_column_id, position, "tui")
+        service.move_task(conn, task_id, target_status_id, position, "tui")
 
         await self.reload(focus_task_id=task_id)
 
     def _sync_indices_from_task_id(self, task_id: int) -> bool:
         """Update _col_idx/_task_idx to match the given task_id. Returns True if found."""
-        for col_idx, slot in enumerate(self._columns):
+        for col_idx, slot in enumerate(self._statuses):
             for task_idx, task in enumerate(slot.tasks):
                 if task.id == task_id:
-                    self._col_idx = col_idx
+                    self._status_idx = col_idx
                     self._task_idx = task_idx
                     return True
         return False
@@ -298,17 +307,17 @@ class BoardView(Vertical):
 
     def action_create_task(self) -> None:
         self._reset_refresh_timer()
-        if not self._columns:
+        if not self._statuses:
             return
         from sticky_notes.tui.screens.task_form import TaskFormModal
 
-        col = self._columns[self._col_idx].column
+        status = self._statuses[self._status_idx].status
         self.typed_app.push_screen(
             TaskFormModal(
                 self.typed_app.conn,
                 self._board_id,
                 mode="create",
-                column_id=col.id,
+                status_id=status.id,
                 default_priority=self.typed_app.config.default_priority,
             ),
             callback=self._handle_create,
@@ -321,7 +330,7 @@ class BoardView(Vertical):
             self.typed_app.conn,
             board_id=self._board_id,
             title=result["title"],
-            column_id=result["column_id"],
+            status_id=result["status_id"],
             description=result.get("description"),
             priority=result.get("priority", 1),
             due_date=result.get("due_date"),
@@ -409,7 +418,7 @@ class BoardView(Vertical):
                 self.typed_app.conn,
                 task_id,
                 result["target_board_id"],
-                result["target_column_id"],
+                result["target_status_id"],
                 project_id=result.get("project_id"),
                 source="tui",
             )
@@ -440,7 +449,7 @@ class BoardView(Vertical):
         service.update_task(self.typed_app.conn, task_id, {"archived": True}, "tui")
         # Find the next task to focus: prefer same position in same column,
         # clamping down if we archived the last task in the column.
-        col_tasks = self._columns[self._col_idx].tasks
+        col_tasks = self._statuses[self._status_idx].tasks
         remaining = [t for t in col_tasks if t.id != task_id]
         if remaining:
             # Clamp to last task if we were at the end

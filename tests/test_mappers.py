@@ -8,7 +8,7 @@ import pytest
 
 from helpers import (
     insert_board,
-    insert_column,
+    insert_status,
     insert_project,
     insert_task,
     insert_task_dependency,
@@ -20,7 +20,7 @@ from sticky_notes.mappers import (
     group_to_ref,
     project_to_detail,
     row_to_board,
-    row_to_column,
+    row_to_status,
     row_to_project,
     row_to_task,
     row_to_task_history,
@@ -30,10 +30,10 @@ from sticky_notes.mappers import (
 )
 from sticky_notes.models import (
     Board,
-    Column,
+    Status,
     Group,
     NewBoard,
-    NewColumn,
+    NewStatus,
     NewProject,
     NewTask,
     NewTaskHistory,
@@ -52,7 +52,7 @@ class FullSeed(NamedTuple):
     conn: sqlite3.Connection
     board_id: int
     project_id: int
-    column_id: int
+    status_id: int
     task1_id: int
     task2_id: int
     history_id: int
@@ -64,11 +64,11 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
     with transaction(conn):
         board_id = insert_board(conn)
         project_id = insert_project(conn, board_id)
-        column_id = insert_column(conn, board_id)
+        status_id = insert_status(conn, board_id)
         task1_id = insert_task(
-            conn, board_id, "task1", column_id, project_id, priority=5,
+            conn, board_id, "task1", status_id, project_id, priority=5,
         )
-        task2_id = insert_task(conn, board_id, "task2", column_id, priority=3)
+        task2_id = insert_task(conn, board_id, "task2", status_id, priority=3)
         insert_task_dependency(conn, task1_id, task2_id)
         history_id = insert_task_history(
             conn, task1_id, field="title", old_value="old",
@@ -78,7 +78,7 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
         conn=conn,
         board_id=board_id,
         project_id=project_id,
-        column_id=column_id,
+        status_id=status_id,
         task1_id=task1_id,
         task2_id=task2_id,
         history_id=history_id,
@@ -113,32 +113,31 @@ class TestRowToBoard:
         assert board.archived is True
 
 
-class TestRowToColumn:
+class TestRowToStatus:
     def test_maps_row(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn)
-            col_id = insert_column(conn, board_id)
+            col_id = insert_status(conn, board_id)
         row = conn.execute(
-            "SELECT * FROM columns WHERE id = ?", (col_id,),
+            "SELECT * FROM statuses WHERE id = ?", (col_id,),
         ).fetchone()
-        col = row_to_column(row)
-        assert isinstance(col, Column)
+        col = row_to_status(row)
+        assert isinstance(col, Status)
         assert col.id == col_id
         assert col.name == "todo"
-        assert col.position == 0
         assert col.archived is False
         assert isinstance(col.created_at, int)
 
     def test_archived_is_bool(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn)
-            col_id = insert_column(conn, board_id)
+            col_id = insert_status(conn, board_id)
         with transaction(conn):
-            conn.execute("UPDATE columns SET archived = 1 WHERE id = ?", (col_id,))
+            conn.execute("UPDATE statuses SET archived = 1 WHERE id = ?", (col_id,))
         row = conn.execute(
-            "SELECT * FROM columns WHERE id = ?", (col_id,),
+            "SELECT * FROM statuses WHERE id = ?", (col_id,),
         ).fetchone()
-        col = row_to_column(row)
+        col = row_to_status(row)
         assert col.archived is True
 
 
@@ -227,13 +226,13 @@ class TestShallowFields:
     def test_extracts_all_fields(self) -> None:
         task = Task(
             id=1, board_id=1, title="t", project_id=None, description=None,
-            column_id=1, priority=1, due_date=None, position=0,
+            status_id=1, priority=1, due_date=None, position=0,
             archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
         )
         fields = shallow_fields(task, Task)
         assert set(fields.keys()) == {
             "id", "board_id", "title", "project_id", "description",
-            "column_id", "priority", "due_date", "position",
+            "status_id", "priority", "due_date", "position",
             "archived", "created_at", "start_date", "finish_date", "group_id",
         }
 
@@ -253,13 +252,13 @@ class TestShallowFields:
 def _task() -> Task:
     return Task(
         id=1, board_id=1, title="t", project_id=None, description=None,
-        column_id=1, priority=1, due_date=None, position=0,
+        status_id=1, priority=1, due_date=None, position=0,
         archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
     )
 
 
-def _col() -> Column:
-    return Column(id=1, board_id=1, name="todo", position=0, archived=False, created_at=0)
+def _status() -> Status:
+    return Status(id=1, board_id=1, name="todo", archived=False, created_at=0)
 
 
 def _group() -> Group:
@@ -288,19 +287,19 @@ class TestTaskToListItem:
 
 class TestTaskToDetail:
     def test_creates_detail(self) -> None:
-        col = _col()
+        status = _status()
         detail = task_to_detail(
-            _task(), column=col, project=None, group=None,
+            _task(), status=status, project=None, group=None,
             blocked_by=(), blocks=(), history=(),
         )
         assert isinstance(detail, TaskDetail)
-        assert detail.column == col
+        assert detail.status == status
         assert detail.title == "t"
 
     def test_task_fields_copied(self) -> None:
         task = _task()
         detail = task_to_detail(
-            task, column=_col(), project=None, group=None,
+            task, status=_status(), project=None, group=None,
             blocked_by=(), blocks=(), history=(),
         )
         for f in dataclasses.fields(task):
@@ -308,7 +307,7 @@ class TestTaskToDetail:
 
     def test_hydrated_defaults(self) -> None:
         detail = task_to_detail(
-            _task(), column=_col(), project=None, group=None,
+            _task(), status=_status(), project=None, group=None,
             blocked_by=(), blocks=(), history=(),
         )
         assert detail.project is None
@@ -318,8 +317,8 @@ class TestTaskToDetail:
         assert detail.history == ()
         assert detail.tags == ()
 
-    def test_column_is_required_at_construction(self) -> None:
-        """column is a plain required field — omitting it is a TypeError from Python."""
+    def test_status_is_required_at_construction(self) -> None:
+        """status is a plain required field — omitting it is a TypeError from Python."""
         with pytest.raises(TypeError):
             task_to_detail(  # type: ignore[call-arg]
                 _task(), project=None, group=None,
@@ -388,12 +387,12 @@ class TestPreInsertDefaults:
         proj = NewProject(board_id=1, name="p")
         assert proj.description is None
 
-    def test_new_column_defaults(self) -> None:
-        col = NewColumn(board_id=1, name="c")
-        assert col.position == 0
+    def test_new_status_defaults(self) -> None:
+        col = NewStatus(board_id=1, name="c")
+        assert col.name == "c"
 
     def test_new_task_defaults(self) -> None:
-        task = NewTask(board_id=1, title="t", column_id=1)
+        task = NewTask(board_id=1, title="t", status_id=1)
         assert task.project_id is None
         assert task.description is None
         assert task.priority == 1
@@ -442,12 +441,12 @@ class TestNewProjectFieldsMatchSchema:
         assert new_proj_fields | db_defaulted == schema_cols
 
 
-class TestNewColumnFieldsMatchSchema:
-    def test_new_column_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "columns")
+class TestNewStatusFieldsMatchSchema:
+    def test_new_status_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "statuses")
         db_defaulted = {"id", "created_at", "archived"}
-        new_col_fields = {f.name for f in dataclasses.fields(NewColumn)}
-        assert new_col_fields | db_defaulted == schema_cols
+        new_status_fields = {f.name for f in dataclasses.fields(NewStatus)}
+        assert new_status_fields | db_defaulted == schema_cols
 
 
 class TestNewTaskFieldsMatchSchema:
@@ -483,11 +482,11 @@ class TestPersistedProjectFieldsMatchSchema:
         assert proj_fields == schema_cols
 
 
-class TestPersistedColumnFieldsMatchSchema:
-    def test_column_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "columns")
-        col_fields = {f.name for f in dataclasses.fields(Column)}
-        assert col_fields == schema_cols
+class TestPersistedStatusFieldsMatchSchema:
+    def test_status_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "statuses")
+        status_fields = {f.name for f in dataclasses.fields(Status)}
+        assert status_fields == schema_cols
 
 
 class TestPersistedTaskFieldsMatchSchema:
@@ -519,13 +518,13 @@ class TestMapperFieldCoverage:
         actual = {f.name for f in dataclasses.fields(board) if getattr(board, f.name) is not None}
         assert actual == expected
 
-    def test_row_to_column_populates_all_fields(self, conn: sqlite3.Connection) -> None:
+    def test_row_to_status_populates_all_fields(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             board_id = insert_board(conn)
-            col_id = insert_column(conn, board_id)
-        row = conn.execute("SELECT * FROM columns WHERE id = ?", (col_id,)).fetchone()
-        col = row_to_column(row)
-        expected = {f.name for f in dataclasses.fields(Column)}
+            col_id = insert_status(conn, board_id)
+        row = conn.execute("SELECT * FROM statuses WHERE id = ?", (col_id,)).fetchone()
+        col = row_to_status(row)
+        expected = {f.name for f in dataclasses.fields(Status)}
         actual = {f.name for f in dataclasses.fields(col) if getattr(col, f.name) is not None}
         assert actual == expected
 

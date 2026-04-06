@@ -9,7 +9,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 
 from sticky_notes import service
-from sticky_notes.models import Board, Column, Project
+from sticky_notes.models import Board, Project, Status
 
 
 class MoveTaskModal(ModalScreen[dict | None]):
@@ -74,12 +74,12 @@ class MoveTaskModal(ModalScreen[dict | None]):
         self._current_board_id = current_board_id
         self._task_id = task_id
         self._boards: tuple[Board, ...] = service.list_boards(conn)
-        self._columns: tuple[Column, ...] = service.list_columns(conn, current_board_id)
+        self._statuses: tuple[Status, ...] = service.list_statuses(conn, current_board_id)
         self._projects: tuple[Project, ...] = service.list_projects(conn, current_board_id)
 
     def compose(self) -> ComposeResult:
         board_options = [(b.name, b.id) for b in self._boards]
-        column_options = [(c.name, c.id) for c in self._columns]
+        status_options = [(s.name, s.id) for s in self._statuses]
         project_options = [(p.name, p.id) for p in self._projects]
 
         with VerticalScroll(id="move-container"):
@@ -94,11 +94,11 @@ class MoveTaskModal(ModalScreen[dict | None]):
                 classes="form-field",
             )
 
-            yield Static("Column", classes="form-label")
+            yield Static("Status", classes="form-label")
             yield Select(
-                column_options,
-                value=self._columns[0].id if self._columns else Select.BLANK,
-                id="move-select-column",
+                status_options,
+                value=self._statuses[0].id if self._statuses else Select.BLANK,
+                id="move-select-status",
                 allow_blank=False,
                 classes="form-field",
             )
@@ -123,11 +123,11 @@ class MoveTaskModal(ModalScreen[dict | None]):
         if not isinstance(new_board_id, int):
             return
 
-        new_columns = service.list_columns(self._conn, new_board_id)
-        col_select = self.query_one("#move-select-column", Select)
-        col_select.set_options([(c.name, c.id) for c in new_columns])
-        if new_columns:
-            col_select.value = new_columns[0].id
+        new_statuses = service.list_statuses(self._conn, new_board_id)
+        status_select = self.query_one("#move-select-status", Select)
+        status_select.set_options([(s.name, s.id) for s in new_statuses])
+        if new_statuses:
+            status_select.value = new_statuses[0].id
 
         new_projects = service.list_projects(self._conn, new_board_id)
         proj_select = self.query_one("#move-select-project", Select)
@@ -153,10 +153,10 @@ class MoveTaskModal(ModalScreen[dict | None]):
             self.query_one("#move-error", Static).update("Task is already on this board")
             return
 
-        col_select = self.query_one("#move-select-column", Select)
-        selected_col = col_select.value
-        if not isinstance(selected_col, int):
-            self.query_one("#move-error", Static).update("Select a column")
+        status_select = self.query_one("#move-select-status", Select)
+        selected_status = status_select.value
+        if not isinstance(selected_status, int):
+            self.query_one("#move-error", Static).update("Select a status")
             return
 
         proj_select = self.query_one("#move-select-project", Select)
@@ -164,7 +164,7 @@ class MoveTaskModal(ModalScreen[dict | None]):
 
         self.dismiss({
             "target_board_id": selected_board,
-            "target_column_id": selected_col,
+            "target_status_id": selected_status,
             "project_id": project_id,
         })
 
