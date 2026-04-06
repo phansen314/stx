@@ -8,7 +8,7 @@ from typing import Generator
 
 DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "sticky-notes" / "sticky-notes.db"
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def read_schema() -> str:
