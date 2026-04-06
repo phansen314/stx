@@ -3,16 +3,11 @@ name: sticky-notes
 description: Use when the user wants to persist a kanban board, todo list, or multi-step plan across sessions via the local `todo` CLI — creating boards, tracking tasks, moving columns, querying board state, workflow tracking, or running `todo context`/`todo export`. Not for ad-hoc in-chat task decomposition.
 ---
 
-# Sticky Notes
-
-Manage tasks, kanban boards, and multi-step plans via the `todo` CLI.
 *If `todo` is not found, ask the user how they'd like to install it.*
 
 ## Core Workflow
 
-Minimal path for any plan-tracking scenario:
-
-1. **Pick or create a board.** `board create` auto-switches the active board. Pass `--columns` to seed columns in the same call — otherwise the board starts empty and `todo task create` will fail until columns exist. The active board is tracked at `<db-dir>/active-board` (default: `~/.local/share/sticky-notes/active-board`); override per-command with `-b/--board`:
+1. **Pick or create a board.** Pass `--columns` to seed columns — otherwise the board starts empty and `todo task create` will fail. Override active board per-command with `-b/--board`:
    ```sh
    todo board create work --columns "Backlog,In Progress,Done"
    ```
@@ -35,12 +30,10 @@ Minimal path for any plan-tracking scenario:
 
 ### Optional capabilities
 
-Reach for these when the scenario calls for them:
-
 - **Projects** — group related tasks: `todo project create "Q2 launch"`, then pass `--project "Q2 launch"` to `todo task create`.
 - **Dependencies** — `todo dep create task-0003 task-0001` means task-0003 is blocked by task-0001.
 - **Tags** — board-scoped, repeatable: `todo task create "..." -c Backlog --tag backend --tag ci`. Auto-created if missing.
-- **Groups** — project-scoped hierarchies: `todo group create`, then `todo group assign <task> <group>`.
+- **Groups** — project-scoped hierarchies: `todo group create "Sprint 1" --project "Q2 launch"` (`--project` is required), then `todo group assign <task> <group>`.
 - **Cross-board move** — use `todo task transfer` (not `todo task mv`): `todo task transfer task-0001 --board ops --column Backlog`.
 - **Audit trail** — `todo task log <task>` shows full field-change history.
 - **Milestone snapshot** — `todo export` (all boards, Mermaid dep graphs); `-o FILE` writes to disk.

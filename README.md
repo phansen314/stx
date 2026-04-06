@@ -151,6 +151,8 @@ Load the plugin directly from your local clone:
 claude --plugin-dir /path/to/sticky-notes
 ```
 
+After editing skill/hook/command files, run `/reload-plugins` in-session to pick up changes — no restart or `version` bump needed.
+
 ### Permanent install
 
 Add this repo as a marketplace, then install the plugin:
@@ -159,6 +161,16 @@ Add this repo as a marketplace, then install the plugin:
 /plugin marketplace add phansen314/sticky-notes
 /plugin install sticky-notes@sticky-notes
 ```
+
+### Updating
+
+Pull the latest published version:
+
+```
+/plugin update sticky-notes@sticky-notes
+```
+
+Updates are gated on the `version` field in `.claude-plugin/plugin.json` — users won't see new commits until the author bumps the version and pushes.
 
 If `todo` is not found, the skill will ask how you'd like to install it. Install the CLI with `pip install -e .` (see Quick Start) or directly from GitHub:
 

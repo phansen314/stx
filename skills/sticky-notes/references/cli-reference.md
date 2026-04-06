@@ -315,6 +315,19 @@ todo --json export -o /tmp/snapshot.md
 
 ---
 
+## `todo info`
+
+Read-only diagnostic. Lists the DB file, WAL/SHM sidecars, and active-board pointer — each with an existence marker. No flags.
+
+```sh
+todo info
+todo --json info
+```
+
+JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_board": "...", "existing": [...], "reset_command": "python scripts/wipe_db.py"}`
+
+---
+
 ## `todo tui [--db PATH]`
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
