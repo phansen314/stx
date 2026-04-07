@@ -31,10 +31,10 @@ service pre-validates them to provide clear messages.
 
 These constraints are also enforced by composite foreign keys in the schema.
 
-- **A task's column must belong to the same board as the task.**
-- **A task's project must belong to the same board as the task.**
-- **A dependency can only link tasks on the same board.**
-- **A tag can only be applied to a task on the same board.**
+- **A task's status must belong to the same workspace as the task.**
+- **A task's project must belong to the same workspace as the task.**
+- **A dependency can only link tasks on the same workspace.**
+- **A tag can only be applied to a task on the same workspace.**
 - **A group's parent must belong to the same project.** (Also enforced by composite FK.)
 - **A task's group must belong to the same project as the task.**
 
@@ -49,7 +49,7 @@ service layer translates `IntegrityError` into human-readable messages.
 
 - **Duplicate dependencies are pre-checked** in the service layer before the insert.
 - **Duplicate tag assignments** rely on the DB `PRIMARY KEY` constraint — no service pre-check; the `IntegrityError` is translated to a clear message.
-- **Duplicate active names** for boards, columns, projects, tasks, tags, and groups
+- **Duplicate active names** for workspaces, statuses, projects, tasks, tags, and groups
   are rejected with entity-specific messages (via error translation).
 
 ## Archival Safety (service-only)
@@ -67,32 +67,32 @@ Active entities cannot point to archived parents:
 
 ### Archiving parents with active children is forbidden
 
-- **A column cannot be archived while it has active tasks.** Move or archive the
+- **A status cannot be archived while it has active tasks.** Move or archive the
   tasks first.
 - **A project cannot be archived while it has active tasks or groups.** Archive
   children first.
-- **A board cannot be archived while it has active columns, projects, or tasks.**
+- **A workspace cannot be archived while it has active statuses, projects, or tasks.**
 
 ### Mutations on archived entities are allowed
 
 Editing, tagging, adding dependencies to, or otherwise mutating an archived entity
 is permitted. This supports fixing metadata before unarchiving.
 
-## Cross-Board Move Preconditions (service-only)
+## Cross-Workspace Move Preconditions (service-only)
 
-- **An archived task cannot be moved to another board.**
-- **A task with dependencies cannot be moved to another board.** Remove all
+- **An archived task cannot be moved to another workspace.**
+- **A task with dependencies cannot be moved to another workspace.** Remove all
   dependencies (both directions) first.
-- **The target column and project must belong to the target board.**
-- **The target column and project must not be archived.**
+- **The target status and project must belong to the target workspace.**
+- **The target status and project must not be archived.**
 
-### Cross-board move side effects
+### Cross-workspace move side effects
 
-A cross-board move creates a new task on the target board and archives the
+A cross-workspace move creates a new task on the target workspace and archives the
 original. The following are NOT carried over:
 
 - **Tags** — migrated by name: active tags from the original task are re-applied
-  to the new task using the target board's tags (created on the target board if
+  to the new task using the target workspace's tags (created on the target workspace if
   they don't exist yet).
 - **group_id** — not carried over; groups are project-scoped and the task may
   have a new or no project on the target board.
@@ -100,7 +100,7 @@ original. The following are NOT carried over:
 
 ## Automatic Behaviors (service-only)
 
-- **`tag_task` auto-creates the tag** on the board if it doesn't already exist,
+- **`tag_task` auto-creates the tag** on the workspace if it doesn't already exist,
   then applies it to the task. Calling `tag_task` is the only way to tag a task;
   it never fails with "tag not found."
 - **Assigning a task to a group auto-sets the task's project** if the task has no
@@ -113,7 +113,7 @@ original. The following are NOT carried over:
 
 - **Task field changes are recorded as history entries** when a value actually
   changes (no-op updates are skipped). The set of trackable fields is fixed by
-  the `TaskField` enum: title, description, column, project, priority, due date,
+  the `TaskField` enum: title, description, status, project, priority, due date,
   position, archived, start date, finish date, group.
 - **Each history entry records old value, new value, and source** (e.g., "cli",
   "tui").
@@ -129,12 +129,12 @@ Translated error categories:
 
 | SQLite error | Translated message |
 |---|---|
-| `UNIQUE constraint failed: boards.name` | "a board with this name already exists" |
-| `UNIQUE constraint failed: projects.*` | "a project with this name already exists on this board" |
-| `UNIQUE constraint failed: columns.*` | "a column with this name already exists on this board" |
-| `UNIQUE constraint failed: tags.*` | "a tag with this name already exists on this board" |
+| `UNIQUE constraint failed: workspaces.name` | "a workspace with this name already exists" |
+| `UNIQUE constraint failed: projects.*` | "a project with this name already exists on this workspace" |
+| `UNIQUE constraint failed: statuses.*` | "a status with this name already exists on this workspace" |
+| `UNIQUE constraint failed: tags.*` | "a tag with this name already exists on this workspace" |
 | `UNIQUE constraint failed: groups.*` | "a group with this title already exists in this project" |
-| `UNIQUE constraint failed: tasks.*` | "a task with this title already exists on this board" |
+| `UNIQUE constraint failed: tasks.*` | "a task with this title already exists on this workspace" |
 | `UNIQUE constraint failed: task_dependencies.*` | "this dependency already exists" |
 | `UNIQUE constraint failed: task_tags.*` | "task already has this tag" |
 | `FOREIGN KEY constraint failed` | context-specific or generic FK message |

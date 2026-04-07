@@ -4,10 +4,10 @@ import sqlite3
 
 import pytest
 
-from sticky_notes.models import Board, Status, Group, Project, Tag, Task, TaskFilter, TaskHistory
+from sticky_notes.models import Workspace, Status, Group, Project, Tag, Task, TaskFilter, TaskHistory
 from sticky_notes.service_models import (
-    BoardContext,
-    BoardListView,
+    WorkspaceContext,
+    WorkspaceListView,
     GroupDetail,
     GroupRef,
     ProjectDetail,
@@ -15,7 +15,7 @@ from sticky_notes.service_models import (
     TaskListItem,
 )
 from tests.helpers import (
-    insert_board as _raw_insert_board,
+    insert_workspace as _raw_insert_workspace,
     insert_status as _raw_insert_status,
     insert_group as _raw_insert_group,
     insert_project as _raw_insert_project,
@@ -38,38 +38,38 @@ def _commit(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def insert_board(conn: sqlite3.Connection, name: str = "board1") -> int:
-    rid = _raw_insert_board(conn, name)
+def insert_workspace(conn: sqlite3.Connection, name: str = "board1") -> int:
+    rid = _raw_insert_workspace(conn, name)
     _commit(conn)
     return rid
 
 
 def insert_status(
-    conn: sqlite3.Connection, board_id: int, name: str = "todo"
+    conn: sqlite3.Connection, workspace_id: int, name: str = "todo"
 ) -> int:
-    rid = _raw_insert_status(conn, board_id, name)
+    rid = _raw_insert_status(conn, workspace_id, name)
     _commit(conn)
     return rid
 
 
 def insert_project(
-    conn: sqlite3.Connection, board_id: int, name: str = "proj1", description: str | None = "desc"
+    conn: sqlite3.Connection, workspace_id: int, name: str = "proj1", description: str | None = "desc"
 ) -> int:
-    rid = _raw_insert_project(conn, board_id, name, description)
+    rid = _raw_insert_project(conn, workspace_id, name, description)
     _commit(conn)
     return rid
 
 
 def insert_task(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     title: str,
     status_id: int,
     project_id: int | None = None,
     priority: int = 1,
     due_date: int | None = None,
 ) -> int:
-    rid = _raw_insert_task(conn, board_id, title, status_id, project_id, priority, due_date)
+    rid = _raw_insert_task(conn, workspace_id, title, status_id, project_id, priority, due_date)
     _commit(conn)
     return rid
 
@@ -94,9 +94,9 @@ def insert_group(
 
 
 def insert_tag(
-    conn: sqlite3.Connection, board_id: int, name: str = "tag1"
+    conn: sqlite3.Connection, workspace_id: int, name: str = "tag1"
 ) -> int:
-    rid = _raw_insert_tag(conn, board_id, name)
+    rid = _raw_insert_tag(conn, workspace_id, name)
     _commit(conn)
     return rid
 
@@ -108,76 +108,76 @@ def insert_task_tag(
     _commit(conn)
 
 
-# ---- Board ----
+# ---- Workspace ----
 
 
-class TestBoardService:
+class TestWorkspaceService:
     def test_create(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
-        assert isinstance(board, Board)
+        board = service.create_workspace(conn, "work")
+        assert isinstance(board, Workspace)
         assert board.name == "work"
         assert board.archived is False
 
     def test_create_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        service.create_board(conn, "work")
-        with pytest.raises(ValueError, match="board with this name already exists"):
-            service.create_board(conn, "work")
+        service.create_workspace(conn, "work")
+        with pytest.raises(ValueError, match="workspace with this name already exists"):
+            service.create_workspace(conn, "work")
 
     def test_get(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
-        assert service.get_board(conn, board.id) == board
+        board = service.create_workspace(conn, "work")
+        assert service.get_workspace(conn, board.id) == board
 
     def test_get_missing_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
-            service.get_board(conn, 999)
+            service.get_workspace(conn, 999)
 
     def test_get_by_name(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
-        assert service.get_board_by_name(conn, "work") == board
+        board = service.create_workspace(conn, "work")
+        assert service.get_workspace_by_name(conn, "work") == board
 
     def test_get_by_name_missing_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
-            service.get_board_by_name(conn, "nope")
+            service.get_workspace_by_name(conn, "nope")
 
     def test_list(self, conn: sqlite3.Connection) -> None:
-        b1 = service.create_board(conn, "a")
-        b2 = service.create_board(conn, "b")
-        assert service.list_boards(conn) == (b1, b2)
+        b1 = service.create_workspace(conn, "a")
+        b2 = service.create_workspace(conn, "b")
+        assert service.list_workspaces(conn) == (b1, b2)
 
     def test_list_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        b1 = service.create_board(conn, "a")
-        service.create_board(conn, "b")
-        service.update_board(conn, b1.id, {"archived": True})
-        active = service.list_boards(conn)
+        b1 = service.create_workspace(conn, "a")
+        service.create_workspace(conn, "b")
+        service.update_workspace(conn, b1.id, {"archived": True})
+        active = service.list_workspaces(conn)
         assert len(active) == 1
         assert active[0].name == "b"
 
     def test_list_include_archived(self, conn: sqlite3.Connection) -> None:
-        service.create_board(conn, "a")
-        service.create_board(conn, "b")
-        service.update_board(conn, 1, {"archived": True})
-        assert len(service.list_boards(conn, include_archived=True)) == 2
+        service.create_workspace(conn, "a")
+        service.create_workspace(conn, "b")
+        service.update_workspace(conn, 1, {"archived": True})
+        assert len(service.list_workspaces(conn, include_archived=True)) == 2
 
     def test_update(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "old")
-        updated = service.update_board(conn, board.id, {"name": "new"})
+        board = service.create_workspace(conn, "old")
+        updated = service.update_workspace(conn, board.id, {"name": "new"})
         assert updated.name == "new"
 
     def test_archive_board_with_active_statuses_blocked(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
+        board = service.create_workspace(conn, "work")
         service.create_status(conn, board.id, "todo")
         with pytest.raises(ValueError, match="active status"):
-            service.update_board(conn, board.id, {"archived": True})
+            service.update_workspace(conn, board.id, {"archived": True})
 
     def test_archive_board_with_active_projects_blocked(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
+        board = service.create_workspace(conn, "work")
         service.create_project(conn, board.id, "proj")
         with pytest.raises(ValueError, match="active project"):
-            service.update_board(conn, board.id, {"archived": True})
+            service.update_workspace(conn, board.id, {"archived": True})
 
     def test_archive_empty_board_allowed(self, conn: sqlite3.Connection) -> None:
-        board = service.create_board(conn, "work")
-        updated = service.update_board(conn, board.id, {"archived": True})
+        board = service.create_workspace(conn, "work")
+        updated = service.update_workspace(conn, board.id, {"archived": True})
         assert updated.archived is True
 
 
@@ -186,13 +186,13 @@ class TestBoardService:
 
 class TestStatusService:
     def test_create(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "todo")
         assert isinstance(col, Status)
         assert col.name == "todo"
 
     def test_get(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "todo")
         assert service.get_status(conn, col.id) == col
 
@@ -201,37 +201,37 @@ class TestStatusService:
             service.get_status(conn, 999)
 
     def test_list_statuses_ordered_alphabetically(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         service.create_status(conn, bid, "todo")
         service.create_status(conn, bid, "done")
         statuses = service.list_statuses(conn, bid)
         assert [s.name for s in statuses] == ["done", "todo"]
 
     def test_get_by_name(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "todo")
         assert service.get_status_by_name(conn, bid, "todo") == col
 
     def test_get_by_name_missing_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError, match="not found"):
             service.get_status_by_name(conn, bid, "nope")
 
     def test_update(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "old")
         updated = service.update_status(conn, col.id, {"name": "new"})
         assert updated.name == "new"
 
     def test_archive_status_with_active_tasks_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         insert_task(conn, bid, "task", cid)
         with pytest.raises(ValueError, match="active task"):
             service.update_status(conn, cid, {"archived": True})
 
     def test_archive_empty_status_allowed(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "empty")
         updated = service.update_status(conn, col.id, {"archived": True})
         assert updated.archived is True
@@ -242,14 +242,14 @@ class TestStatusService:
 
 class TestProjectService:
     def test_create(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha", description="desc")
         assert isinstance(proj, Project)
         assert proj.name == "alpha"
         assert proj.description == "desc"
 
     def test_get(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha")
         assert service.get_project(conn, proj.id) == proj
 
@@ -258,17 +258,17 @@ class TestProjectService:
             service.get_project(conn, 999)
 
     def test_get_by_name(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha")
         assert service.get_project_by_name(conn, bid, "alpha") == proj
 
     def test_get_by_name_missing_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError, match="not found"):
             service.get_project_by_name(conn, bid, "nope")
 
     def test_get_detail(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         proj = service.create_project(conn, bid, "alpha")
         insert_task(conn, bid, "t1", cid, project_id=proj.id)
@@ -278,19 +278,19 @@ class TestProjectService:
         assert detail.tasks[0].title == "t1"
 
     def test_list(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         p1 = service.create_project(conn, bid, "a")
         p2 = service.create_project(conn, bid, "b")
         assert service.list_projects(conn, bid) == (p1, p2)
 
     def test_update(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "old")
         updated = service.update_project(conn, proj.id, {"name": "new"})
         assert updated.name == "new"
 
     def test_archive_project_with_active_tasks_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         proj = service.create_project(conn, bid, "alpha")
         insert_task(conn, bid, "task", cid, project_id=proj.id)
@@ -298,14 +298,14 @@ class TestProjectService:
             service.update_project(conn, proj.id, {"archived": True})
 
     def test_archive_project_with_active_groups_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha")
         insert_group(conn, proj.id, "g1")
         with pytest.raises(ValueError, match="active group"):
             service.update_project(conn, proj.id, {"archived": True})
 
     def test_archive_empty_project_allowed(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha")
         updated = service.update_project(conn, proj.id, {"archived": True})
         assert updated.archived is True
@@ -316,7 +316,7 @@ class TestProjectService:
 
 class TestTaskService:
     def test_create(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "do stuff", cid)
         assert isinstance(task, Task)
@@ -324,14 +324,14 @@ class TestTaskService:
         assert task.priority == 1
 
     def test_create_with_tags_auto_creates(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid, tags=("bug", "urgent"))
         detail = service.get_task_detail(conn, task.id)
         assert {t.name for t in detail.tags} == {"bug", "urgent"}
 
     def test_create_with_tags_reuses_existing(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         existing = service.create_tag(conn, bid, "bug")
         task = service.create_task(conn, bid, "t", cid, tags=("bug",))
@@ -340,7 +340,7 @@ class TestTaskService:
         assert detail.tags[0].id == existing.id
 
     def test_get(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "do stuff", cid)
         assert service.get_task(conn, task.id) == task
@@ -350,7 +350,7 @@ class TestTaskService:
             service.get_task(conn, 999)
 
     def test_get_by_title(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "Find me", cid)
         found = service.get_task_by_title(conn, bid, "Find me")
@@ -358,12 +358,12 @@ class TestTaskService:
         assert found.title == "Find me"
 
     def test_get_by_title_missing_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError, match="not found"):
             service.get_task_by_title(conn, bid, "nonexistent")
 
     def test_resolve_task_id_numeric(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "a", cid)
         assert service.resolve_task_id(conn, bid, str(task.id)) == task.id
@@ -371,25 +371,25 @@ class TestTaskService:
         assert service.resolve_task_id(conn, bid, f"#{task.id}") == task.id
 
     def test_resolve_task_id_title_fallback(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "Find me", cid)
         assert service.resolve_task_id(conn, bid, "Find me", by_title=True) == task.id
 
     def test_resolve_task_id_no_title_without_flag_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         service.create_task(conn, bid, "Find me", cid)
         with pytest.raises(LookupError):
             service.resolve_task_id(conn, bid, "Find me")
 
     def test_resolve_task_id_missing_title_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError):
             service.resolve_task_id(conn, bid, "nonexistent task", by_title=True)
 
     def test_get_detail(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid)
         tid = insert_task(conn, bid, "a", cid, project_id=pid)
@@ -400,14 +400,14 @@ class TestTaskService:
         assert detail.project.id == pid
 
     def test_get_detail_no_project(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "a", cid)
         detail = service.get_task_detail(conn, tid)
         assert detail.project is None
 
     def test_get_task_detail_hydrates_group(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid)
         grp = service.create_group(conn, pid, "Auth")
@@ -419,14 +419,14 @@ class TestTaskService:
         assert detail.group.title == "Auth"
 
     def test_get_task_detail_group_none_when_unassigned(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "a", cid)
         detail = service.get_task_detail(conn, tid)
         assert detail.group is None
 
     def test_get_detail_with_deps_and_history(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "blocker", cid)
         t2 = insert_task(conn, bid, "blocked", cid)
@@ -438,7 +438,7 @@ class TestTaskService:
         assert len(detail.history) == 1
 
     def test_list(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         service.create_task(conn, bid, "a", cid)
         service.create_task(conn, bid, "b", cid)
@@ -446,14 +446,14 @@ class TestTaskService:
         assert len(tasks) == 2
 
     def test_update(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid)
         updated = service.update_task(conn, task.id, {"title": "new"}, "tui")
         assert updated.title == "new"
 
     def test_update_with_add_and_remove_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid, tags=("bug",))
         service.update_task(
@@ -465,7 +465,7 @@ class TestTaskService:
         assert {t.name for t in detail.tags} == {"urgent"}
 
     def test_update_tag_only_no_field_changes(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         updated = service.update_task(conn, task.id, {}, "cli", add_tags=("bug",))
@@ -474,7 +474,7 @@ class TestTaskService:
         assert {t.name for t in detail.tags} == {"bug"}
 
     def test_update_with_no_changes_is_noop(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         result = service.update_task(conn, task.id, {}, "cli")
@@ -482,7 +482,7 @@ class TestTaskService:
         assert result.title == task.title
 
     def test_update_remove_nonexistent_tag_rolls_back(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid)
         with pytest.raises(LookupError):
@@ -494,7 +494,7 @@ class TestTaskService:
         assert service.get_task(conn, task.id).title == "old"
 
     def test_update_records_history(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid)
         service.update_task(conn, task.id, {"title": "new"}, "tui")
@@ -506,7 +506,7 @@ class TestTaskService:
         assert history[0].source == "tui"
 
     def test_update_skips_history_when_unchanged(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "same", cid)
         service.update_task(conn, task.id, {"title": "same"}, "tui")
@@ -516,7 +516,7 @@ class TestTaskService:
     def test_update_multiple_fields_records_multiple_history(
         self, conn: sqlite3.Connection
     ) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid, priority=1)
         service.update_task(conn, task.id, {"title": "new", "priority": 5}, "mcp")
@@ -526,7 +526,7 @@ class TestTaskService:
         assert fields == {"title", "priority"}
 
     def test_update_none_old_value_stored_as_null(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         assert task.description is None
@@ -537,7 +537,7 @@ class TestTaskService:
         assert history[0].new_value == "added"
 
     def test_move_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "done")
         task = service.create_task(conn, bid, "t", c1)
@@ -547,7 +547,7 @@ class TestTaskService:
         assert any(h.field == "status_id" for h in history)
 
     def test_move_task_with_project_change(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "doing")
         pid = insert_project(conn, bid, "alpha")
@@ -560,7 +560,7 @@ class TestTaskService:
         assert any(h.field == "status_id" for h in history)
 
     def test_move_task_project_unchanged_by_default(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "doing")
         pid = insert_project(conn, bid, "alpha")
@@ -571,85 +571,85 @@ class TestTaskService:
     # ---- Pre-validation ----
 
     def test_create_priority_too_low(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         with pytest.raises(ValueError, match="priority"):
             service.create_task(conn, bid, "t", cid, priority=0)
 
     def test_create_priority_too_high(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         with pytest.raises(ValueError, match="priority"):
             service.create_task(conn, bid, "t", cid, priority=6)
 
     def test_create_negative_position(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         with pytest.raises(ValueError, match="position"):
             service.create_task(conn, bid, "t", cid, position=-1)
 
     def test_create_finish_before_start(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         with pytest.raises(ValueError, match="finish date"):
             service.create_task(conn, bid, "t", cid, start_date=200, finish_date=100)
 
     def test_update_priority_out_of_range(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         with pytest.raises(ValueError, match="priority"):
             service.update_task(conn, task.id, {"priority": 0}, "test")
 
     def test_update_negative_position(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         with pytest.raises(ValueError, match="position"):
             service.update_task(conn, task.id, {"position": -1}, "test")
 
     def test_update_finish_before_existing_start(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid, start_date=200)
         with pytest.raises(ValueError, match="finish date"):
             service.update_task(conn, task.id, {"finish_date": 100}, "test")
 
     def test_update_start_after_existing_finish(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid, finish_date=100)
         with pytest.raises(ValueError, match="finish date"):
             service.update_task(conn, task.id, {"start_date": 200}, "test")
 
     def test_update_status_wrong_board(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
-        b2 = insert_board(conn, "board2")
+        b1 = insert_workspace(conn, "board1")
+        b2 = insert_workspace(conn, "board2")
         c1 = insert_status(conn, b1, "todo")
         c2 = insert_status(conn, b2, "done")
         task = service.create_task(conn, b1, "t", c1)
-        with pytest.raises(ValueError, match="board"):
+        with pytest.raises(ValueError, match="workspace"):
             service.update_task(conn, task.id, {"status_id": c2}, "test")
 
     def test_update_project_wrong_board(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
-        b2 = insert_board(conn, "board2")
+        b1 = insert_workspace(conn, "board1")
+        b2 = insert_workspace(conn, "board2")
         c1 = insert_status(conn, b1)
         insert_status(conn, b2)
         p2 = insert_project(conn, b2, "proj2")
         task = service.create_task(conn, b1, "t", c1)
-        with pytest.raises(ValueError, match="board"):
+        with pytest.raises(ValueError, match="workspace"):
             service.update_task(conn, task.id, {"project_id": p2}, "test")
 
     def test_update_status_not_found(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         with pytest.raises(LookupError, match="status 999"):
             service.update_task(conn, task.id, {"status_id": 999}, "test")
 
     def test_update_project_not_found(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         with pytest.raises(LookupError, match="project 999"):
@@ -658,7 +658,7 @@ class TestTaskService:
     # ---- Archival safety ----
 
     def test_move_to_archived_status_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "active")
         c2 = insert_status(conn, bid, "archived")
         service.update_status(conn, c2, {"archived": True})
@@ -667,7 +667,7 @@ class TestTaskService:
             service.update_task(conn, task.id, {"status_id": c2}, "test")
 
     def test_assign_to_archived_project_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         proj = service.create_project(conn, bid, "old")
         service.update_project(conn, proj.id, {"archived": True})
@@ -676,7 +676,7 @@ class TestTaskService:
             service.update_task(conn, task.id, {"project_id": proj.id}, "test")
 
     def test_assign_to_archived_group_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid)
         gid = insert_group(conn, pid, "g1")
@@ -691,7 +691,7 @@ class TestTaskService:
 
 class TestDependencyService:
     def test_add(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -700,7 +700,7 @@ class TestDependencyService:
         assert any(t.id == t1 for t in detail.blocked_by)
 
     def test_remove(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -710,24 +710,24 @@ class TestDependencyService:
         assert detail.blocked_by == ()
 
     def test_add_self_ref_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "a", cid)
         with pytest.raises(ValueError, match="cannot depend on itself"):
             service.add_dependency(conn, tid, tid)
 
     def test_add_cross_board_raises(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
-        b2 = insert_board(conn, "board2")
+        b1 = insert_workspace(conn, "board1")
+        b2 = insert_workspace(conn, "board2")
         c1 = insert_status(conn, b1)
         c2 = insert_status(conn, b2)
         t1 = insert_task(conn, b1, "a", c1)
         t2 = insert_task(conn, b2, "b", c2)
-        with pytest.raises(ValueError, match="same board"):
+        with pytest.raises(ValueError, match="same workspace"):
             service.add_dependency(conn, t2, t1)
 
     def test_cycle_direct(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -736,7 +736,7 @@ class TestDependencyService:
             service.add_dependency(conn, t2, t1)  # t2 -> t1 would cycle
 
     def test_cycle_transitive(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -747,7 +747,7 @@ class TestDependencyService:
             service.add_dependency(conn, t3, t1)  # t3 -> t1 would cycle
 
     def test_non_cycle_allowed(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -759,7 +759,7 @@ class TestDependencyService:
         assert {t.id for t in detail.blocked_by} == {t2, t3}
 
     def test_add_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
@@ -773,7 +773,7 @@ class TestDependencyService:
 
 class TestGroupDependencyService:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int, int]:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         pid = insert_project(conn, bid)
         g1 = insert_group(conn, pid, "g1")
         g2 = insert_group(conn, pid, "g2")
@@ -822,7 +822,7 @@ class TestGroupDependencyService:
 
 class TestHistoryService:
     def test_list(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         service.update_task(conn, task.id, {"title": "new"}, "tui")
@@ -839,7 +839,7 @@ class TestHistoryService:
 
 class TestListTasksFiltered:
     def test_no_filter_returns_all(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         insert_task(conn, bid, "a", cid)
         insert_task(conn, bid, "b", cid)
@@ -848,7 +848,7 @@ class TestListTasksFiltered:
         assert all(isinstance(t, Task) for t in tasks)
 
     def test_filter_by_status(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "done")
         insert_task(conn, bid, "a", c1)
@@ -858,7 +858,7 @@ class TestListTasksFiltered:
         assert tasks[0].title == "a"
 
     def test_filter_by_priority(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         insert_task(conn, bid, "low", cid, priority=1)
         insert_task(conn, bid, "high", cid, priority=3)
@@ -867,7 +867,7 @@ class TestListTasksFiltered:
         assert tasks[0].title == "high"
 
     def test_filter_by_search(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         insert_task(conn, bid, "Fix login", cid)
         insert_task(conn, bid, "Add search", cid)
@@ -879,17 +879,17 @@ class TestListTasksFiltered:
 # ---- Move task to board ----
 
 
-class TestMoveTaskToBoard:
+class TestMoveTaskToWorkspace:
     def test_happy_path(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "my task", c1, priority=3)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
-        new = service.move_task_to_board(conn, tid, b2, c2, source="test")
-        assert new.board_id == b2
+        new = service.move_task_to_workspace(conn, tid, b2, c2, source="test")
+        assert new.workspace_id == b2
         assert new.status_id == c2
         assert new.title == "my task"
         assert new.priority == 3
@@ -899,103 +899,103 @@ class TestMoveTaskToBoard:
         assert old.archived == 1
 
     def test_with_project(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "task", c1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
         pid = insert_project(conn, b2, "proj")
 
-        new = service.move_task_to_board(conn, tid, b2, c2, project_id=pid, source="test")
+        new = service.move_task_to_workspace(conn, tid, b2, c2, project_id=pid, source="test")
         assert new.project_id == pid
 
     def test_title_conflict(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         insert_task(conn, b1, "dup", c1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
         insert_task(conn, b2, "dup", c2)
 
         t1 = service.get_task_by_title(conn, b1, "dup")
         with pytest.raises(ValueError, match="task with this title already exists"):
-            service.move_task_to_board(conn, t1.id, b2, c2, source="test")
+            service.move_task_to_workspace(conn, t1.id, b2, c2, source="test")
 
     def test_blocked_by_deps(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "blocker", cid)
         t2 = insert_task(conn, bid, "blocked", cid)
         insert_task_dependency(conn, t2, t1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
         with pytest.raises(ValueError, match="dependencies"):
-            service.move_task_to_board(conn, t2, b2, c2, source="test")
+            service.move_task_to_workspace(conn, t2, b2, c2, source="test")
 
     def test_blocks_deps(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "blocker", cid)
         t2 = insert_task(conn, bid, "blocked", cid)
         insert_task_dependency(conn, t2, t1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
         with pytest.raises(ValueError, match="dependencies"):
-            service.move_task_to_board(conn, t1, b2, c2, source="test")
+            service.move_task_to_workspace(conn, t1, b2, c2, source="test")
 
     def test_archived_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "task", cid)
         service.update_task(conn, tid, {"archived": True}, source="test")
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
         with pytest.raises(ValueError, match="archived"):
-            service.move_task_to_board(conn, tid, b2, c2, source="test")
+            service.move_task_to_workspace(conn, tid, b2, c2, source="test")
 
     def test_status_wrong_board(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "task", c1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         insert_status(conn, b2, "backlog")
 
         with pytest.raises(ValueError, match="does not belong"):
-            service.move_task_to_board(conn, tid, b2, c1, source="test")
+            service.move_task_to_workspace(conn, tid, b2, c1, source="test")
 
     def test_project_wrong_board(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         p1 = insert_project(conn, b1, "proj1")
         tid = insert_task(conn, b1, "task", c1)
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
         with pytest.raises(ValueError, match="does not belong"):
-            service.move_task_to_board(conn, tid, b2, c2, project_id=p1, source="test")
+            service.move_task_to_workspace(conn, tid, b2, c2, project_id=p1, source="test")
 
     def test_copies_dates(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
+        b1 = insert_workspace(conn, "board1")
         c1 = insert_status(conn, b1, "todo")
         task = service.create_task(
             conn, b1, "dated", c1,
             due_date=1700000000, start_date=1699000000, finish_date=1701000000,
         )
 
-        b2 = insert_board(conn, "board2")
+        b2 = insert_workspace(conn, "board2")
         c2 = insert_status(conn, b2, "backlog")
 
-        new = service.move_task_to_board(conn, task.id, b2, c2, source="test")
+        new = service.move_task_to_workspace(conn, task.id, b2, c2, source="test")
         assert new.due_date == 1700000000
         assert new.start_date == 1699000000
         assert new.finish_date == 1701000000
@@ -1003,64 +1003,64 @@ class TestMoveTaskToBoard:
     # ---- preview_move_to_board ----
 
     def test_preview_clean(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "b1")
+        b1 = insert_workspace(conn, "b1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "t", c1)
-        b2 = insert_board(conn, "b2")
+        b2 = insert_workspace(conn, "b2")
         c2 = insert_status(conn, b2, "backlog")
-        preview = service.preview_move_to_board(conn, tid, b2, c2)
+        preview = service.preview_move_to_workspace(conn, tid, b2, c2)
         assert preview.can_move is True
         assert preview.blocking_reason is None
         assert preview.dependency_ids == ()
         assert preview.is_archived is False
         assert preview.task_title == "t"
-        assert preview.source_board_id == b1
-        assert preview.target_board_id == b2
+        assert preview.source_workspace_id == b1
+        assert preview.target_workspace_id == b2
         assert preview.target_status_id == c2
 
     def test_preview_with_deps(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "blocker", cid)
         t2 = insert_task(conn, bid, "blocked", cid)
         insert_task_dependency(conn, t2, t1)
-        b2 = insert_board(conn, "b2")
+        b2 = insert_workspace(conn, "b2")
         c2 = insert_status(conn, b2, "backlog")
-        preview = service.preview_move_to_board(conn, t2, b2, c2)
+        preview = service.preview_move_to_workspace(conn, t2, b2, c2)
         assert preview.can_move is False
         assert preview.dependency_ids == (t1,)
         assert "dependencies" in preview.blocking_reason
 
     def test_preview_archived_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         service.update_task(conn, tid, {"archived": True}, source="test")
-        b2 = insert_board(conn, "b2")
+        b2 = insert_workspace(conn, "b2")
         c2 = insert_status(conn, b2, "backlog")
-        preview = service.preview_move_to_board(conn, tid, b2, c2)
+        preview = service.preview_move_to_workspace(conn, tid, b2, c2)
         assert preview.can_move is False
         assert preview.is_archived is True
         assert "archived" in preview.blocking_reason
 
     def test_preview_invalid_target_status(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "b1")
+        b1 = insert_workspace(conn, "b1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "t", c1)
-        b2 = insert_board(conn, "b2")
+        b2 = insert_workspace(conn, "b2")
         # Pass c1 (belongs to b1) as if it were on b2
-        preview = service.preview_move_to_board(conn, tid, b2, c1)
+        preview = service.preview_move_to_workspace(conn, tid, b2, c1)
         assert preview.can_move is False
         assert "does not belong" in preview.blocking_reason
 
     def test_preview_does_not_mutate(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "b1")
+        b1 = insert_workspace(conn, "b1")
         c1 = insert_status(conn, b1, "todo")
         tid = insert_task(conn, b1, "t", c1)
-        b2 = insert_board(conn, "b2")
+        b2 = insert_workspace(conn, "b2")
         c2 = insert_status(conn, b2, "backlog")
         before = service.get_task(conn, tid)
-        service.preview_move_to_board(conn, tid, b2, c2)
+        service.preview_move_to_workspace(conn, tid, b2, c2)
         after = service.get_task(conn, tid)
         assert before == after
 
@@ -1071,7 +1071,7 @@ class TestMoveTaskToBoard:
 class TestGroupService:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
         """Returns (board_id, status_id, project_id)."""
-        bid = insert_board(conn, "board1")
+        bid = insert_workspace(conn, "board1")
         cid = insert_status(conn, bid, "todo")
         pid = insert_project(conn, bid, "proj1")
         return bid, cid, pid
@@ -1329,7 +1329,7 @@ class TestGroupService:
 
 class TestTaskGroupAssignment:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
-        bid = insert_board(conn, "board1")
+        bid = insert_workspace(conn, "board1")
         cid = insert_status(conn, bid, "todo")
         pid = insert_project(conn, bid, "proj1")
         return bid, cid, pid
@@ -1368,7 +1368,7 @@ class TestTaskGroupAssignment:
 
 class TestTaskGroupHistory:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
-        bid = insert_board(conn, "board1")
+        bid = insert_workspace(conn, "board1")
         cid = insert_status(conn, bid, "todo")
         pid = insert_project(conn, bid, "proj1")
         return bid, cid, pid
@@ -1483,21 +1483,21 @@ class TestTaskGroupHistory:
 
 class TestTagService:
     def test_create_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
         assert isinstance(tag, Tag)
         assert tag.name == "bug"
-        assert tag.board_id == bid
+        assert tag.workspace_id == bid
         assert tag.archived is False
 
     def test_create_tag_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         service.create_tag(conn, bid, "bug")
         with pytest.raises(ValueError, match="tag with this name already exists"):
             service.create_tag(conn, bid, "bug")
 
     def test_get_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
         assert service.get_tag(conn, tag.id) == tag
 
@@ -1506,17 +1506,17 @@ class TestTagService:
             service.get_tag(conn, 999)
 
     def test_get_tag_by_name(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
         assert service.get_tag_by_name(conn, bid, "bug") == tag
 
     def test_get_tag_by_name_missing_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError, match="not found"):
             service.get_tag_by_name(conn, bid, "nope")
 
     def test_list_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         service.create_tag(conn, bid, "bug")
         service.create_tag(conn, bid, "feature")
         tags = service.list_tags(conn, bid)
@@ -1525,7 +1525,7 @@ class TestTagService:
         assert tags[1].name == "feature"
 
     def test_list_tags_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "old")
         service.create_tag(conn, bid, "active")
         service.archive_tag(conn, tag.id)
@@ -1534,7 +1534,7 @@ class TestTagService:
         assert tags[0].name == "active"
 
     def test_list_tags_include_archived(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "old")
         service.create_tag(conn, bid, "active")
         service.archive_tag(conn, tag.id)
@@ -1542,7 +1542,7 @@ class TestTagService:
         assert len(tags) == 2
 
     def test_archive_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
         archived = service.archive_tag(conn, tag.id)
         assert archived.archived is True
@@ -1552,16 +1552,16 @@ class TestTagService:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from sticky_notes import repository as repo_mod
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
         def raise_integrity(*args, **kwargs):
-            raise sqlite3.IntegrityError("UNIQUE constraint failed: tags.board_id, tags.name")
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: tags.workspace_id, tags.name")
         monkeypatch.setattr(repo_mod, "update_tag", raise_integrity)
         with pytest.raises(ValueError):
             service.archive_tag(conn, tag.id)
 
     def test_tag_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         tag = service.tag_task(conn, tid, "bug", bid)
@@ -1571,7 +1571,7 @@ class TestTagService:
         assert any(t.id == tag.id for t in detail.tags)
 
     def test_tag_task_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         service.tag_task(conn, tid, "bug", bid)
@@ -1579,36 +1579,36 @@ class TestTagService:
             service.tag_task(conn, tid, "bug", bid)
 
     def test_tag_task_creates_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         tag = service.tag_task(conn, tid, "newlabel", bid)
         assert service.get_tag_by_name(conn, bid, "newlabel") == tag
 
     def test_tag_task_missing_task_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         with pytest.raises(LookupError):
             service.tag_task(conn, 9999, "bug", bid)
 
     def test_tag_task_cross_board_raises(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
-        b2 = insert_board(conn, "board2")
+        b1 = insert_workspace(conn, "board1")
+        b2 = insert_workspace(conn, "board2")
         c1 = insert_status(conn, b1)
         tid = insert_task(conn, b1, "t", c1)
-        with pytest.raises(ValueError, match="not board"):
+        with pytest.raises(ValueError, match="not workspace"):
             service.tag_task(conn, tid, "bug", b2)
 
     def test_untag_task_cross_board_raises(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, "board1")
-        b2 = insert_board(conn, "board2")
+        b1 = insert_workspace(conn, "board1")
+        b2 = insert_workspace(conn, "board2")
         c1 = insert_status(conn, b1)
         tid = insert_task(conn, b1, "t", c1)
         service.tag_task(conn, tid, "bug", b1)
-        with pytest.raises(ValueError, match="not board"):
+        with pytest.raises(ValueError, match="not workspace"):
             service.untag_task(conn, tid, "bug", b2)
 
     def test_untag_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         service.tag_task(conn, tid, "bug", bid)
@@ -1617,14 +1617,14 @@ class TestTagService:
         assert detail.tags == ()
 
     def test_untag_task_missing_tag_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         with pytest.raises(LookupError, match="not found"):
             service.untag_task(conn, tid, "nonexistent", bid)
 
     def test_untag_task_not_tagged_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         service.create_tag(conn, bid, "bug")
@@ -1632,13 +1632,13 @@ class TestTagService:
             service.untag_task(conn, tid, "bug", bid)
 
     def test_untag_task_missing_task_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         service.create_tag(conn, bid, "bug")
         with pytest.raises(LookupError, match="task 9999 not found"):
             service.untag_task(conn, 9999, "bug", bid)
 
     def test_get_task_detail_has_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "t", cid)
         tag_id = insert_tag(conn, bid, "bug")
@@ -1649,7 +1649,7 @@ class TestTagService:
         assert detail.tags[0].name == "bug"
 
     def test_list_tasks_filtered_by_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         insert_task(conn, bid, "b", cid)
@@ -1662,24 +1662,24 @@ class TestTagService:
         assert tasks[0].id == t1
 
 
-# ---- Board list view ----
+# ---- Workspace list view ----
 
 
-class TestGetBoardListView:
+class TestGetWorkspaceListView:
     def test_empty_board(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn, "empty")
-        view = service.get_board_list_view(conn, bid)
-        assert isinstance(view, BoardListView)
-        assert view.board.id == bid
-        assert view.board.name == "empty"
+        bid = insert_workspace(conn, "empty")
+        view = service.get_workspace_list_view(conn, bid)
+        assert isinstance(view, WorkspaceListView)
+        assert view.workspace.id == bid
+        assert view.workspace.name == "empty"
         assert view.statuses == ()
 
     def test_empty_statuses_render_as_empty_tuples(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "done")
         insert_task(conn, bid, "a", c1)
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         assert len(view.statuses) == 2
         # alphabetical: done(c2) first, then todo(c1)
         assert view.statuses[0].status.id == c2
@@ -1688,20 +1688,20 @@ class TestGetBoardListView:
         assert len(view.statuses[1].tasks) == 1
 
     def test_statuses_in_alphabetical_order(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c_done = insert_status(conn, bid, "done")
         c_todo = insert_status(conn, bid, "todo")
         c_wip = insert_status(conn, bid, "wip")
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         assert [c.status.id for c in view.statuses] == [c_done, c_todo, c_wip]
 
     def test_task_items_carry_project_name(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid, "proj-x")
         insert_task(conn, bid, "with-proj", cid, project_id=pid)
         insert_task(conn, bid, "no-proj", cid)
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         items = view.statuses[0].tasks
         by_title = {i.title: i for i in items}
         assert by_title["with-proj"].project_name == "proj-x"
@@ -1709,7 +1709,7 @@ class TestGetBoardListView:
         assert all(isinstance(i, TaskListItem) for i in items)
 
     def test_task_items_carry_tag_names(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t_tagged = insert_task(conn, bid, "tagged", cid)
         insert_task(conn, bid, "untagged", cid)
@@ -1717,7 +1717,7 @@ class TestGetBoardListView:
         urgent = insert_tag(conn, bid, "urgent")
         insert_task_tag(conn, t_tagged, bug)
         insert_task_tag(conn, t_tagged, urgent)
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         items = view.statuses[0].tasks
         by_title = {i.title: i for i in items}
         assert set(by_title["tagged"].tag_names) == {"bug", "urgent"}
@@ -1727,14 +1727,14 @@ class TestGetBoardListView:
         self, conn: sqlite3.Connection
     ) -> None:
         """Regression: the view should not do N+1 queries for project/tag names."""
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid, "p")
         tag = insert_tag(conn, bid, "t")
         for i in range(5):
             tid = insert_task(conn, bid, f"task-{i}", cid, project_id=pid)
             insert_task_tag(conn, tid, tag)
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         for item in view.statuses[0].tasks:
             assert item.project_name == "p"
             assert item.tag_names == ("t",)
@@ -1742,7 +1742,7 @@ class TestGetBoardListView:
     def test_include_archived_shows_archived_statuses(
         self, conn: sqlite3.Connection
     ) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c_active = insert_status(conn, bid, "active")
         c_arch = insert_status(conn, bid, "archived")
         insert_task(conn, bid, "a", c_active)
@@ -1752,10 +1752,10 @@ class TestGetBoardListView:
         service.update_task(conn, t_arch, {"archived": True}, source="test")
         service.update_status(conn, c_arch, {"archived": True})
         # default: archived status hidden; its (archived) task also hidden
-        view = service.get_board_list_view(conn, bid)
+        view = service.get_workspace_list_view(conn, bid)
         assert [c.status.id for c in view.statuses] == [c_active]
         # include_archived: archived status and its task appear
-        view_all = service.get_board_list_view(conn, bid, include_archived=True)
+        view_all = service.get_workspace_list_view(conn, bid, include_archived=True)
         cols_by_id = {c.status.id: c for c in view_all.statuses}
         assert c_active in cols_by_id
         assert c_arch in cols_by_id
@@ -1763,12 +1763,12 @@ class TestGetBoardListView:
         assert cols_by_id[c_arch].tasks[0].title == "arch-task"
 
     def test_filter_by_status_id(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         c_todo = insert_status(conn, bid, "todo")
         c_done = insert_status(conn, bid, "done")
         insert_task(conn, bid, "in-todo", c_todo)
         insert_task(conn, bid, "in-done", c_done)
-        view = service.get_board_list_view(conn, bid, status_id=c_todo)
+        view = service.get_workspace_list_view(conn, bid, status_id=c_todo)
         # All statuses still present in view skeleton, but only matching
         # tasks populate. Non-matching statuses have empty tasks.
         cols_by_id = {c.status.id: c for c in view.statuses}
@@ -1777,103 +1777,103 @@ class TestGetBoardListView:
         assert cols_by_id[c_done].tasks == ()
 
     def test_filter_by_project_id(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid, "myproj")
         insert_task(conn, bid, "in-proj", cid, project_id=pid)
         insert_task(conn, bid, "no-proj", cid)
-        view = service.get_board_list_view(conn, bid, project_id=pid)
+        view = service.get_workspace_list_view(conn, bid, project_id=pid)
         titles = [t.title for t in view.statuses[0].tasks]
         assert titles == ["in-proj"]
 
     def test_filter_by_tag_id(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "tagged", cid)
         insert_task(conn, bid, "untagged", cid)
         tag = insert_tag(conn, bid, "bug")
         insert_task_tag(conn, t1, tag)
-        view = service.get_board_list_view(conn, bid, tag_id=tag)
+        view = service.get_workspace_list_view(conn, bid, tag_id=tag)
         titles = [t.title for t in view.statuses[0].tasks]
         assert titles == ["tagged"]
 
     def test_filter_by_priority(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         insert_task(conn, bid, "low", cid, priority=1)
         insert_task(conn, bid, "high", cid, priority=5)
-        view = service.get_board_list_view(conn, bid, priority=5)
+        view = service.get_workspace_list_view(conn, bid, priority=5)
         titles = [t.title for t in view.statuses[0].tasks]
         assert titles == ["high"]
 
     def test_missing_board_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
-            service.get_board_list_view(conn, 9999)
+            service.get_workspace_list_view(conn, 9999)
 
 
-# ---- Board context ----
+# ---- Workspace context ----
 
 
-class TestGetBoardContext:
+class TestGetWorkspaceContext:
     def test_empty_board(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn, "ctx-board")
-        ctx = service.get_board_context(conn, bid)
-        assert isinstance(ctx, BoardContext)
-        assert ctx.view.board.id == bid
+        bid = insert_workspace(conn, "ctx-board")
+        ctx = service.get_workspace_context(conn, bid)
+        assert isinstance(ctx, WorkspaceContext)
+        assert ctx.view.workspace.id == bid
         assert ctx.projects == ()
         assert ctx.tags == ()
         assert ctx.groups == ()
 
     def test_includes_projects(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         insert_project(conn, bid, "alpha")
         insert_project(conn, bid, "beta")
-        ctx = service.get_board_context(conn, bid)
+        ctx = service.get_workspace_context(conn, bid)
         names = {p.name for p in ctx.projects}
         assert names == {"alpha", "beta"}
 
     def test_includes_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         insert_tag(conn, bid, "bug")
-        ctx = service.get_board_context(conn, bid)
+        ctx = service.get_workspace_context(conn, bid)
         assert len(ctx.tags) == 1
         assert ctx.tags[0].name == "bug"
 
     def test_includes_groups(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         pid = insert_project(conn, bid, "proj")
         grp = service.create_group(conn, pid, "sprint-1")
-        ctx = service.get_board_context(conn, bid)
+        ctx = service.get_workspace_context(conn, bid)
         assert len(ctx.groups) == 1
         assert ctx.groups[0].id == grp.id
         assert ctx.groups[0].title == "sprint-1"
 
     def test_groups_from_multiple_projects(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         p1 = insert_project(conn, bid, "p1")
         p2 = insert_project(conn, bid, "p2")
         service.create_group(conn, p1, "g1")
         service.create_group(conn, p2, "g2")
-        ctx = service.get_board_context(conn, bid)
+        ctx = service.get_workspace_context(conn, bid)
         assert len(ctx.groups) == 2
         titles = {g.title for g in ctx.groups}
         assert titles == {"g1", "g2"}
 
     def test_archived_excluded(self, conn: sqlite3.Connection) -> None:
-        bid = insert_board(conn)
+        bid = insert_workspace(conn)
         pid = insert_project(conn, bid, "proj")
         insert_tag(conn, bid, "tag1")
         service.create_group(conn, pid, "grp")
         # archive all three via raw SQL
         conn.execute("UPDATE projects SET archived=1 WHERE id=?", (pid,))
-        conn.execute("UPDATE tags SET archived=1 WHERE board_id=?", (bid,))
+        conn.execute("UPDATE tags SET archived=1 WHERE workspace_id=?", (bid,))
         conn.execute("UPDATE groups SET archived=1 WHERE project_id=?", (pid,))
         conn.commit()
-        ctx = service.get_board_context(conn, bid)
+        ctx = service.get_workspace_context(conn, bid)
         assert ctx.projects == ()
         assert ctx.tags == ()
         assert ctx.groups == ()
 
     def test_missing_board_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
-            service.get_board_context(conn, 9999)
+            service.get_workspace_context(conn, 9999)

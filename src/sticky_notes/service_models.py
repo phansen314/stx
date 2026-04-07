@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import Board, Group, Project, Status, Tag, Task, TaskHistory
+from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
 
 
 # ---- List view types ----
@@ -13,7 +13,7 @@ class TaskListItem:
     """Task fields plus resolved display names, for list rendering without
     extra lookups. Carries names, not full objects."""
     id: int
-    board_id: int
+    workspace_id: int
     title: str
     project_id: int | None
     description: str | None
@@ -46,21 +46,21 @@ class GroupRef:
 
 
 @dataclass(frozen=True)
-class BoardListStatus:
+class WorkspaceListStatus:
     status: Status
     tasks: tuple[TaskListItem, ...]
 
 
 @dataclass(frozen=True)
-class BoardListView:
-    board: Board
-    statuses: tuple[BoardListStatus, ...]
+class WorkspaceListView:
+    workspace: Workspace
+    statuses: tuple[WorkspaceListStatus, ...]
 
 
 @dataclass(frozen=True)
-class BoardContext:
-    """Aggregated board state for one-call session startup."""
-    view: BoardListView
+class WorkspaceContext:
+    """Aggregated workspace state for one-call session startup."""
+    view: WorkspaceListView
     projects: tuple[Project, ...]
     tags: tuple[Tag, ...]
     groups: tuple[GroupRef, ...]
@@ -72,7 +72,7 @@ class BoardContext:
 @dataclass(frozen=True)
 class TaskDetail:
     id: int
-    board_id: int
+    workspace_id: int
     title: str
     project_id: int | None
     description: str | None
@@ -97,7 +97,7 @@ class TaskDetail:
 @dataclass(frozen=True)
 class ProjectDetail:
     id: int
-    board_id: int
+    workspace_id: int
     name: str
     description: str | None
     archived: bool
@@ -123,11 +123,11 @@ class GroupDetail:
 
 
 @dataclass(frozen=True)
-class MoveToBoardPreview:
+class MoveToWorkspacePreview:
     task_id: int
     task_title: str
-    source_board_id: int
-    target_board_id: int
+    source_workspace_id: int
+    target_workspace_id: int
     target_status_id: int
     can_move: bool
     blocking_reason: str | None

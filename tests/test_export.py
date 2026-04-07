@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from helpers import (
-    insert_board,
+    insert_workspace,
     insert_status,
     insert_group,
     insert_project,
@@ -29,7 +29,7 @@ from helpers import insert_task_history
 def _seed_board(conn: sqlite3.Connection) -> int:
     """Create a board with columns, projects, tasks, and a dependency."""
     with transaction(conn):
-        bid = insert_board(conn, "Work")
+        bid = insert_workspace(conn, "Work")
         col_todo = insert_status(conn, bid, "Todo")
         col_done = insert_status(conn, bid, "Done")
         pid = insert_project(conn, bid, "Backend", description="API work")
@@ -49,13 +49,13 @@ class TestExportEmpty:
     def test_no_boards(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
         assert "# Sticky Notes Export" in md
-        assert "## Board" not in md
+        assert "## Workspace" not in md
 
     def test_archived_board_excluded(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "Old")
+            bid = insert_workspace(conn, "Old")
         with transaction(conn):
-            conn.execute("UPDATE boards SET archived = 1 WHERE id = ?", (bid,))
+            conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (bid,))
         md = export_markdown(conn)
         assert "Old" not in md
 
@@ -72,7 +72,7 @@ class TestExportFull:
 
     def test_board_heading(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert "## Board: Work" in md
+        assert "## Workspace: Work" in md
 
     def test_column_table(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
@@ -105,21 +105,21 @@ class TestExportEdgeCases:
     def test_empty_column_omitted_from_tasks_section(self, conn: sqlite3.Connection) -> None:
         """A column with zero tasks should not get a #### heading."""
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Empty")
         md = export_markdown(conn)
         assert "#### Empty" not in md
 
     def test_no_projects_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
         md = export_markdown(conn)
         assert "### Projects" not in md
 
     def test_no_deps_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Solo", col)
         md = export_markdown(conn)
@@ -128,7 +128,7 @@ class TestExportEdgeCases:
 
     def test_archived_tasks_excluded(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Hidden", col)
         with transaction(conn):
@@ -138,7 +138,7 @@ class TestExportEdgeCases:
 
     def test_project_with_no_description(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
             insert_project(conn, bid, "NoDesc", description=None)
         md = export_markdown(conn)
@@ -147,17 +147,17 @@ class TestExportEdgeCases:
     def test_multiple_boards(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             for name in ("Alpha", "Beta"):
-                bid = insert_board(conn, name)
+                bid = insert_workspace(conn, name)
                 insert_status(conn, bid, "Col")
         md = export_markdown(conn)
-        assert "## Board: Alpha" in md
-        assert "## Board: Beta" in md
+        assert "## Workspace: Alpha" in md
+        assert "## Workspace: Beta" in md
 
     def test_cross_board_deps_prevented(self, conn: sqlite3.Connection) -> None:
         """Composite FK prevents dependencies between tasks on different boards."""
         with transaction(conn):
-            b1 = insert_board(conn, "B1")
-            b2 = insert_board(conn, "B2")
+            b1 = insert_workspace(conn, "B1")
+            b2 = insert_workspace(conn, "B2")
             c1 = insert_status(conn, b1, "C")
             c2 = insert_status(conn, b2, "C")
             t1 = insert_task(conn, b1, "T1", c1)
@@ -170,7 +170,7 @@ class TestExportEdgeCases:
 class TestExportTags:
     def test_tags_section(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Fix bug", col)
             tag_id = insert_tag(conn, bid, "bug")
@@ -181,7 +181,7 @@ class TestExportTags:
 
     def test_tags_in_task_table(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             tid = insert_task(conn, bid, "Fix bug", col)
             tag_id = insert_tag(conn, bid, "bug")
@@ -191,7 +191,7 @@ class TestExportTags:
 
     def test_no_tags_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Task", col)
         md = export_markdown(conn)
@@ -201,7 +201,7 @@ class TestExportTags:
 class TestExportGroups:
     def test_groups_section_with_tasks(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             gid = insert_group(conn, pid, "Frontend")
@@ -214,7 +214,7 @@ class TestExportGroups:
 
     def test_nested_groups(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             parent = insert_group(conn, pid, "Frontend")
@@ -225,7 +225,7 @@ class TestExportGroups:
 
     def test_no_groups_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
             insert_project(conn, bid, "P")
         md = export_markdown(conn)
@@ -233,7 +233,7 @@ class TestExportGroups:
 
     def test_ungrouped_tasks_count(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             pid = insert_project(conn, bid, "P")
             insert_group(conn, pid, "G")
@@ -259,7 +259,7 @@ class TestMdEscape:
 class TestExportMdEscaping:
     def test_pipe_in_title_escaped(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "foo | bar", col)
         md = export_markdown(conn)
@@ -268,7 +268,7 @@ class TestExportMdEscaping:
 
     def test_newline_in_title_replaced(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "line1\nline2", col)
         md = export_markdown(conn)
@@ -278,7 +278,7 @@ class TestExportMdEscaping:
         self, conn: sqlite3.Connection
     ) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
             insert_project(conn, bid, "P", description="use `cmd` here")
         md = export_markdown(conn)
@@ -301,19 +301,19 @@ class TestExportFullJson:
         result = export_full_json(conn)
         assert set(result.keys()) == {
             "schema_version", "exported_at",
-            "boards", "statuses", "projects", "tasks", "tags", "groups",
+            "workspaces", "statuses", "projects", "tasks", "tags", "groups",
             "task_tags", "task_dependencies", "task_history",
         }
 
     def test_empty_db_all_lists_empty(self, conn: sqlite3.Connection) -> None:
         result = export_full_json(conn)
-        for key in ("boards", "statuses", "projects", "tasks", "tags", "groups",
+        for key in ("workspaces", "statuses", "projects", "tasks", "tags", "groups",
                     "task_tags", "task_dependencies", "task_history"):
             assert result[key] == [], f"expected {key} to be empty"
 
     def test_json_serializable(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
             pid = insert_project(conn, bid, "P", description="desc")
             tid = insert_task(conn, bid, "T1", col, project_id=pid)
@@ -326,18 +326,18 @@ class TestExportFullJson:
 
     def test_archived_rows_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Done")
             tid = insert_task(conn, bid, "archived task", col)
             conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (tid,))
-            conn.execute("UPDATE boards SET archived = 1 WHERE id = ?", (bid,))
+            conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (bid,))
         result = export_full_json(conn)
-        assert any(b["archived"] is True for b in result["boards"])
+        assert any(b["archived"] is True for b in result["workspaces"])
         assert any(t["archived"] is True for t in result["tasks"])
 
     def test_all_seeded_ids_present(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "Work")
+            bid = insert_workspace(conn, "Work")
             col1 = insert_status(conn, bid, "Todo")
             col2 = insert_status(conn, bid, "Done")
             pid = insert_project(conn, bid, "Backend")
@@ -347,7 +347,7 @@ class TestExportFullJson:
             tag_id = insert_tag(conn, bid, "urgent")
             insert_task_tag(conn, t1, tag_id)
         result = export_full_json(conn)
-        board_ids = {b["id"] for b in result["boards"]}
+        board_ids = {b["id"] for b in result["workspaces"]}
         assert bid in board_ids
         task_ids = {t["id"] for t in result["tasks"]}
         assert {t1, t2} <= task_ids
@@ -356,7 +356,7 @@ class TestExportFullJson:
 
     def test_task_history_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T", col)
             insert_task_history(conn, tid, field="title", old_value="old", new_value="T")
@@ -370,11 +370,11 @@ class TestExportFullJson:
 
     def test_task_dependency_board_id_preserved(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            bid = insert_board(conn, "B")
+            bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
             t1 = insert_task(conn, bid, "T1", col)
             t2 = insert_task(conn, bid, "T2", col)
             insert_task_dependency(conn, t2, t1)
         result = export_full_json(conn)
         dep = result["task_dependencies"][0]
-        assert dep["board_id"] == bid
+        assert dep["workspace_id"] == bid

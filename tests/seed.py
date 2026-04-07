@@ -4,55 +4,55 @@ import sqlite3
 from pathlib import Path
 
 from sticky_notes import service
-from sticky_notes.active_board import set_active_board_id
+from sticky_notes.active_workspace import set_active_workspace_id
 from sticky_notes.connection import get_connection, init_db
 
 
 def seed_board(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
-    board = service.create_board(conn, "Coding")
+    workspace = service.create_workspace(conn, "Coding")
 
-    todo = service.create_status(conn, board.id, "Todo")
-    in_progress = service.create_status(conn, board.id, "In Progress")
-    done = service.create_status(conn, board.id, "Done")
+    todo = service.create_status(conn, workspace.id, "Todo")
+    in_progress = service.create_status(conn, workspace.id, "In Progress")
+    done = service.create_status(conn, workspace.id, "Done")
 
     project = service.create_project(
-        conn, board.id, "apr-api", description="April API sprint"
+        conn, workspace.id, "apr-api", description="April API sprint"
     )
 
     t1 = service.create_task(
-        conn, board.id, "Design API schema", todo.id,
+        conn, workspace.id, "Design API schema", todo.id,
         project_id=project.id, priority=3,
         description="Define OpenAPI spec for all endpoints",
     )
     t2 = service.create_task(
-        conn, board.id, "Endpoint design", todo.id,
+        conn, workspace.id, "Endpoint design", todo.id,
         project_id=project.id, priority=2,
     )
     t3 = service.create_task(
-        conn, board.id, "Auth middleware", in_progress.id,
+        conn, workspace.id, "Auth middleware", in_progress.id,
         project_id=project.id, priority=3,
         description="JWT validation and role extraction",
     )
     t4 = service.create_task(
-        conn, board.id, "User CRUD", todo.id,
+        conn, workspace.id, "User CRUD", todo.id,
         priority=2,
         description="Create, read, update, delete users",
     )
     t5 = service.create_task(
-        conn, board.id, "Write unit tests", in_progress.id,
+        conn, workspace.id, "Write unit tests", in_progress.id,
         priority=1,
     )
     t6 = service.create_task(
-        conn, board.id, "Setup CI pipeline", done.id,
+        conn, workspace.id, "Setup CI pipeline", done.id,
         priority=2,
         description="GitHub Actions workflow",
     )
     t7 = service.create_task(
-        conn, board.id, "Database migrations", todo.id,
+        conn, workspace.id, "Database migrations", todo.id,
         project_id=project.id, priority=3,
     )
     t8 = service.create_task(
-        conn, board.id, "Scaffold project", done.id,
+        conn, workspace.id, "Scaffold project", done.id,
         priority=1,
     )
 
@@ -62,10 +62,10 @@ def seed_board(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
     service.add_dependency(conn, t4.id, t3.id)
 
     if db_path is not None:
-        set_active_board_id(db_path, board.id)
+        set_active_workspace_id(db_path, workspace.id)
 
     return {
-        "board_id": board.id,
+        "board_id": workspace.id,
         "status_ids": {"todo": todo.id, "in_progress": in_progress.id, "done": done.id},
         "project_id": project.id,
         "task_ids": {
@@ -90,4 +90,4 @@ if __name__ == "__main__":
     init_db(conn)
     ids = seed_board(conn, db_path=path)
     conn.close()
-    print(f"Seeded {path} with board {ids['board_id']}")
+    print(f"Seeded {path} with workspace {ids['board_id']}")

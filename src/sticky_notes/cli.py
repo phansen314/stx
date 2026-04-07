@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .active_board import active_board_path, clear_active_board_id, get_active_board_id, set_active_board_id
+from .active_workspace import active_workspace_path, clear_active_workspace_id, get_active_workspace_id, set_active_workspace_id
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from . import presenters, service
 from .export import export_full_json, export_markdown
 from .formatting import format_group_num, format_task_num, parse_date
-from .models import Board
+from .models import Workspace
 
 
 # ---- Result type ----
@@ -35,8 +35,8 @@ type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], C
 # ---- Error types ----
 
 
-class NoActiveBoardError(LookupError):
-    """Raised when no active board is set."""
+class NoActiveWorkspaceError(LookupError):
+    """Raised when no active workspace is set."""
 
 
 # ---- JSON serialisation ----
@@ -66,26 +66,26 @@ def to_dict(obj: object) -> object:
 # ---- Helpers: resolution ----
 
 
-def _resolve_board(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> Board:
-    """Resolve the active board. Depends on CLI state (active-board file), so it
+def _resolve_workspace(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> Workspace:
+    """Resolve the active workspace. Depends on CLI state (active-workspace file), so it
     stays in the CLI layer rather than the service layer."""
-    if args.board:
-        return service.get_board_by_name(conn, args.board)
-    board_id = get_active_board_id(db_path)
-    if board_id is None:
-        raise NoActiveBoardError(
-            "no active board — use 'todo board create <name>' or 'todo board use <name>'"
+    if args.workspace:
+        return service.get_workspace_by_name(conn, args.workspace)
+    workspace_id = get_active_workspace_id(db_path)
+    if workspace_id is None:
+        raise NoActiveWorkspaceError(
+            "no active workspace — use 'todo workspace create <name>' or 'todo workspace use <name>'"
         )
-    return service.get_board(conn, board_id)
+    return service.get_workspace(conn, workspace_id)
 
 
 def _resolve_task(
     conn: sqlite3.Connection,
-    board: Board,
+    workspace: Workspace,
     raw: str,
     by_title: bool = False,
 ) -> int:
-    return service.resolve_task_id(conn, board.id, raw, by_title=by_title)
+    return service.resolve_task_id(conn, workspace.id, raw, by_title=by_title)
 
 
 # ---- JSON/text output ----
@@ -107,13 +107,13 @@ def _text_err(message: str, code: str) -> None:
 
 
 def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    col = service.get_status_by_name(conn, board.id, args.status)
-    project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
+    workspace = _resolve_workspace(conn, args, db_path)
+    col = service.get_status_by_name(conn, workspace.id, args.status)
+    project_id = service.get_project_by_name(conn, workspace.id, args.project).id if args.project else None
     due = parse_date(args.due) if args.due else None
     task = service.create_task(
         conn,
-        board_id=board.id,
+        workspace_id=workspace.id,
         title=args.title,
         status_id=col.id,
         project_id=project_id,
@@ -126,17 +126,17 @@ def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path:
 
 
 def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    status_id = service.get_status_by_name(conn, board.id, args.status).id if args.status else None
-    project_id = service.get_project_by_name(conn, board.id, args.project).id if args.project else None
-    tag_id = service.get_tag_by_name(conn, board.id, args.tag).id if args.tag else None
+    workspace = _resolve_workspace(conn, args, db_path)
+    status_id = service.get_status_by_name(conn, workspace.id, args.status).id if args.status else None
+    project_id = service.get_project_by_name(conn, workspace.id, args.project).id if args.project else None
+    tag_id = service.get_tag_by_name(conn, workspace.id, args.tag).id if args.tag else None
     group_id = (
-        service.resolve_group(conn, board.id, args.group, project_name=args.project).id
+        service.resolve_group(conn, workspace.id, args.group, project_name=args.project).id
         if args.group else None
     )
     only_archived = getattr(args, "archived", False)
-    view = service.get_board_list_view(
-        conn, board.id,
+    view = service.get_workspace_list_view(
+        conn, workspace.id,
         status_id=status_id,
         project_id=project_id,
         tag_id=tag_id,
@@ -146,19 +146,19 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
         include_archived=args.all,
         only_archived=only_archived,
     )
-    return Ok(data=view, text=presenters.format_board_list_view(view))
+    return Ok(data=view, text=presenters.format_workspace_list_view(view))
 
 
 def cmd_task_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     detail = service.get_task_detail(conn, task_id)
     return Ok(data=detail, text=presenters.format_task_detail(detail))
 
 
 def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     changes: dict = {}
     if args.title is not None:
         changes["title"] = args.title
@@ -169,7 +169,7 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: P
     if args.due is not None:
         changes["due_date"] = parse_date(args.due)
     if args.project is not None:
-        changes["project_id"] = service.get_project_by_name(conn, board.id, args.project).id
+        changes["project_id"] = service.get_project_by_name(conn, workspace.id, args.project).id
     add_tags = tuple(args.tag or ())
     remove_tags = tuple(args.untag or ())
     updated = service.update_task(
@@ -180,12 +180,12 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: P
 
 
 def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
-    col = service.get_status_by_name(conn, board.id, args.status)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
+    col = service.get_status_by_name(conn, workspace.id, args.status)
     position = args.position if args.position is not None else 0
     if args.project:
-        project_id = service.get_project_by_name(conn, board.id, args.project).id
+        project_id = service.get_project_by_name(conn, workspace.id, args.project).id
         updated = service.move_task(conn, task_id, col.id, position, source="cli", project_id=project_id)
     else:
         updated = service.move_task(conn, task_id, col.id, position, source="cli")
@@ -193,120 +193,120 @@ def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
 
 
 def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
-    target_board = service.get_board_by_name(conn, args.target_board)
-    target_col = service.get_status_by_name(conn, target_board.id, args.status)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
+    target_workspace = service.get_workspace_by_name(conn, args.target_workspace)
+    target_col = service.get_status_by_name(conn, target_workspace.id, args.status)
     project_id = (
-        service.get_project_by_name(conn, target_board.id, args.project).id
+        service.get_project_by_name(conn, target_workspace.id, args.project).id
         if args.project else None
     )
     if args.dry_run:
-        preview = service.preview_move_to_board(
-            conn, task_id, target_board.id, target_col.id, project_id=project_id,
+        preview = service.preview_move_to_workspace(
+            conn, task_id, target_workspace.id, target_col.id, project_id=project_id,
         )
-        text = presenters.format_move_preview(preview, target_board.name, target_col.name)
+        text = presenters.format_move_preview(preview, target_workspace.name, target_col.name)
         return Ok(data=preview, text=text)
-    new = service.move_task_to_board(
-        conn, task_id, target_board.id, target_col.id,
+    new = service.move_task_to_workspace(
+        conn, task_id, target_workspace.id, target_col.id,
         project_id=project_id, source="cli",
     )
     return Ok(
         data={"task": new, "source_task_id": task_id},
-        text=f"transferred {format_task_num(task_id)} -> board '{target_board.name}' / status '{target_col.name}' (new {format_task_num(new.id)})",
+        text=f"transferred {format_task_num(task_id)} -> workspace '{target_workspace.name}' / status '{target_col.name}' (new {format_task_num(new.id)})",
     )
 
 
 def cmd_task_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     archived = service.update_task(conn, task_id, {"archived": True}, source="cli")
     return Ok(data=archived, text=f"archived {format_task_num(task_id)}")
 
 
 def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task_num, by_title=args.by_title)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     history = service.list_task_history(conn, task_id)
     return Ok(data=history, text=presenters.format_task_history(history))
 
 
-# ---- Board subcommands ----
+# ---- Workspace subcommands ----
 
 
-def cmd_board_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = service.create_board(conn, args.name)
-    set_active_board_id(db_path, board.id)
+def cmd_workspace_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = service.create_workspace(conn, args.name)
+    set_active_workspace_id(db_path, workspace.id)
     if args.statuses:
         for name in [s.strip() for s in args.statuses.split(",") if s.strip()]:
-            service.create_status(conn, board.id, name)
-    return Ok(data=board, text=f"created board '{board.name}' (active)")
+            service.create_status(conn, workspace.id, name)
+    return Ok(data=workspace, text=f"created workspace '{workspace.name}' (active)")
 
 
-def cmd_board_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    boards = service.list_boards(conn, include_archived=args.all)
-    active_id = get_active_board_id(db_path)
-    payload = [{**to_dict(b), "active": b.id == active_id} for b in boards]
-    return Ok(data=payload, text=presenters.format_board_list(boards, active_id))
+def cmd_workspace_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspaces = service.list_workspaces(conn, include_archived=args.all)
+    active_id = get_active_workspace_id(db_path)
+    payload = [{**to_dict(w), "active": w.id == active_id} for w in workspaces]
+    return Ok(data=payload, text=presenters.format_workspace_list(workspaces, active_id))
 
 
-def cmd_board_use(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = service.get_board_by_name(conn, args.name)
-    set_active_board_id(db_path, board.id)
-    return Ok(data=board, text=f"switched to board '{board.name}'")
+def cmd_workspace_use(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = service.get_workspace_by_name(conn, args.name)
+    set_active_workspace_id(db_path, workspace.id)
+    return Ok(data=workspace, text=f"switched to workspace '{workspace.name}'")
 
 
-def cmd_board_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_workspace_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     if args.new_name is not None:
-        board = service.get_board_by_name(conn, args.old_or_new_name)
+        workspace = service.get_workspace_by_name(conn, args.old_or_new_name)
         new_name = args.new_name
     else:
-        board = _resolve_board(conn, args, db_path)
+        workspace = _resolve_workspace(conn, args, db_path)
         new_name = args.old_or_new_name
-    old_name = board.name
-    updated = service.update_board(conn, board.id, {"name": new_name})
-    return Ok(data=updated, text=f"renamed board '{old_name}' -> '{new_name}'")
+    old_name = workspace.name
+    updated = service.update_workspace(conn, workspace.id, {"name": new_name})
+    return Ok(data=updated, text=f"renamed workspace '{old_name}' -> '{new_name}'")
 
 
-def cmd_board_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_workspace_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     if args.name:
-        board = service.get_board_by_name(conn, args.name)
+        workspace = service.get_workspace_by_name(conn, args.name)
     else:
-        board = _resolve_board(conn, args, db_path)
-    updated = service.update_board(conn, board.id, {"archived": True})
-    if get_active_board_id(db_path) == board.id:
-        clear_active_board_id(db_path)
-    return Ok(data=updated, text=f"archived board '{board.name}'")
+        workspace = _resolve_workspace(conn, args, db_path)
+    updated = service.update_workspace(conn, workspace.id, {"archived": True})
+    if get_active_workspace_id(db_path) == workspace.id:
+        clear_active_workspace_id(db_path)
+    return Ok(data=updated, text=f"archived workspace '{workspace.name}'")
 
 
 # ---- Status subcommands ----
 
 
 def cmd_status_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    col = service.create_status(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    col = service.create_status(conn, workspace.id, args.name)
     return Ok(data=col, text=f"created status '{col.name}'")
 
 
 def cmd_status_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    statuses = service.list_statuses(conn, board.id)
+    workspace = _resolve_workspace(conn, args, db_path)
+    statuses = service.list_statuses(conn, workspace.id)
     return Ok(data=statuses, text=presenters.format_status_list(statuses))
 
 
 def cmd_status_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    col = service.get_status_by_name(conn, board.id, args.old_name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    col = service.get_status_by_name(conn, workspace.id, args.old_name)
     updated = service.update_status(conn, col.id, {"name": args.new_name})
     return Ok(data=updated, text=f"renamed status '{args.old_name}' -> '{args.new_name}'")
 
 
 def cmd_status_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    col = service.get_status_by_name(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    col = service.get_status_by_name(conn, workspace.id, args.name)
     reassign_to_id = None
     if args.reassign_to:
-        reassign_col = service.get_status_by_name(conn, board.id, args.reassign_to)
+        reassign_col = service.get_status_by_name(conn, workspace.id, args.reassign_to)
         reassign_to_id = reassign_col.id
     updated = service.archive_status(
         conn, col.id,
@@ -320,27 +320,27 @@ def cmd_status_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: P
 
 
 def cmd_project_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    proj = service.create_project(conn, board.id, args.name, description=args.desc)
+    workspace = _resolve_workspace(conn, args, db_path)
+    proj = service.create_project(conn, workspace.id, args.name, description=args.desc)
     return Ok(data=proj, text=f"created project '{proj.name}'")
 
 
 def cmd_project_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    projects = service.list_projects(conn, board.id)
+    workspace = _resolve_workspace(conn, args, db_path)
+    projects = service.list_projects(conn, workspace.id)
     return Ok(data=projects, text=presenters.format_project_list(projects))
 
 
 def cmd_project_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    proj = service.get_project_by_name(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    proj = service.get_project_by_name(conn, workspace.id, args.name)
     detail = service.get_project_detail(conn, proj.id)
     return Ok(data=detail, text=presenters.format_project_detail(detail))
 
 
 def cmd_project_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    proj = service.get_project_by_name(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    proj = service.get_project_by_name(conn, workspace.id, args.name)
     updated = service.update_project(conn, proj.id, {"archived": True})
     return Ok(data=updated, text=f"archived project '{proj.name}'")
 
@@ -349,10 +349,10 @@ def cmd_project_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 
 def cmd_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
+    workspace = _resolve_workspace(conn, args, db_path)
     by_title = args.by_title
-    task_id = _resolve_task(conn, board, args.task_num, by_title=by_title)
-    depends_on_id = _resolve_task(conn, board, args.depends_on_num, by_title=by_title)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=by_title)
+    depends_on_id = _resolve_task(conn, workspace, args.depends_on_num, by_title=by_title)
     service.add_dependency(conn, task_id, depends_on_id)
     return Ok(
         data={"task_id": task_id, "depends_on_id": depends_on_id},
@@ -361,10 +361,10 @@ def cmd_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 
 def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
+    workspace = _resolve_workspace(conn, args, db_path)
     by_title = args.by_title
-    task_id = _resolve_task(conn, board, args.task_num, by_title=by_title)
-    depends_on_id = _resolve_task(conn, board, args.depends_on_num, by_title=by_title)
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=by_title)
+    depends_on_id = _resolve_task(conn, workspace, args.depends_on_num, by_title=by_title)
     service.remove_dependency(conn, task_id, depends_on_id)
     return Ok(
         data={"task_id": task_id, "depends_on_id": depends_on_id},
@@ -376,9 +376,9 @@ def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
 
 
 def cmd_group_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.group_title, project_name=args.project)
-    dep = service.resolve_group(conn, board.id, args.depends_on_title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.group_title, project_name=args.project)
+    dep = service.resolve_group(conn, workspace.id, args.depends_on_title, project_name=args.project)
     service.add_group_dependency(conn, grp.id, dep.id)
     return Ok(
         data={"group_id": grp.id, "depends_on_id": dep.id},
@@ -387,9 +387,9 @@ def cmd_group_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_
 
 
 def cmd_group_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.group_title, project_name=args.project)
-    dep = service.resolve_group(conn, board.id, args.depends_on_title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.group_title, project_name=args.project)
+    dep = service.resolve_group(conn, workspace.id, args.depends_on_title, project_name=args.project)
     service.remove_group_dependency(conn, grp.id, dep.id)
     return Ok(
         data={"group_id": grp.id, "depends_on_id": dep.id},
@@ -401,23 +401,23 @@ def cmd_group_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path
 
 
 def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    proj = service.get_project_by_name(conn, board.id, args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    proj = service.get_project_by_name(conn, workspace.id, args.project)
     parent_id = None
     if args.parent:
-        parent = service.resolve_group(conn, board.id, args.parent, project_name=args.project)
+        parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
         parent_id = parent.id
     grp = service.create_group(conn, proj.id, args.title, parent_id=parent_id)
     return Ok(data=grp, text=f"created group '{grp.title}' ({format_group_num(grp.id)})")
 
 
 def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
+    workspace = _resolve_workspace(conn, args, db_path)
     project_name = args.project
     if project_name:
-        projects = (service.get_project_by_name(conn, board.id, project_name),)
+        projects = (service.get_project_by_name(conn, workspace.id, project_name),)
     else:
-        projects = service.list_projects(conn, board.id)
+        projects = service.list_projects(conn, workspace.id)
     if not projects:
         return Ok(data=[], text=presenters.format_group_list(()))
     if args.tree:
@@ -446,8 +446,8 @@ def _collect_tree_task_ids(tree) -> tuple[int, ...]:
 
 
 def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
     detail = service.get_group_detail(conn, grp.id)
     ancestry = service.get_group_ancestry(conn, grp.id)
     ancestry_titles = tuple(g.title for g in ancestry)
@@ -457,35 +457,35 @@ def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 
 def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
     updated = service.update_group(conn, grp.id, {"title": args.new_title})
     return Ok(data=updated, text=f"renamed group '{args.title}' -> '{args.new_title}'")
 
 
 def cmd_group_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
     archived = service.archive_group(conn, grp.id, source="cli")
     return Ok(data=archived, text=f"archived group '{grp.title}'")
 
 
 def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    grp = service.resolve_group(conn, board.id, args.title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
     parent_str = args.parent
     if not parent_str:
         updated = service.update_group(conn, grp.id, {"parent_id": None})
         return Ok(data=updated, text=f"promoted group '{grp.title}' to top-level")
-    parent = service.resolve_group(conn, board.id, parent_str, project_name=args.project)
+    parent = service.resolve_group(conn, workspace.id, parent_str, project_name=args.project)
     updated = service.update_group(conn, grp.id, {"parent_id": parent.id})
     return Ok(data=updated, text=f"moved group '{grp.title}' under '{parent.title}'")
 
 
 def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task, by_title=args.by_title)
-    grp = service.resolve_group(conn, board.id, args.group_title, project_name=args.project)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task, by_title=args.by_title)
+    grp = service.resolve_group(conn, workspace.id, args.group_title, project_name=args.project)
     updated = service.assign_task_to_group(conn, task_id, grp.id, source="cli")
     return Ok(
         data={"task": updated, "group_id": grp.id},
@@ -494,8 +494,8 @@ def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path
 
 
 def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    task_id = _resolve_task(conn, board, args.task, by_title=args.by_title)
+    workspace = _resolve_workspace(conn, args, db_path)
+    task_id = _resolve_task(conn, workspace, args.task, by_title=args.by_title)
     # Get the group title before unassigning for the output message
     detail = service.get_task_detail(conn, task_id)
     group_name = detail.group.title if detail.group else None
@@ -508,20 +508,20 @@ def cmd_group_unassign(conn: sqlite3.Connection, args: argparse.Namespace, db_pa
 
 
 def cmd_tag_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    tag = service.create_tag(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    tag = service.create_tag(conn, workspace.id, args.name)
     return Ok(data=tag, text=f"created tag '{tag.name}'")
 
 
 def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    tags = service.list_tags(conn, board.id, include_archived=args.all)
+    workspace = _resolve_workspace(conn, args, db_path)
+    tags = service.list_tags(conn, workspace.id, include_archived=args.all)
     return Ok(data=tags, text=presenters.format_tag_list(tags))
 
 
 def cmd_tag_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    tag = service.get_tag_by_name(conn, board.id, args.name)
+    workspace = _resolve_workspace(conn, args, db_path)
+    tag = service.get_tag_by_name(conn, workspace.id, args.name)
     archived = service.archive_tag(conn, tag.id, unassign=args.unassign)
     return Ok(data=archived, text=f"archived tag '{tag.name}'")
 
@@ -530,9 +530,9 @@ def cmd_tag_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
 
 
 def cmd_context(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    board = _resolve_board(conn, args, db_path)
-    ctx = service.get_board_context(conn, board.id)
-    return Ok(data=ctx, text=presenters.format_board_context(ctx))
+    workspace = _resolve_workspace(conn, args, db_path)
+    ctx = service.get_workspace_context(conn, workspace.id)
+    return Ok(data=ctx, text=presenters.format_workspace_context(ctx))
 
 
 # ---- Export ----
@@ -589,20 +589,20 @@ def cmd_backup(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
 
 
 def cmd_info(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    ab_path = active_board_path(db_path)
+    ab_path = active_workspace_path(db_path)
     wal = db_path.with_name(db_path.name + "-wal")
     shm = db_path.with_name(db_path.name + "-shm")
     entries = [
         ("database", db_path),
         ("wal sidecar", wal),
         ("shm sidecar", shm),
-        ("active-board pointer", ab_path),
+        ("active-workspace pointer", ab_path),
     ]
     data = {
         "db": str(db_path),
         "wal": str(wal),
         "shm": str(shm),
-        "active_board": str(ab_path),
+        "active_workspace": str(ab_path),
         "existing": [str(p) for _, p in entries if p.exists()],
         "reset_command": "python scripts/wipe_db.py",
     }
@@ -639,11 +639,11 @@ HANDLERS: dict[str, CommandHandler] = {
     "task_transfer": cmd_task_transfer,
     "task_rm": cmd_task_rm,
     "task_log": cmd_task_log,
-    "board_create": cmd_board_create,
-    "board_ls": cmd_board_ls,
-    "board_use": cmd_board_use,
-    "board_rename": cmd_board_rename,
-    "board_rm": cmd_board_rm,
+    "workspace_create": cmd_workspace_create,
+    "workspace_ls": cmd_workspace_ls,
+    "workspace_use": cmd_workspace_use,
+    "workspace_rename": cmd_workspace_rename,
+    "workspace_rm": cmd_workspace_rm,
     "status_create": cmd_status_create,
     "status_ls": cmd_status_ls,
     "status_rename": cmd_status_rename,
@@ -678,7 +678,7 @@ HANDLERS: dict[str, CommandHandler] = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="todo", description="Sticky Notes — local kanban CLI")
     parser.add_argument("--db", type=Path, help="path to SQLite database file")
-    parser.add_argument("--board", "-b", help="board name (overrides active board)")
+    parser.add_argument("--workspace", "-w", help="workspace name (overrides active workspace)")
     parser.add_argument("--json", action="store_true", help="output JSON instead of text")
     parser.add_argument("--quiet", "-q", action="store_true", help="suppress output on success")
     parser.set_defaults(command=None)
@@ -728,7 +728,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
 
-    p_mv = task_sub.add_parser("mv", help="move task to status (within board)")
+    p_mv = task_sub.add_parser("mv", help="move task to status (within workspace)")
     p_mv.set_defaults(command="task_mv")
     p_mv.add_argument("task_num")
     p_mv.add_argument("status", help="status name")
@@ -736,12 +736,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_mv.add_argument("--by-title", action="store_true", help="resolve task by title string")
     p_mv.add_argument("--project", "-p", default=None, help="also change task project")
 
-    p_transfer = task_sub.add_parser("transfer", help="move task to a different board")
+    p_transfer = task_sub.add_parser("transfer", help="move task to a different workspace")
     p_transfer.set_defaults(command="task_transfer")
     p_transfer.add_argument("task_num")
-    p_transfer.add_argument("--board", dest="target_board", required=True, help="target board name")
-    p_transfer.add_argument("--status", "-S", required=True, help="status on target board")
-    p_transfer.add_argument("--project", "-p", default=None, help="project on target board")
+    p_transfer.add_argument("--workspace", dest="target_workspace", required=True, help="target workspace name")
+    p_transfer.add_argument("--status", "-S", required=True, help="status on target workspace")
+    p_transfer.add_argument("--project", "-p", default=None, help="project on target workspace")
     p_transfer.add_argument("--dry-run", action="store_true", default=False, help="preview without executing")
     p_transfer.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
@@ -755,32 +755,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("task_num")
     p_log.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
-    # ---- Board subcommands ----
+    # ---- Workspace subcommands ----
 
-    p_board = sub.add_parser("board", help="board management")
-    board_sub = p_board.add_subparsers()
+    p_workspace = sub.add_parser("workspace", help="workspace management")
+    workspace_sub = p_workspace.add_subparsers()
 
-    p_bc = board_sub.add_parser("create", help="create a board")
-    p_bc.set_defaults(command="board_create")
-    p_bc.add_argument("name")
-    p_bc.add_argument("--statuses", default=None, help="comma-separated status names to create")
+    p_wc = workspace_sub.add_parser("create", help="create a workspace")
+    p_wc.set_defaults(command="workspace_create")
+    p_wc.add_argument("name")
+    p_wc.add_argument("--statuses", default=None, help="comma-separated status names to create")
 
-    p_bl = board_sub.add_parser("ls", help="list boards")
-    p_bl.set_defaults(command="board_ls")
-    p_bl.add_argument("--all", "-a", action="store_true", help="include archived")
+    p_wl = workspace_sub.add_parser("ls", help="list workspaces")
+    p_wl.set_defaults(command="workspace_ls")
+    p_wl.add_argument("--all", "-a", action="store_true", help="include archived")
 
-    p_bu = board_sub.add_parser("use", help="switch active board")
-    p_bu.set_defaults(command="board_use")
-    p_bu.add_argument("name")
+    p_wu = workspace_sub.add_parser("use", help="switch active workspace")
+    p_wu.set_defaults(command="workspace_use")
+    p_wu.add_argument("name")
 
-    p_br = board_sub.add_parser("rename", help="rename a board")
-    p_br.set_defaults(command="board_rename")
-    p_br.add_argument("old_or_new_name", help="new name (if active board) or old name")
-    p_br.add_argument("new_name", nargs="?", default=None, help="new name (when old name provided)")
+    p_wr = workspace_sub.add_parser("rename", help="rename a workspace")
+    p_wr.set_defaults(command="workspace_rename")
+    p_wr.add_argument("old_or_new_name", help="new name (if active workspace) or old name")
+    p_wr.add_argument("new_name", nargs="?", default=None, help="new name (when old name provided)")
 
-    p_ba = board_sub.add_parser("rm", help="archive a board")
-    p_ba.set_defaults(command="board_rm")
-    p_ba.add_argument("name", nargs="?", default=None, help="board name (defaults to active)")
+    p_wa = workspace_sub.add_parser("rm", help="archive a workspace")
+    p_wa.set_defaults(command="workspace_rm")
+    p_wa.add_argument("name", nargs="?", default=None, help="workspace name (defaults to active)")
 
     # ---- Status subcommands ----
 
@@ -931,7 +931,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---- Context ----
 
-    p_ctx = sub.add_parser("context", help="board summary: statuses, tasks, projects, tags, groups")
+    p_ctx = sub.add_parser("context", help="workspace summary: statuses, tasks, projects, tags, groups")
     p_ctx.set_defaults(command="context")
 
     # ---- Export ----
@@ -990,8 +990,8 @@ def main(argv: list[str] | None = None) -> None:
         else:
             _text_err(f"database error: {exc}", code)
         raise SystemExit(2)
-    except NoActiveBoardError as exc:
-        code = "missing_active_board"
+    except NoActiveWorkspaceError as exc:
+        code = "missing_active_workspace"
         if args.json:
             _json_err(str(exc), code)
         else:

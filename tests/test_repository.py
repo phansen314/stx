@@ -5,9 +5,9 @@ import sqlite3
 import pytest
 
 from sticky_notes.models import (
-    Board,
+    Workspace,
     Group,
-    NewBoard,
+    NewWorkspace,
     NewGroup,
     NewProject,
     NewStatus,
@@ -30,8 +30,8 @@ from sticky_notes.repository import (
     batch_dependency_ids,
     batch_tag_ids_by_task,
     batch_task_ids_by_group,
-    get_board,
-    get_board_by_name,
+    get_workspace,
+    get_workspace_by_name,
     get_status,
     get_status_by_name,
     get_group,
@@ -46,7 +46,7 @@ from sticky_notes.repository import (
     get_tag_by_name,
     get_task,
     get_task_by_title,
-    insert_board,
+    insert_workspace,
     insert_status,
     insert_group,
     insert_project,
@@ -59,11 +59,11 @@ from sticky_notes.repository import (
     list_blocked_by_tasks,
     list_blocks_ids,
     list_blocks_tasks,
-    list_boards,
+    list_workspaces,
     list_child_groups,
     list_statuses,
     list_groups,
-    list_groups_by_board,
+    list_groups_by_workspace,
     list_projects,
     list_tag_ids_by_task,
     list_tags,
@@ -85,7 +85,7 @@ from sticky_notes.repository import (
     reparent_children,
     set_task_group_id,
     unassign_tasks_from_group,
-    update_board,
+    update_workspace,
     update_status,
     update_group,
     update_project,
@@ -97,83 +97,83 @@ from sticky_notes.repository import (
 # ---- Board ----
 
 
-class TestBoardRepository:
+class TestWorkspaceRepository:
     def test_insert_returns_board(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="work"))
-        assert isinstance(board, Board)
+        board = insert_workspace(conn, NewWorkspace(name="work"))
+        assert isinstance(board, Workspace)
         assert board.name == "work"
         assert board.archived is False
         assert board.id >= 1
 
-    def test_get_board(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="work"))
-        fetched = get_board(conn, board.id)
+    def test_get_workspace(self, conn: sqlite3.Connection) -> None:
+        board = insert_workspace(conn, NewWorkspace(name="work"))
+        fetched = get_workspace(conn, board.id)
         assert fetched == board
 
     def test_get_board_missing(self, conn: sqlite3.Connection) -> None:
-        assert get_board(conn, 9999) is None
+        assert get_workspace(conn, 9999) is None
 
-    def test_get_board_by_name(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="work"))
-        assert get_board_by_name(conn, "work") == board
-        assert get_board_by_name(conn, "nope") is None
+    def test_get_workspace_by_name(self, conn: sqlite3.Connection) -> None:
+        board = insert_workspace(conn, NewWorkspace(name="work"))
+        assert get_workspace_by_name(conn, "work") == board
+        assert get_workspace_by_name(conn, "nope") is None
 
     def test_get_board_by_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="Work"))
-        assert get_board_by_name(conn, "work") == board
-        assert get_board_by_name(conn, "WORK") == board
+        board = insert_workspace(conn, NewWorkspace(name="Work"))
+        assert get_workspace_by_name(conn, "work") == board
+        assert get_workspace_by_name(conn, "WORK") == board
 
     def test_unique_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        insert_board(conn, NewBoard(name="Dev"))
+        insert_workspace(conn, NewWorkspace(name="Dev"))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_board(conn, NewBoard(name="dev"))
+            insert_workspace(conn, NewWorkspace(name="dev"))
 
     def test_list_boards_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, NewBoard(name="a"))
-        b2 = insert_board(conn, NewBoard(name="b"))
-        update_board(conn, b2.id, {"archived": True})
-        boards = list_boards(conn)
+        b1 = insert_workspace(conn, NewWorkspace(name="a"))
+        b2 = insert_workspace(conn, NewWorkspace(name="b"))
+        update_workspace(conn, b2.id, {"archived": True})
+        boards = list_workspaces(conn)
         assert len(boards) == 1
         assert boards[0].id == b1.id
 
     def test_list_boards_include_archived(self, conn: sqlite3.Connection) -> None:
-        insert_board(conn, NewBoard(name="a"))
-        b2 = insert_board(conn, NewBoard(name="b"))
-        update_board(conn, b2.id, {"archived": True})
-        boards = list_boards(conn, include_archived=True)
+        insert_workspace(conn, NewWorkspace(name="a"))
+        b2 = insert_workspace(conn, NewWorkspace(name="b"))
+        update_workspace(conn, b2.id, {"archived": True})
+        boards = list_workspaces(conn, include_archived=True)
         assert len(boards) == 2
 
-    def test_update_board(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="old"))
-        updated = update_board(conn, board.id, {"name": "new"})
+    def test_update_workspace(self, conn: sqlite3.Connection) -> None:
+        board = insert_workspace(conn, NewWorkspace(name="old"))
+        updated = update_workspace(conn, board.id, {"name": "new"})
         assert updated.name == "new"
         assert updated.id == board.id
 
     def test_update_board_bad_field(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="x"))
+        board = insert_workspace(conn, NewWorkspace(name="x"))
         with pytest.raises(ValueError, match="disallowed"):
-            update_board(conn, board.id, {"id": 99})
+            update_workspace(conn, board.id, {"id": 99})
 
     def test_update_board_empty_changes(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="x"))
+        board = insert_workspace(conn, NewWorkspace(name="x"))
         with pytest.raises(ValueError, match="empty"):
-            update_board(conn, board.id, {})
+            update_workspace(conn, board.id, {})
 
     def test_update_board_invalid_column_name(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="x"))
+        board = insert_workspace(conn, NewWorkspace(name="x"))
         with pytest.raises(ValueError, match="invalid column name"):
             # Bypass allowlist with a patched frozenset to test the regex guard
             from sticky_notes import repository
-            orig = repository._BOARD_UPDATABLE
-            repository._BOARD_UPDATABLE = frozenset({"name; DROP TABLE boards--"})
+            orig = repository._WORKSPACE_UPDATABLE
+            repository._WORKSPACE_UPDATABLE = frozenset({"name; DROP TABLE workspaces--"})
             try:
-                update_board(conn, board.id, {"name; DROP TABLE boards--": "pwned"})
+                update_workspace(conn, board.id, {"name; DROP TABLE workspaces--": "pwned"})
             finally:
-                repository._BOARD_UPDATABLE = orig
+                repository._WORKSPACE_UPDATABLE = orig
 
     def test_update_board_missing_id(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
-            update_board(conn, 9999, {"name": "y"})
+            update_workspace(conn, 9999, {"name": "y"})
 
 
 # ---- Status ----
@@ -181,45 +181,45 @@ class TestBoardRepository:
 
 class TestStatusRepository:
     def test_insert_returns_status(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
         assert isinstance(col, Status)
         assert col.name == "todo"
-        assert col.board_id == board.id
+        assert col.workspace_id == board.id
 
     def test_get_status(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
         assert get_status(conn, col.id) == col
 
     def test_get_status_missing(self, conn: sqlite3.Connection) -> None:
         assert get_status(conn, 9999) is None
 
     def test_list_statuses_ordered_alphabetically(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        insert_status(conn, NewStatus(board_id=board.id, name="zebra"))
-        insert_status(conn, NewStatus(board_id=board.id, name="alpha"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_status(conn, NewStatus(workspace_id=board.id, name="zebra"))
+        insert_status(conn, NewStatus(workspace_id=board.id, name="alpha"))
         cols = list_statuses(conn, board.id)
         assert cols[0].name == "alpha"
         assert cols[1].name == "zebra"
 
     def test_list_statuses_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        c2 = insert_status(conn, NewStatus(board_id=board.id, name="done"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        c2 = insert_status(conn, NewStatus(workspace_id=board.id, name="done"))
         update_status(conn, c2.id, {"archived": True})
         assert len(list_statuses(conn, board.id)) == 1
         assert len(list_statuses(conn, board.id, include_archived=True)) == 2
 
     def test_update_status(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="old"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="old"))
         updated = update_status(conn, col.id, {"name": "new"})
         assert updated.name == "new"
 
     def test_update_status_bad_field(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="x"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="x"))
         with pytest.raises(ValueError, match="disallowed"):
             update_status(conn, col.id, {"created_at": 0})
 
@@ -228,22 +228,22 @@ class TestStatusRepository:
             update_status(conn, 9999, {"name": "y"})
 
     def test_get_status_by_name(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="done"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="done"))
         assert get_status_by_name(conn, board.id, "done") == col
         assert get_status_by_name(conn, board.id, "nope") is None
 
     def test_get_status_by_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="In Progress"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="In Progress"))
         assert get_status_by_name(conn, board.id, "in progress") == col
         assert get_status_by_name(conn, board.id, "IN PROGRESS") == col
 
     def test_unique_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        insert_status(conn, NewStatus(board_id=board.id, name="Todo"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_status(conn, NewStatus(workspace_id=board.id, name="Todo"))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+            insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
 
 
 # ---- Project ----
@@ -251,38 +251,38 @@ class TestStatusRepository:
 
 class TestProjectRepository:
     def test_insert_returns_project(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p1"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p1"))
         assert isinstance(proj, Project)
         assert proj.name == "p1"
         assert proj.description is None
 
     def test_get_project(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p1"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p1"))
         assert get_project(conn, proj.id) == proj
 
     def test_get_project_missing(self, conn: sqlite3.Connection) -> None:
         assert get_project(conn, 9999) is None
 
     def test_list_projects_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        insert_project(conn, NewProject(board_id=board.id, name="p1"))
-        p2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_project(conn, NewProject(workspace_id=board.id, name="p1"))
+        p2 = insert_project(conn, NewProject(workspace_id=board.id, name="p2"))
         update_project(conn, p2.id, {"archived": True})
         assert len(list_projects(conn, board.id)) == 1
         assert len(list_projects(conn, board.id, include_archived=True)) == 2
 
     def test_update_project(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="old"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="old"))
         updated = update_project(conn, proj.id, {"name": "new", "description": "hi"})
         assert updated.name == "new"
         assert updated.description == "hi"
 
     def test_update_project_bad_field(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="x"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="x"))
         with pytest.raises(ValueError, match="disallowed"):
             update_project(conn, proj.id, {"id": 99})
 
@@ -291,37 +291,37 @@ class TestProjectRepository:
             update_project(conn, 9999, {"name": "y"})
 
     def test_get_project_by_name(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="backend"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="backend"))
         assert get_project_by_name(conn, board.id, "backend") == proj
         assert get_project_by_name(conn, board.id, "nope") is None
 
     def test_get_project_by_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="Backend"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="Backend"))
         assert get_project_by_name(conn, board.id, "backend") == proj
         assert get_project_by_name(conn, board.id, "BACKEND") == proj
 
     def test_unique_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        insert_project(conn, NewProject(board_id=board.id, name="Backend"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_project(conn, NewProject(workspace_id=board.id, name="Backend"))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_project(conn, NewProject(board_id=board.id, name="backend"))
+            insert_project(conn, NewProject(workspace_id=board.id, name="backend"))
 
 
 # ---- Task ----
 
 
 class TestTaskRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Board, Status]:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+    def _setup(self, conn: sqlite3.Connection) -> tuple[Workspace, Status]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
         return board, col
 
     def test_insert_returns_task(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="do stuff", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="do stuff", status_id=col.id)
         )
         assert isinstance(task, Task)
         assert task.title == "do stuff"
@@ -331,7 +331,7 @@ class TestTaskRepository:
     def test_get_task(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="t", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="t", status_id=col.id)
         )
         assert get_task(conn, task.id) == task
 
@@ -341,10 +341,10 @@ class TestTaskRepository:
     def test_list_tasks_by_board(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         t1 = insert_task(
-            conn, NewTask(board_id=board.id, title="a", status_id=col.id, position=1)
+            conn, NewTask(workspace_id=board.id, title="a", status_id=col.id, position=1)
         )
         t2 = insert_task(
-            conn, NewTask(board_id=board.id, title="b", status_id=col.id, position=0)
+            conn, NewTask(workspace_id=board.id, title="b", status_id=col.id, position=0)
         )
         tasks = list_tasks(conn, board.id)
         assert tasks[0].id == t2.id
@@ -352,8 +352,8 @@ class TestTaskRepository:
 
     def test_list_tasks_excludes_archived(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
-        insert_task(conn, NewTask(board_id=board.id, title="a", status_id=col.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="b", status_id=col.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="a", status_id=col.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="b", status_id=col.id))
         update_task(conn, t2.id, {"archived": True})
         assert len(list_tasks(conn, board.id)) == 1
         assert len(list_tasks(conn, board.id, include_archived=True)) == 2
@@ -361,29 +361,29 @@ class TestTaskRepository:
     def test_list_tasks_by_status(self, conn: sqlite3.Connection) -> None:
         board, col1 = self._setup(conn)
         col2 = insert_status(
-            conn, NewStatus(board_id=board.id, name="done")
+            conn, NewStatus(workspace_id=board.id, name="done")
         )
-        insert_task(conn, NewTask(board_id=board.id, title="a", status_id=col1.id))
-        insert_task(conn, NewTask(board_id=board.id, title="b", status_id=col2.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="a", status_id=col1.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="b", status_id=col2.id))
         assert len(list_tasks_by_status(conn, col1.id)) == 1
         assert len(list_tasks_by_status(conn, col2.id)) == 1
 
     def test_list_tasks_by_project(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         insert_task(
             conn,
             NewTask(
-                board_id=board.id, title="a", status_id=col.id, project_id=proj.id
+                workspace_id=board.id, title="a", status_id=col.id, project_id=proj.id
             ),
         )
-        insert_task(conn, NewTask(board_id=board.id, title="b", status_id=col.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="b", status_id=col.id))
         assert len(list_tasks_by_project(conn, proj.id)) == 1
 
     def test_update_task(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="old", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="old", status_id=col.id)
         )
         updated = update_task(conn, task.id, {"title": "new", "priority": 3})
         assert updated.title == "new"
@@ -392,7 +392,7 @@ class TestTaskRepository:
     def test_update_task_bad_field(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="t", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="t", status_id=col.id)
         )
         with pytest.raises(ValueError, match="disallowed"):
             update_task(conn, task.id, {"id": 99})
@@ -405,9 +405,9 @@ class TestTaskRepository:
         self, conn: sqlite3.Connection
     ) -> None:
         board, col = self._setup(conn)
-        insert_task(conn, NewTask(board_id=board.id, title="a", status_id=col.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="a", status_id=col.id))
         t2 = insert_task(
-            conn, NewTask(board_id=board.id, title="b", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="b", status_id=col.id)
         )
         update_task(conn, t2.id, {"archived": True})
         assert len(list_tasks_by_status(conn, col.id)) == 1
@@ -417,17 +417,17 @@ class TestTaskRepository:
         self, conn: sqlite3.Connection
     ) -> None:
         board, col = self._setup(conn)
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         insert_task(
             conn,
             NewTask(
-                board_id=board.id, title="a", status_id=col.id, project_id=proj.id
+                workspace_id=board.id, title="a", status_id=col.id, project_id=proj.id
             ),
         )
         t2 = insert_task(
             conn,
             NewTask(
-                board_id=board.id, title="b", status_id=col.id, project_id=proj.id
+                workspace_id=board.id, title="b", status_id=col.id, project_id=proj.id
             ),
         )
         update_task(conn, t2.id, {"archived": True})
@@ -437,7 +437,7 @@ class TestTaskRepository:
     def test_get_task_by_title(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="Find me", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="Find me", status_id=col.id)
         )
         found = get_task_by_title(conn, board.id, "Find me")
         assert found is not None
@@ -451,28 +451,28 @@ class TestTaskRepository:
     def test_get_task_by_title_case_insensitive(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="Fix Login", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="Fix Login", status_id=col.id)
         )
         assert get_task_by_title(conn, board.id, "fix login") is not None
         assert get_task_by_title(conn, board.id, "FIX LOGIN") is not None
 
     def test_unique_title_case_insensitive(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
-        insert_task(conn, NewTask(board_id=board.id, title="Fix Login", status_id=col.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="Fix Login", status_id=col.id))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_task(conn, NewTask(board_id=board.id, title="fix login", status_id=col.id))
+            insert_task(conn, NewTask(workspace_id=board.id, title="fix login", status_id=col.id))
 
     def test_priority_at_lower_bound(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="low", status_id=col.id, priority=1)
+            conn, NewTask(workspace_id=board.id, title="low", status_id=col.id, priority=1)
         )
         assert task.priority == 1
 
     def test_priority_at_upper_bound(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="high", status_id=col.id, priority=5)
+            conn, NewTask(workspace_id=board.id, title="high", status_id=col.id, priority=5)
         )
         assert task.priority == 5
 
@@ -480,20 +480,20 @@ class TestTaskRepository:
         board, col = self._setup(conn)
         with pytest.raises(sqlite3.IntegrityError):
             insert_task(
-                conn, NewTask(board_id=board.id, title="bad", status_id=col.id, priority=0)
+                conn, NewTask(workspace_id=board.id, title="bad", status_id=col.id, priority=0)
             )
 
     def test_priority_above_upper_bound_rejected(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         with pytest.raises(sqlite3.IntegrityError):
             insert_task(
-                conn, NewTask(board_id=board.id, title="bad", status_id=col.id, priority=6)
+                conn, NewTask(workspace_id=board.id, title="bad", status_id=col.id, priority=6)
             )
 
     def test_empty_title_allowed(self, conn: sqlite3.Connection) -> None:
         board, col = self._setup(conn)
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="", status_id=col.id)
         )
         assert task.title == ""
 
@@ -501,11 +501,11 @@ class TestTaskRepository:
         self, conn: sqlite3.Connection
     ) -> None:
         board, col = self._setup(conn)
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         task = insert_task(
             conn,
             NewTask(
-                board_id=board.id,
+                workspace_id=board.id,
                 title="full",
                 status_id=col.id,
                 project_id=proj.id,
@@ -532,11 +532,11 @@ class TestTaskRepository:
 
 class TestTaskDependencyRepository:
     def _setup(self, conn: sqlite3.Connection) -> tuple[Task, Task, Task]:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id))
-        t3 = insert_task(conn, NewTask(board_id=board.id, title="t3", status_id=col.id))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id))
+        t3 = insert_task(conn, NewTask(workspace_id=board.id, title="t3", status_id=col.id))
         return t1, t2, t3
 
     def test_add_and_list_blocked_by_ids(self, conn: sqlite3.Connection) -> None:
@@ -625,9 +625,9 @@ class TestTaskDependencyRepository:
 
     def test_get_reachable_task_ids_diamond(self, conn: sqlite3.Connection) -> None:
         t1, t2, t3 = self._setup(conn)
-        bid = t1.board_id
+        bid = t1.workspace_id
         cid = t1.status_id
-        t4 = insert_task(conn, NewTask(board_id=bid, title="d4", status_id=cid))
+        t4 = insert_task(conn, NewTask(workspace_id=bid, title="d4", status_id=cid))
         add_dependency(conn, t1.id, t2.id)  # t1 -> t2
         add_dependency(conn, t1.id, t3.id)  # t1 -> t3
         add_dependency(conn, t2.id, t4.id)  # t2 -> t4
@@ -644,8 +644,8 @@ class TestTaskDependencyRepository:
 
 class TestGroupDependencyRepository:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         g1 = insert_group(conn, NewGroup(project_id=proj.id, title="g1")).id
         g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2")).id
         g3 = insert_group(conn, NewGroup(project_id=proj.id, title="g3")).id
@@ -708,10 +708,10 @@ class TestGroupDependencyRepository:
 
 class TestTaskHistoryRepository:
     def test_insert_returns_task_history(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="t", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="t", status_id=col.id)
         )
         h = insert_task_history(
             conn,
@@ -729,10 +729,10 @@ class TestTaskHistoryRepository:
         assert h.new_value == "new"
 
     def test_list_task_history_ordered_desc(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
         task = insert_task(
-            conn, NewTask(board_id=board.id, title="t", status_id=col.id)
+            conn, NewTask(workspace_id=board.id, title="t", status_id=col.id)
         )
         h1 = insert_task_history(
             conn,
@@ -764,29 +764,29 @@ class TestTaskHistoryRepository:
 
 class TestProjectHelper:
     def test_list_task_ids_by_project(self, conn: sqlite3.Connection) -> None:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         t1 = insert_task(
             conn,
             NewTask(
-                board_id=board.id, title="a", status_id=col.id, project_id=proj.id
+                workspace_id=board.id, title="a", status_id=col.id, project_id=proj.id
             ),
         )
-        insert_task(conn, NewTask(board_id=board.id, title="b", status_id=col.id))
+        insert_task(conn, NewTask(workspace_id=board.id, title="b", status_id=col.id))
         ids = list_task_ids_by_project(conn, proj.id)
         assert ids == (t1.id,)
 
 
 class TestListTasksFiltered:
     def _seed(self, conn: sqlite3.Connection):
-        board = insert_board(conn, NewBoard(name="b"))
-        col1 = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        col2 = insert_status(conn, NewStatus(board_id=board.id, name="done"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="Fix login bug", status_id=col1.id, project_id=proj.id, priority=3))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="Add search", status_id=col1.id, priority=1))
-        t3 = insert_task(conn, NewTask(board_id=board.id, title="Deploy release", status_id=col2.id, project_id=proj.id, priority=2))
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col1 = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        col2 = insert_status(conn, NewStatus(workspace_id=board.id, name="done"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="Fix login bug", status_id=col1.id, project_id=proj.id, priority=3))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="Add search", status_id=col1.id, priority=1))
+        t3 = insert_task(conn, NewTask(workspace_id=board.id, title="Deploy release", status_id=col2.id, project_id=proj.id, priority=2))
         return board, col1, col2, proj, t1, t2, t3
 
     def test_no_filter(self, conn: sqlite3.Connection) -> None:
@@ -847,7 +847,7 @@ class TestListTasksFiltered:
 
     def test_filter_by_tag(self, conn: sqlite3.Connection) -> None:
         board, col1, col2, proj, t1, t2, t3 = self._seed(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="bug"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="bug"))
         add_tag_to_task(conn, t1.id, tag.id)
         result = list_tasks_filtered(conn, board.id, task_filter=TaskFilter(tag_id=tag.id))
         assert len(result) == 1
@@ -866,15 +866,15 @@ class TestListTasksFiltered:
 
 
 class TestTagRepository:
-    def _setup(self, conn: sqlite3.Connection) -> Board:
-        return insert_board(conn, NewBoard(name="b"))
+    def _setup(self, conn: sqlite3.Connection) -> Workspace:
+        return insert_workspace(conn, NewWorkspace(name="b"))
 
     def test_insert_and_get(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="bug"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="bug"))
         assert isinstance(tag, Tag)
         assert tag.name == "bug"
-        assert tag.board_id == board.id
+        assert tag.workspace_id == board.id
         assert tag.archived is False
         fetched = get_tag(conn, tag.id)
         assert fetched is not None
@@ -885,7 +885,7 @@ class TestTagRepository:
 
     def test_get_by_name(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="feature"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="feature"))
         fetched = get_tag_by_name(conn, board.id, "feature")
         assert fetched is not None
         assert fetched.id == tag.id
@@ -896,31 +896,31 @@ class TestTagRepository:
 
     def test_list_excludes_archived(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        insert_tag(conn, NewTag(board_id=board.id, name="a"))
-        t2 = insert_tag(conn, NewTag(board_id=board.id, name="b"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="a"))
+        t2 = insert_tag(conn, NewTag(workspace_id=board.id, name="b"))
         update_tag(conn, t2.id, {"archived": True})
         assert len(list_tags(conn, board.id)) == 1
         assert len(list_tags(conn, board.id, include_archived=True)) == 2
 
     def test_list_ordered_by_name(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        insert_tag(conn, NewTag(board_id=board.id, name="zebra"))
-        insert_tag(conn, NewTag(board_id=board.id, name="alpha"))
-        insert_tag(conn, NewTag(board_id=board.id, name="middle"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="zebra"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="alpha"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="middle"))
         tags = list_tags(conn, board.id)
         assert [t.name for t in tags] == ["alpha", "middle", "zebra"]
 
     def test_update(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="old"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="old"))
         updated = update_tag(conn, tag.id, {"name": "new"})
         assert updated.name == "new"
 
     def test_update_bad_field(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="t"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="t"))
         with pytest.raises(ValueError):
-            update_tag(conn, tag.id, {"board_id": 999})
+            update_tag(conn, tag.id, {"workspace_id": 999})
 
     def test_update_missing(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
@@ -928,38 +928,38 @@ class TestTagRepository:
 
     def test_unique_name_per_board(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        insert_tag(conn, NewTag(board_id=board.id, name="dup"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="dup"))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_tag(conn, NewTag(board_id=board.id, name="dup"))
+            insert_tag(conn, NewTag(workspace_id=board.id, name="dup"))
 
     def test_unique_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        insert_tag(conn, NewTag(board_id=board.id, name="Bug"))
+        insert_tag(conn, NewTag(workspace_id=board.id, name="Bug"))
         with pytest.raises(sqlite3.IntegrityError):
-            insert_tag(conn, NewTag(board_id=board.id, name="bug"))
+            insert_tag(conn, NewTag(workspace_id=board.id, name="bug"))
 
     def test_get_by_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
         board = self._setup(conn)
-        tag = insert_tag(conn, NewTag(board_id=board.id, name="Bug"))
+        tag = insert_tag(conn, NewTag(workspace_id=board.id, name="Bug"))
         fetched = get_tag_by_name(conn, board.id, "bug")
         assert fetched is not None
         assert fetched.id == tag.id
 
     def test_same_name_different_boards(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_board(conn, NewBoard(name="b1"))
-        b2 = insert_board(conn, NewBoard(name="b2"))
-        t1 = insert_tag(conn, NewTag(board_id=b1.id, name="shared"))
-        t2 = insert_tag(conn, NewTag(board_id=b2.id, name="shared"))
+        b1 = insert_workspace(conn, NewWorkspace(name="b1"))
+        b2 = insert_workspace(conn, NewWorkspace(name="b2"))
+        t1 = insert_tag(conn, NewTag(workspace_id=b1.id, name="shared"))
+        t2 = insert_tag(conn, NewTag(workspace_id=b2.id, name="shared"))
         assert t1.id != t2.id
 
 
 class TestTaskTagRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Board, Status, Task, Tag, Tag]:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        task = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id))
-        tag1 = insert_tag(conn, NewTag(board_id=board.id, name="bug"))
-        tag2 = insert_tag(conn, NewTag(board_id=board.id, name="feature"))
+    def _setup(self, conn: sqlite3.Connection) -> tuple[Workspace, Status, Task, Tag, Tag]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id))
+        tag1 = insert_tag(conn, NewTag(workspace_id=board.id, name="bug"))
+        tag2 = insert_tag(conn, NewTag(workspace_id=board.id, name="feature"))
         return board, col, task, tag1, tag2
 
     def test_add_and_list_tag_ids(self, conn: sqlite3.Connection) -> None:
@@ -1006,7 +1006,7 @@ class TestTaskTagRepository:
 
     def test_list_task_ids_by_tag(self, conn: sqlite3.Connection) -> None:
         board, col, task, tag1, _ = self._setup(conn)
-        task2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id))
+        task2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id))
         add_tag_to_task(conn, task.id, tag1.id)
         add_tag_to_task(conn, task2.id, tag1.id)
         ids = list_task_ids_by_tag(conn, tag1.id)
@@ -1027,7 +1027,7 @@ class TestTaskTagRepository:
 
     def test_batch_tag_ids_by_task(self, conn: sqlite3.Connection) -> None:
         board, col, task, tag1, tag2 = self._setup(conn)
-        task2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id))
+        task2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id))
         add_tag_to_task(conn, task.id, tag1.id)
         add_tag_to_task(conn, task.id, tag2.id)
         add_tag_to_task(conn, task2.id, tag1.id)
@@ -1053,9 +1053,9 @@ class TestTaskTagRepository:
 
 
 class TestGroupRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Board, Project]:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+    def _setup(self, conn: sqlite3.Connection) -> tuple[Workspace, Project]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         return board, proj
 
     def test_insert_returns_group(self, conn: sqlite3.Connection) -> None:
@@ -1133,7 +1133,7 @@ class TestGroupRepository:
 
     def test_same_title_different_projects(self, conn: sqlite3.Connection) -> None:
         board, proj1 = self._setup(conn)
-        proj2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
+        proj2 = insert_project(conn, NewProject(workspace_id=board.id, name="p2"))
         g1 = insert_group(conn, NewGroup(project_id=proj1.id, title="shared"))
         g2 = insert_group(conn, NewGroup(project_id=proj2.id, title="shared"))
         assert g1.id != g2.id
@@ -1157,43 +1157,43 @@ class TestGroupRepository:
 class TestTaskGroupRepository:
     def _setup(
         self, conn: sqlite3.Connection
-    ) -> tuple[Board, Status, Project, Group]:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+    ) -> tuple[Workspace, Status, Project, Group]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         grp = insert_group(conn, NewGroup(project_id=proj.id, title="g"))
         return board, col, proj, grp
 
     def test_assign_and_get(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp.id)
         assert get_task(conn, task.id).group_id == grp.id
 
     def test_get_unassigned_returns_none(self, conn: sqlite3.Connection) -> None:
         board, col, _, _ = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id))
         assert get_task(conn, task.id).group_id is None
 
     def test_update_replaces_group(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp1 = self._setup(conn)
         grp2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2"))
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp1.id)
         set_task_group_id(conn, task.id, grp2.id)
         assert get_task(conn, task.id).group_id == grp2.id
 
     def test_unassign(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp.id)
         set_task_group_id(conn, task.id, None)
         assert get_task(conn, task.id).group_id is None
 
     def test_list_task_ids_by_group(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, t1.id, grp.id)
         set_task_group_id(conn, t2.id, grp.id)
         ids = list_task_ids_by_group(conn, grp.id)
@@ -1203,11 +1203,11 @@ class TestTaskGroupRepository:
         board, col, proj, grp = self._setup(conn)
         t1 = insert_task(
             conn,
-            NewTask(board_id=board.id, title="grouped", status_id=col.id, project_id=proj.id),
+            NewTask(workspace_id=board.id, title="grouped", status_id=col.id, project_id=proj.id),
         )
         t2 = insert_task(
             conn,
-            NewTask(board_id=board.id, title="ungrouped", status_id=col.id, project_id=proj.id),
+            NewTask(workspace_id=board.id, title="ungrouped", status_id=col.id, project_id=proj.id),
         )
         set_task_group_id(conn, t1.id, grp.id)
         ids = list_ungrouped_task_ids(conn, proj.id)
@@ -1215,42 +1215,42 @@ class TestTaskGroupRepository:
 
     def test_group_mismatched_project_raises(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        proj2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj2.id))
+        proj2 = insert_project(conn, NewProject(workspace_id=board.id, name="p2"))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj2.id))
         with pytest.raises(sqlite3.IntegrityError):
             set_task_group_id(conn, task.id, grp.id)
 
     def test_group_matching_project_succeeds(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp.id)
         assert get_task(conn, task.id).group_id == grp.id
 
     def test_change_project_while_grouped_raises(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        proj2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        proj2 = insert_project(conn, NewProject(workspace_id=board.id, name="p2"))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp.id)
         with pytest.raises(sqlite3.IntegrityError):
             update_task(conn, task.id, {"project_id": proj2.id})
 
     def test_group_without_project_raises(self, conn: sqlite3.Connection) -> None:
         board, col, _, grp = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id))
         with pytest.raises(sqlite3.IntegrityError):
             set_task_group_id(conn, task.id, grp.id)
 
     def test_hard_delete_group_with_tasks_raises(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        task = insert_task(conn, NewTask(board_id=board.id, title="t", status_id=col.id, project_id=proj.id))
+        task = insert_task(conn, NewTask(workspace_id=board.id, title="t", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, task.id, grp.id)
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("DELETE FROM groups WHERE id = ?", (grp.id,))
 
     def test_bulk_unassign_by_group(self, conn: sqlite3.Connection) -> None:
         board, col, proj, grp = self._setup(conn)
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, t1.id, grp.id)
         set_task_group_id(conn, t2.id, grp.id)
         unassign_tasks_from_group(conn, grp.id)
@@ -1259,9 +1259,9 @@ class TestTaskGroupRepository:
 
 
 class TestGroupTreeRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Board, Project]:
-        board = insert_board(conn, NewBoard(name="b"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+    def _setup(self, conn: sqlite3.Connection) -> tuple[Workspace, Project]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         return board, proj
 
     def test_list_child_groups(self, conn: sqlite3.Connection) -> None:
@@ -1359,18 +1359,18 @@ class TestGroupTreeRepository:
 class TestBatchGroupQueries:
     def _setup(
         self, conn: sqlite3.Connection
-    ) -> tuple[Board, Status, Project]:
-        board = insert_board(conn, NewBoard(name="b"))
-        col = insert_status(conn, NewStatus(board_id=board.id, name="todo"))
-        proj = insert_project(conn, NewProject(board_id=board.id, name="p"))
+    ) -> tuple[Workspace, Status, Project]:
+        board = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=board.id, name="todo"))
+        proj = insert_project(conn, NewProject(workspace_id=board.id, name="p"))
         return board, col, proj
 
     # -- list_tasks_by_ids --
 
     def test_list_tasks_by_ids_returns_tasks(self, conn: sqlite3.Connection) -> None:
         board, col, _ = self._setup(conn)
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id))
         tasks = list_tasks_by_ids(conn, (t1.id, t2.id))
         assert len(tasks) == 2
         assert {t.id for t in tasks} == {t1.id, t2.id}
@@ -1381,7 +1381,7 @@ class TestBatchGroupQueries:
 
     def test_list_tasks_by_ids_missing_ids_ignored(self, conn: sqlite3.Connection) -> None:
         board, col, _ = self._setup(conn)
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id))
         tasks = list_tasks_by_ids(conn, (t1.id, 9999))
         assert len(tasks) == 1
         assert tasks[0].id == t1.id
@@ -1392,8 +1392,8 @@ class TestBatchGroupQueries:
         board, col, proj = self._setup(conn)
         g1 = insert_group(conn, NewGroup(project_id=proj.id, title="g1"))
         g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2"))
-        t1 = insert_task(conn, NewTask(board_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
-        t2 = insert_task(conn, NewTask(board_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
+        t1 = insert_task(conn, NewTask(workspace_id=board.id, title="t1", status_id=col.id, project_id=proj.id))
+        t2 = insert_task(conn, NewTask(workspace_id=board.id, title="t2", status_id=col.id, project_id=proj.id))
         set_task_group_id(conn, t1.id, g1.id)
         set_task_group_id(conn, t2.id, g1.id)
         result = batch_task_ids_by_group(conn, (g1.id, g2.id))
@@ -1439,11 +1439,11 @@ class TestBatchGroupQueries:
 
     # -- list_groups_by_board --
 
-    def test_list_groups_by_board(self, conn: sqlite3.Connection) -> None:
+    def test_list_groups_by_workspace(self, conn: sqlite3.Connection) -> None:
         board, _, proj = self._setup(conn)
         g1 = insert_group(conn, NewGroup(project_id=proj.id, title="g1", position=1))
         g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2", position=0))
-        result = list_groups_by_board(conn, board.id)
+        result = list_groups_by_workspace(conn, board.id)
         assert len(result) == 2
         assert result[0].id == g2.id  # position 0 first
         assert result[1].id == g1.id
@@ -1453,17 +1453,17 @@ class TestBatchGroupQueries:
         insert_group(conn, NewGroup(project_id=proj.id, title="g1"))
         g2 = insert_group(conn, NewGroup(project_id=proj.id, title="g2"))
         update_group(conn, g2.id, {"archived": True})
-        assert len(list_groups_by_board(conn, board.id)) == 1
-        assert len(list_groups_by_board(conn, board.id, include_archived=True)) == 2
+        assert len(list_groups_by_workspace(conn, board.id)) == 1
+        assert len(list_groups_by_workspace(conn, board.id, include_archived=True)) == 2
 
     def test_list_groups_by_board_multi_project(self, conn: sqlite3.Connection) -> None:
         board, _, proj1 = self._setup(conn)
-        proj2 = insert_project(conn, NewProject(board_id=board.id, name="p2"))
+        proj2 = insert_project(conn, NewProject(workspace_id=board.id, name="p2"))
         insert_group(conn, NewGroup(project_id=proj1.id, title="g1"))
         insert_group(conn, NewGroup(project_id=proj2.id, title="g2"))
-        result = list_groups_by_board(conn, board.id)
+        result = list_groups_by_workspace(conn, board.id)
         assert len(result) == 2
 
     def test_list_groups_by_board_empty(self, conn: sqlite3.Connection) -> None:
         board, _, _ = self._setup(conn)
-        assert list_groups_by_board(conn, board.id) == ()
+        assert list_groups_by_workspace(conn, board.id) == ()

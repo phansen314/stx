@@ -11,7 +11,7 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--db PATH` | — | `~/.local/share/sticky-notes/sticky-notes.db` | Path to SQLite DB |
-| `--board NAME` | `-b` | active-board file | Board name override (bypasses `~/.local/share/sticky-notes/active-board`) |
+| `--workspace NAME` | `-w` | active-workspace file | Workspace name override (bypasses `~/.local/share/sticky-notes/active-workspace`) |
 | `--json` | — | off | Emit JSON envelope instead of text |
 | `--quiet` | `-q` | off | Suppress success output |
 
@@ -26,7 +26,7 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 |---|---|
 | `not_found` | entity doesn't exist |
 | `validation` | bad argument value (including duplicate names and integrity violations) |
-| `missing_active_board` | no active board set |
+| `missing_active_workspace` | no active workspace set |
 | `db_error` | SQLite error (exits 2) |
 
 ---
@@ -146,7 +146,7 @@ Shows the full audit trail of field changes (TaskHistory).
 
 ### `todo context`
 
-Single-call board snapshot. No arguments. Outputs: columns with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions.
+Single-call workspace snapshot. No arguments. Outputs: statuses with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions.
 
 ```sh
 todo context
@@ -155,49 +155,49 @@ todo --json context
 
 ---
 
-## `todo task transfer` — Cross-Board Move
+## `todo task transfer` — Cross-Workspace Move
 
-`todo task mv` is within-board only. `todo task transfer` handles cross-board moves.
+`todo task mv` is within-workspace only. `todo task transfer` handles cross-workspace moves.
 
 **Behavior:**
-1. Creates a copy of the task on the target board in the specified column
+1. Creates a copy of the task on the target workspace in the specified status
 2. Archives the original task
 3. **Fails** if the task has any dependencies (incoming or outgoing) — remove them first with `todo dep rm`
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
-| `--board` | — | **yes** | Target board name |
-| `--column` | `-c` | **yes** | Column on target board |
-| `--project` | `-p` | no | Project on target board |
+| `--workspace` | — | **yes** | Target workspace name |
+| `--column` | `-c` | **yes** | Status on target workspace |
+| `--project` | `-p` | no | Project on target workspace |
 | `--dry-run` | — | no | Preview without executing; validates blocking deps |
 | `--by-title` | — | no | Resolve source task by title |
 
 ```sh
-todo task transfer task-0001 --board ops --column Backlog
-todo task transfer task-0001 --board ops --column Backlog --project infra
-todo task transfer task-0001 --board ops --column Backlog --dry-run
+todo task transfer task-0001 --workspace ops --column Backlog
+todo task transfer task-0001 --workspace ops --column Backlog --project infra
+todo task transfer task-0001 --workspace ops --column Backlog --dry-run
 ```
 
-> **Board flag disambiguation:** The global `-b/--board` selects the **source** board (or falls back to the active board). The transfer subcommand's own `--board` selects the **target** board. Both may appear on the same command line.
+> **Workspace flag disambiguation:** The global `-w/--workspace` selects the **source** workspace (or falls back to the active workspace). The transfer subcommand's own `--workspace` selects the **target** workspace. Both may appear on the same command line.
 
 
 ---
 
-## `todo board` Subcommands
+## `todo workspace` Subcommands
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `board create` | `name` | `--columns "A,B,C"` | Create board; auto-switches active; optionally seed columns. `--columns` takes a single comma-separated string (e.g. `--columns "To Do,In Progress,Done"`). Quote the whole value. |
-| `board ls` | — | `--all` / `-a` | List all boards; marks active board |
-| `board use` | `name` | — | Switch active board |
-| `board rename` | `[old] new` | — | 1 arg = rename active board; 2 args = rename named board |
-| `board rm` | `[name]` | — | Archive board (default: active); clears active pointer if removing active |
+| `workspace create` | `name` | `--columns "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--columns` takes a single comma-separated string (e.g. `--columns "To Do,In Progress,Done"`). Quote the whole value. |
+| `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
+| `workspace use` | `name` | — | Switch active workspace |
+| `workspace rename` | `[old] new` | — | 1 arg = rename active workspace; 2 args = rename named workspace |
+| `workspace rm` | `[name]` | — | Archive workspace (default: active); clears active pointer if removing active |
 
 ```sh
-todo board create work --columns "To Do,In Progress,Done"
-todo board use personal
-todo board ls
-todo board rename "work" "work-q2"
+todo workspace create work --columns "To Do,In Progress,Done"
+todo workspace use personal
+todo workspace ls
+todo workspace rename "work" "work-q2"
 ```
 
 ---
@@ -324,7 +324,7 @@ todo info
 todo --json info
 ```
 
-JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_board": "...", "existing": [...], "reset_command": "python scripts/wipe_db.py"}`
+JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...], "reset_command": "python scripts/wipe_db.py"}`
 
 ---
 
@@ -347,7 +347,7 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | Command | `data` shape |
 |---|---|
 | `task create`, `task edit`, `task rm`, `task mv` | full Task object |
-| `board create/rename/rm` | full Board object |
+| `workspace create/rename/rm` | full Workspace object |
 | `col create/rename/rm` | full Column object |
 | `project create/rm` | full Project object |
 | `tag create/rm` | full Tag object |
@@ -355,9 +355,9 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | `group assign` | `{"task": {...}, "group_id": N}` — `group_id` is duplicated: it appears here AND inside `task.group_id` (always equal after assign) |
 | `group unassign` | full Task object |
 | `task transfer` (live) | `{"task": {...}, "source_task_id": N}` |
-| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_board_id": N, "target_board_id": N, "target_column_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
-| `task ls` | `{"board": {...}, "columns": [{"column": {...}, "tasks": [...]}]}` |
-| `board ls` | array of Board objects with `"active": bool` field |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_column_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
+| `task ls` | `{"workspace": {...}, "columns": [{"column": {...}, "tasks": [...]}]}` |
+| `workspace ls` | array of Workspace objects with `"active": bool` field |
 | `col ls` | array of Column objects |
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
@@ -366,7 +366,7 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | `project show` | ProjectDetail with `tasks` array |
 | `group show` | GroupDetail with `tasks` and `children` arrays |
 | `task log` | array of TaskHistory objects |
-| `context` | `{"view": {"board": {...}, "columns": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
+| `context` | `{"view": {"workspace": {...}, "columns": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 
-> **`context` vs `ls` shape asymmetry:** `ls` returns `{"board": {...}, "columns": [...]}` directly at the top level. `context` wraps the same board+columns shape inside a `"view"` key — they are **not** interchangeable payloads.
+> **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "columns": [...]}` directly at the top level. `context` wraps the same workspace+columns shape inside a `"view"` key — they are **not** interchangeable payloads.

@@ -5,16 +5,16 @@ stdout."""
 from __future__ import annotations
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import Board, Project, Status, Tag, Task, TaskHistory
+from .models import Project, Status, Tag, Task, TaskHistory, Workspace
 from .service_models import (
-    BoardContext,
-    BoardListView,
     GroupDetail,
     GroupRef,
-    MoveToBoardPreview,
+    MoveToWorkspacePreview,
     ProjectDetail,
     ProjectGroupTree,
     TaskDetail,
+    WorkspaceContext,
+    WorkspaceListView,
 )
 
 
@@ -34,14 +34,14 @@ def format_task_history(history: tuple[TaskHistory, ...]) -> str:
     return "\n".join(format_history_entry(h) for h in history)
 
 
-def format_board_list(boards: tuple[Board, ...], active_id: int | None) -> str:
-    if not boards:
-        return _empty("board")
+def format_workspace_list(workspaces: tuple[Workspace, ...], active_id: int | None) -> str:
+    if not workspaces:
+        return _empty("workspace")
     lines: list[str] = []
-    for b in boards:
-        marker = " *" if b.id == active_id else ""
-        archived = " (archived)" if b.archived else ""
-        lines.append(f"  {b.name}{marker}{archived}")
+    for w in workspaces:
+        marker = " *" if w.id == active_id else ""
+        archived = " (archived)" if w.archived else ""
+        lines.append(f"  {w.name}{marker}{archived}")
     return "\n".join(lines)
 
 
@@ -110,7 +110,7 @@ def format_task_detail(detail: TaskDetail) -> str:
     return "\n".join(lines)
 
 
-def format_board_list_view(view: BoardListView) -> str:
+def format_workspace_list_view(view: WorkspaceListView) -> str:
     lines: list[str] = []
     for i, col in enumerate(view.statuses):
         if i > 0:
@@ -129,9 +129,9 @@ def format_board_list_view(view: BoardListView) -> str:
     return "\n".join(lines)
 
 
-def format_board_context(ctx: BoardContext) -> str:
-    lines: list[str] = [f"== {ctx.view.board.name} =="]
-    view_str = format_board_list_view(ctx.view)
+def format_workspace_context(ctx: WorkspaceContext) -> str:
+    lines: list[str] = [f"== {ctx.view.workspace.name} =="]
+    view_str = format_workspace_list_view(ctx.view)
     if view_str:
         lines.append(view_str)
     if ctx.projects:
@@ -236,14 +236,14 @@ def format_group_detail(
 
 
 def format_move_preview(
-    preview: MoveToBoardPreview,
-    target_board_name: str,
+    preview: MoveToWorkspacePreview,
+    target_workspace_name: str,
     target_status_name: str,
 ) -> str:
     lines = [f"dry-run: would transfer {format_task_num(preview.task_id)} ({preview.task_title})"]
     lines.append(
-        f"  from board {preview.source_board_id} -> "
-        f"board '{target_board_name}' / status '{target_status_name}'"
+        f"  from workspace {preview.source_workspace_id} -> "
+        f"workspace '{target_workspace_name}' / status '{target_status_name}'"
     )
     if not preview.can_move:
         if preview.dependency_ids:

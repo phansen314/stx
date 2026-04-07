@@ -20,8 +20,8 @@ TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Con
 # Install in editable mode
 pip install -e .
 
-# Create a board with seed columns
-todo board create work --columns "To Do","In Progress","Done"
+# Create a workspace with seed statuses
+todo workspace create work --columns "To Do","In Progress","Done"
 
 # Add and manage tasks
 todo task create "Write README" -c "To Do"
@@ -37,7 +37,7 @@ todo tui
 
 Entry point: `todo`
 
-**Active board:** The CLI tracks the active board in `~/.local/share/sticky-notes/active-board`. Override per-command with `--board`/`-b`.
+**Active workspace:** The CLI tracks the active workspace in `~/.local/share/sticky-notes/active-workspace`. Override per-command with `--workspace`/`-w`.
 
 **JSON output:** Add `--json` before any command for structured JSON output.
 
@@ -46,10 +46,10 @@ Entry point: `todo`
 | Command | Description |
 |---------|-------------|
 | `todo task create <title> -c <col>` | Create a task in the named column (required) |
-| `todo task ls` | List tasks on the active board |
+| `todo task ls` | List tasks on the active workspace |
 | `todo task show <task>` | Show task detail with history and dependencies |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo task mv <task> <column> [pos]` | Move task to a column (within-board only) |
+| `todo task mv <task> <column> [pos]` | Move task to a status (within-workspace only) |
 | `todo task rm <task>` | Archive a task |
 | `todo task log <task>` | Show task change history |
 
@@ -63,7 +63,7 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 |------|-------------|
 | `--all` / `-a` | Include archived tasks |
 | `--archived` | Show only archived tasks |
-| `--column` / `-c` | Filter by column name |
+| `--column` / `-c` | Filter by status name |
 | `--project` / `-p` | Filter by project name |
 | `--priority` / `-P` | Filter by priority (1-5) |
 | `--search` / `-s` | Search by title substring |
@@ -72,28 +72,28 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 
 | Command | Description |
 |---------|-------------|
-| `todo board ...` | `create [--columns a,b,c]`, `ls`, `use`, `rename`, `rm` |
+| `todo workspace ...` | `create [--columns a,b,c]`, `ls`, `use`, `rename`, `rm` |
 | `todo col ...` | `create`, `ls`, `rename`, `rm [--reassign-to COL\|--force]` |
 | `todo project ...` | `create`, `ls`, `show`, `rm` |
 | `todo dep ...` | `create`, `rm` |
 | `todo tag ...` | `create`, `ls`, `rm [--unassign]` |
 | `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `rm`, `mv`, `assign`, `unassign` |
-| `todo context` | One-call board summary: columns, tasks, projects, tags, groups |
+| `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
 | `todo export` | Export database to Markdown with Mermaid dependency graphs |
 
-### Cross-Board Transfer
+### Cross-Workspace Transfer
 
-Tasks can be transferred between boards. The transfer creates a copy on the target board and archives the original. Dependencies must be removed first.
+Tasks can be transferred between workspaces. The transfer creates a copy on the target workspace and archives the original. Dependencies must be removed first.
 
 ```sh
-# Transfer task to another board
-todo task transfer task-0001 --board ops --column Backlog
+# Transfer task to another workspace
+todo task transfer task-0001 --workspace ops --column Backlog
 
-# Transfer with project assignment on the target board
-todo task transfer task-0001 --board ops --column Backlog --project infra
+# Transfer with project assignment on the target workspace
+todo task transfer task-0001 --workspace ops --column Backlog --project infra
 
 # Preview before transferring (checks for blocking dependencies)
-todo task transfer task-0001 --board ops --column Backlog --dry-run
+todo task transfer task-0001 --workspace ops --column Backlog --dry-run
 ```
 
 ## TUI
@@ -110,12 +110,12 @@ The TUI provides a full kanban board view with keyboard-driven navigation and mo
 | `Enter` | Open task detail (read-only) |
 | `e` | Edit task |
 | `n` | Create new task in focused column |
-| `m` | Move task to a different board |
+| `m` | Move task to a different workspace |
 | `d` / `Delete` | Archive task |
 | `Shift+Left/Right` | Move task between columns |
 | `s` | Open settings |
 | `a` | Open all-tasks view |
-| `b` | Switch board |
+| `b` | Switch workspace |
 | `p` | Filter by project |
 | `c` | Filter by column (in all-tasks view) |
 
@@ -132,12 +132,12 @@ Accessible via `s` key. Stored at `~/.config/sticky-notes/tui.toml`.
 
 ### Screens
 
-- **Board View** — main kanban grid with columns and task cards
-- **All Tasks** — flat list of all tasks with column filtering
+- **Board View** — main kanban grid with statuses and task cards
+- **All Tasks** — flat list of all tasks with status filtering
 - **Settings** — theme, display, and behavior preferences
 - **Task Detail** — read-only task view with history (press `e` to edit from here)
 - **Task Form** — create/edit task modal with validation
-- **Move to Board** — select target board, column, and optional project
+- **Move to Workspace** — select target workspace, status, and optional project
 
 ## Claude Code Plugin
 
@@ -180,19 +180,19 @@ pip install git+https://github.com/phansen314/sticky-notes.git
 
 ## Workflow Tracking (manual setup)
 
-If you prefer not to install the plugin, seed a board and paste the workflow snippet into your `~/.claude/CLAUDE.md`:
+If you prefer not to install the plugin, seed a workspace and paste the workflow snippet into your `~/.claude/CLAUDE.md`:
 
 ```sh
-todo board create claude --columns Backlog,"In Progress",Done
+todo workspace create claude --columns Backlog,"In Progress",Done
 ```
 
 ```markdown
 ## Workflow Tracking with sticky-notes
 
 For multi-step plans (5+ steps), use the `todo` CLI to track progress persistently.
-All work lives on the **"claude" board** which has three columns: Backlog, In Progress, Done.
+All work lives on the **"claude" workspace** which has three statuses: Backlog, In Progress, Done.
 
-1. Switch to the claude board: `todo board use claude`
+1. Switch to the claude workspace: `todo workspace use claude`
 2. Create a project for the plan: `todo project create "<plan name>"`
 3. Create one task per plan step: `todo task create "<step>" -c Backlog --project "<plan>" -P N`
 4. Add dependencies where ordering matters: `todo dep create task-NNNN task-MMMM`
@@ -203,9 +203,9 @@ All work lives on the **"claude" board** which has three columns: Backlog, In Pr
 
 ## Data Model
 
-**Hierarchy:** Board → Column → Task (and Board → Project → Task)
+**Hierarchy:** Workspace → Status → Task (and Workspace → Project → Task)
 
-Columns are board-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead. All mutations are recorded in the task history audit trail.
+Statuses are workspace-scoped and represent kanban workflow stages. No data is ever deleted — use `archived` flags instead. All mutations are recorded in the task history audit trail.
 
 To generate an ER diagram from the schema:
 

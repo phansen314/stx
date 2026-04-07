@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sticky_notes import presenters
 from sticky_notes.models import (
-    Board,
+    Workspace,
     Group,
     Project,
     Status,
@@ -12,13 +12,13 @@ from sticky_notes.models import (
     TaskHistory,
 )
 from sticky_notes.service_models import (
-    BoardContext,
-    BoardListStatus,
-    BoardListView,
+    WorkspaceContext,
+    WorkspaceListStatus,
+    WorkspaceListView,
     GroupDetail,
     GroupRef,
     GroupTreeNode,
-    MoveToBoardPreview,
+    MoveToWorkspacePreview,
     ProjectDetail,
     ProjectGroupTree,
     TaskDetail,
@@ -29,22 +29,22 @@ from sticky_notes.service_models import (
 # ---- factories (structural, no DB) ----
 
 
-def _board(id: int = 1, name: str = "B", archived: bool = False) -> Board:
-    return Board(id=id, name=name, archived=archived, created_at=0)
+def _workspace(id: int = 1, name: str = "B", archived: bool = False) -> Workspace:
+    return Workspace(id=id, name=name, archived=archived, created_at=0)
 
 
 def _status(id: int, name: str, archived: bool = False) -> Status:
-    return Status(id=id, board_id=1, name=name, archived=archived, created_at=0)
+    return Status(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
 
 
 def _project(id: int, name: str, description: str | None = None) -> Project:
     return Project(
-        id=id, board_id=1, name=name, description=description, archived=False, created_at=0,
+        id=id, workspace_id=1, name=name, description=description, archived=False, created_at=0,
     )
 
 
 def _tag(id: int, name: str, archived: bool = False) -> Tag:
-    return Tag(id=id, board_id=1, name=name, archived=archived, created_at=0)
+    return Tag(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
 
 
 def _task(
@@ -53,7 +53,7 @@ def _task(
     due_date: int | None = None, project_id: int | None = None,
 ) -> Task:
     return Task(
-        id=id, board_id=1, title=title,
+        id=id, workspace_id=1, title=title,
         project_id=project_id, description=None, status_id=status_id,
         priority=priority, due_date=due_date, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
@@ -66,7 +66,7 @@ def _list_item(
     project_name: str | None = None, tag_names: tuple[str, ...] = (),
 ) -> TaskListItem:
     return TaskListItem(
-        id=id, board_id=1, title=title,
+        id=id, workspace_id=1, title=title,
         project_id=None, description=None, status_id=status_id,
         priority=priority, due_date=None, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
@@ -114,21 +114,21 @@ class TestHistoryFormatter:
 
 class TestFormatBoardList:
     def test_empty(self):
-        assert presenters.format_board_list((), None) == "no boards"
+        assert presenters.format_workspace_list((), None) == "no workspaces"
 
     def test_active_marker(self):
-        boards = (_board(1, "A"), _board(2, "B"))
-        out = presenters.format_board_list(boards, active_id=2)
+        workspaces = (_workspace(1, "A"), _workspace(2, "B"))
+        out = presenters.format_workspace_list(workspaces, active_id=2)
         assert "  A\n  B *" == out
 
     def test_archived_marker(self):
-        boards = (_board(1, "A", archived=True),)
-        out = presenters.format_board_list(boards, active_id=None)
+        workspaces = (_workspace(1, "A", archived=True),)
+        out = presenters.format_workspace_list(workspaces, active_id=None)
         assert "(archived)" in out
 
     def test_active_and_archived(self):
-        boards = (_board(1, "A", archived=True),)
-        out = presenters.format_board_list(boards, active_id=1)
+        workspaces = (_workspace(1, "A", archived=True),)
+        out = presenters.format_workspace_list(workspaces, active_id=1)
         assert " *" in out
         assert "(archived)" in out
 
@@ -171,7 +171,7 @@ class TestFormatProjectList:
 class TestFormatProjectDetail:
     def test_empty_tasks(self):
         detail = ProjectDetail(
-            id=1, board_id=1, name="P", description=None,
+            id=1, workspace_id=1, name="P", description=None,
             archived=False, created_at=0, tasks=(),
         )
         out = presenters.format_project_detail(detail)
@@ -180,7 +180,7 @@ class TestFormatProjectDetail:
 
     def test_with_description_and_tasks(self):
         detail = ProjectDetail(
-            id=1, board_id=1, name="P", description="desc",
+            id=1, workspace_id=1, name="P", description="desc",
             archived=False, created_at=0,
             tasks=(_task(5, "work"),),
         )
@@ -211,7 +211,7 @@ class TestFormatTagList:
 class TestFormatTaskDetail:
     def _detail(self, **overrides) -> TaskDetail:
         base = dict(
-            id=7, board_id=1, title="T", project_id=None, description=None,
+            id=7, workspace_id=1, title="T", project_id=None, description=None,
             status_id=1, priority=2, due_date=None, position=0, archived=False,
             created_at=0, start_date=None, finish_date=None, group_id=None,
             status=_status(1, "Todo"), project=None, group=None,
@@ -259,29 +259,29 @@ class TestFormatTaskDetail:
 
 class TestFormatBoardListView:
     def test_statuses_with_headers(self):
-        view = BoardListView(
-            board=_board(1, "B"),
+        view = WorkspaceListView(
+            workspace=_workspace(1, "B"),
             statuses=(
-                BoardListStatus(status=_status(1, "Todo"), tasks=()),
-                BoardListStatus(status=_status(2, "Done"), tasks=()),
+                WorkspaceListStatus(status=_status(1, "Todo"), tasks=()),
+                WorkspaceListStatus(status=_status(2, "Done"), tasks=()),
             ),
         )
-        out = presenters.format_board_list_view(view)
+        out = presenters.format_workspace_list_view(view)
         assert "== Todo ==" in out
         assert "== Done ==" in out
         assert "(empty)" in out
 
     def test_task_rendering(self):
-        view = BoardListView(
-            board=_board(1),
+        view = WorkspaceListView(
+            workspace=_workspace(1),
             statuses=(
-                BoardListStatus(
+                WorkspaceListStatus(
                     status=_status(1, "Todo"),
                     tasks=(_list_item(1, "do it", priority=3, project_name="proj", tag_names=("bug",)),),
                 ),
             ),
         )
-        out = presenters.format_board_list_view(view)
+        out = presenters.format_workspace_list_view(view)
         assert "task-0001" in out
         assert "[P3]" in out
         assert "do it" in out
@@ -289,16 +289,16 @@ class TestFormatBoardListView:
         assert "[bug]" in out
 
     def test_no_project_or_tags(self):
-        view = BoardListView(
-            board=_board(1),
+        view = WorkspaceListView(
+            workspace=_workspace(1),
             statuses=(
-                BoardListStatus(
+                WorkspaceListStatus(
                     status=_status(1, "Todo"),
                     tasks=(_list_item(1, "bare"),),
                 ),
             ),
         )
-        out = presenters.format_board_list_view(view)
+        out = presenters.format_workspace_list_view(view)
         assert out.endswith("bare")  # no trailing @proj or [tags] segment
         assert "@" not in out
 
@@ -307,40 +307,40 @@ class TestFormatBoardListView:
 
 
 class TestFormatBoardContext:
-    def _ctx(self, *, name="dev", projects=(), tags=(), groups=()) -> BoardContext:
-        view = BoardListView(board=_board(1, name), statuses=())
-        return BoardContext(view=view, projects=projects, tags=tags, groups=groups)
+    def _ctx(self, *, name="dev", projects=(), tags=(), groups=()) -> WorkspaceContext:
+        view = WorkspaceListView(workspace=_workspace(1, name), statuses=())
+        return WorkspaceContext(view=view, projects=projects, tags=tags, groups=groups)
 
     def _ref(self, id: int, proj_id: int, title: str) -> GroupRef:
         return GroupRef(id=id, project_id=proj_id, title=title, parent_id=None,
                         position=0, archived=False, created_at=0)
 
     def test_board_header(self):
-        out = presenters.format_board_context(self._ctx(name="work"))
+        out = presenters.format_workspace_context(self._ctx(name="work"))
         assert out.startswith("== work ==")
 
     def test_no_projects_no_line(self):
-        out = presenters.format_board_context(self._ctx())
+        out = presenters.format_workspace_context(self._ctx())
         assert "Projects:" not in out
 
     def test_projects_line(self):
-        out = presenters.format_board_context(
+        out = presenters.format_workspace_context(
             self._ctx(projects=(_project(1, "sprint1"), _project(2, "sprint2")))
         )
         assert "Projects: sprint1, sprint2" in out
 
     def test_tags_line(self):
-        out = presenters.format_board_context(self._ctx(tags=(_tag(1, "bug"),)))
+        out = presenters.format_workspace_context(self._ctx(tags=(_tag(1, "bug"),)))
         assert "Tags: bug" in out
 
     def test_groups_line(self):
         p = _project(1, "sprint1")
         g = self._ref(1, 1, "G1")
-        out = presenters.format_board_context(self._ctx(projects=(p,), groups=(g,)))
+        out = presenters.format_workspace_context(self._ctx(projects=(p,), groups=(g,)))
         assert "Groups: G1 (sprint1)" in out
 
     def test_no_tags_no_line(self):
-        out = presenters.format_board_context(self._ctx())
+        out = presenters.format_workspace_context(self._ctx())
         assert "Tags:" not in out
 
 
@@ -474,18 +474,18 @@ class TestFormatGroupDetail:
 class TestFormatMovePreview:
     def _preview(self, **overrides) -> MoveToBoardPreview:
         base = dict(
-            task_id=5, task_title="T", source_board_id=1, target_board_id=2,
+            task_id=5, task_title="T", source_workspace_id=1, target_workspace_id=2,
             target_status_id=3, can_move=True, blocking_reason=None,
             dependency_ids=(), is_archived=False,
         )
         base.update(overrides)
-        return MoveToBoardPreview(**base)
+        return MoveToWorkspacePreview(**base)
 
     def test_can_move(self):
         out = presenters.format_move_preview(self._preview(), "other", "Backlog")
         assert "dry-run" in out
         assert "task-0005" in out
-        assert "board 'other' / status 'Backlog'" in out
+        assert "workspace 'other' / status 'Backlog'" in out
         assert "transfer OK" in out
 
     def test_blocked_by_dependencies(self):

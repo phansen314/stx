@@ -1,21 +1,21 @@
 ```mermaid
 erDiagram
-    boards ||--o{ projects : ""
-    boards ||--o{ columns : ""
+    workspaces ||--o{ projects : ""
+    workspaces ||--o{ statuses : ""
     projects ||--o{ groups : ""
     groups |o--o{ groups : ""
-    columns ||--o{ tasks : ""
+    statuses ||--o{ tasks : ""
     projects |o--o{ tasks : ""
-    boards ||--o{ tasks : ""
+    workspaces ||--o{ tasks : ""
     groups |o--o{ tasks : ""
     tasks ||--o{ task_dependencies : ""
     tasks ||--o{ task_dependencies : ""
-    boards ||--o{ tags : ""
+    workspaces ||--o{ tags : ""
     tasks ||--o{ task_tags : ""
     tags ||--o{ task_tags : ""
     tasks ||--o{ task_history : ""
 
-    boards {
+    workspaces {
         INTEGER id PK
         TEXT name
         INTEGER archived
@@ -24,18 +24,17 @@ erDiagram
 
     projects {
         INTEGER id PK
-        INTEGER board_id FK
+        INTEGER workspace_id FK
         TEXT name
         TEXT description
         INTEGER archived
         INTEGER created_at
     }
 
-    columns {
+    statuses {
         INTEGER id PK
-        INTEGER board_id FK
+        INTEGER workspace_id FK
         TEXT name
-        INTEGER position
         INTEGER archived
         INTEGER created_at
     }
@@ -52,11 +51,11 @@ erDiagram
 
     tasks {
         INTEGER id PK
-        INTEGER board_id FK
+        INTEGER workspace_id FK
         INTEGER project_id FK
         TEXT title
         TEXT description
-        INTEGER column_id FK
+        INTEGER status_id FK
         INTEGER priority
         INTEGER due_date
         INTEGER position
@@ -70,12 +69,12 @@ erDiagram
     task_dependencies {
         INTEGER task_id FK "PK"
         INTEGER depends_on_id FK "PK"
-        INTEGER board_id FK
+        INTEGER workspace_id FK
     }
 
     tags {
         INTEGER id PK
-        INTEGER board_id FK
+        INTEGER workspace_id FK
         TEXT name
         INTEGER archived
         INTEGER created_at
@@ -84,7 +83,7 @@ erDiagram
     task_tags {
         INTEGER task_id FK "PK"
         INTEGER tag_id FK "PK"
-        INTEGER board_id FK
+        INTEGER workspace_id FK
     }
 
     task_history {

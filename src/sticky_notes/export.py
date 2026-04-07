@@ -168,9 +168,9 @@ def _render_tasks_section(
 
 
 def _render_deps_section(
-    board_deps: list[tuple[int, int]],
+    workspace_deps: list[tuple[int, int]],
 ) -> list[str]:
-    if not board_deps:
+    if not workspace_deps:
         return []
     lines = [
         "### Dependencies",
@@ -178,7 +178,7 @@ def _render_deps_section(
         "```mermaid",
         "graph LR",
     ]
-    for tid, did in board_deps:
+    for tid, did in workspace_deps:
         lines.append(f"    {format_task_num(tid)} --> {format_task_num(did)}")
     lines += [
         "```",
@@ -198,7 +198,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
     (WAL mode lets readers and writers proceed without blocking each other).
     """
     with transaction(conn):
-        boards = service.list_boards(conn, include_archived=True)
+        workspaces = service.list_workspaces(conn, include_archived=True)
 
         statuses: list[dict] = []
         projects: list[dict] = []
@@ -206,8 +206,8 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         tags: list[dict] = []
         groups: list[dict] = []
 
-        for board in boards:
-            bid = board.id
+        for workspace in workspaces:
+            bid = workspace.id
             statuses.extend(
                 dataclasses.asdict(s)
                 for s in service.list_statuses(conn, bid, include_archived=True)
@@ -226,7 +226,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
             )
             groups.extend(
                 dataclasses.asdict(g)
-                for g in service.list_groups_for_board(conn, bid, include_archived=True)
+                for g in service.list_groups_for_workspace(conn, bid, include_archived=True)
             )
 
         task_tags = list(repo.list_all_task_tags(conn))
@@ -238,7 +238,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "exported_at": int(time.time()),
-        "boards": [dataclasses.asdict(b) for b in boards],
+        "workspaces": [dataclasses.asdict(w) for w in workspaces],
         "statuses": statuses,
         "projects": projects,
         "tasks": tasks,
@@ -259,12 +259,12 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         "",
     ]
 
-    boards = service.list_boards(conn)
+    workspaces = service.list_workspaces(conn)
     all_deps = service.list_all_dependencies(conn)
 
-    for board in boards:
-        bid = board.id
-        lines.append(f"## Board: {_md_escape(board.name)}")
+    for workspace in workspaces:
+        bid = workspace.id
+        lines.append(f"## Workspace: {_md_escape(workspace.name)}")
         lines.append("")
 
         statuses = service.list_statuses(conn, bid)
@@ -286,11 +286,11 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_groups_section(conn, projects)
         lines += _render_tasks_section(statuses, tasks_by_status, proj_map, tag_map, task_tag_map)
 
-        board_deps = [
+        workspace_deps = [
             (tid, did)
             for tid, did in all_deps
             if tid in task_ids and did in task_ids
         ]
-        lines += _render_deps_section(board_deps)
+        lines += _render_deps_section(workspace_deps)
 
     return "\n".join(lines) + "\n"

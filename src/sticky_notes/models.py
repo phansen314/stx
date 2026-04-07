@@ -34,26 +34,26 @@ class TaskField(StrEnum):
 
 
 @dataclass(frozen=True)
-class NewBoard:
+class NewWorkspace:
     name: str
 
 
 @dataclass(frozen=True)
 class NewProject:
-    board_id: int
+    workspace_id: int
     name: str
     description: str | None = None
 
 
 @dataclass(frozen=True)
 class NewStatus:
-    board_id: int
+    workspace_id: int
     name: str
 
 
 @dataclass(frozen=True)
 class NewTask:
-    board_id: int
+    workspace_id: int
     title: str
     status_id: int
     project_id: int | None = None
@@ -84,7 +84,7 @@ class NewTaskHistory:
 
 @dataclass(frozen=True)
 class NewTag:
-    board_id: int
+    workspace_id: int
     name: str
 
 
@@ -94,14 +94,14 @@ class NewTag:
 @dataclass(frozen=True)
 class Tag:
     id: int
-    board_id: int
+    workspace_id: int
     name: str
     archived: bool
     created_at: int
 
 
 @dataclass(frozen=True)
-class Board:
+class Workspace:
     id: int
     name: str
     archived: bool
@@ -111,7 +111,7 @@ class Board:
 @dataclass(frozen=True)
 class Project:
     id: int
-    board_id: int
+    workspace_id: int
     name: str
     description: str | None
     archived: bool
@@ -121,7 +121,7 @@ class Project:
 @dataclass(frozen=True)
 class Status:
     id: int
-    board_id: int
+    workspace_id: int
     name: str
     archived: bool
     created_at: int
@@ -130,7 +130,7 @@ class Status:
 @dataclass(frozen=True)
 class Task:
     id: int
-    board_id: int
+    workspace_id: int
     title: str
     project_id: int | None
     description: str | None
@@ -160,7 +160,7 @@ class Group:
 class GroupDependency:
     group_id: int
     depends_on_id: int
-    board_id: int
+    workspace_id: int
 
 
 @dataclass(frozen=True)
@@ -172,4 +172,3 @@ class TaskHistory:
     new_value: str | None
     source: str
     changed_at: int
-

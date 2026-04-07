@@ -16,15 +16,14 @@ from .mappers import (
     task_to_list_item,
 )
 from .models import (
-    Board,
     Group,
-    NewBoard,
     NewGroup,
     NewProject,
     NewStatus,
     NewTag,
     NewTask,
     NewTaskHistory,
+    NewWorkspace,
     Project,
     Status,
     Tag,
@@ -32,19 +31,20 @@ from .models import (
     TaskField,
     TaskFilter,
     TaskHistory,
+    Workspace,
 )
 from .service_models import (
-    BoardContext,
-    BoardListStatus,
-    BoardListView,
     GroupDetail,
     GroupRef,
     GroupTreeNode,
-    MoveToBoardPreview,
+    MoveToWorkspacePreview,
     ProjectDetail,
     ProjectGroupTree,
     TaskDetail,
     TaskListItem,
+    WorkspaceContext,
+    WorkspaceListStatus,
+    WorkspaceListView,
 )
 
 
@@ -57,12 +57,12 @@ _UNSET: Any = object()
 # ---- Error translation ----
 
 _UNIQUE_MESSAGES: dict[str, str] = {
-    "boards.name": "a board with this name already exists",
-    "projects.board_id, projects.name": "a project with this name already exists on this board",
-    "statuses.board_id, statuses.name": "a status with this name already exists on this board",
-    "tags.board_id, tags.name": "a tag with this name already exists on this board",
+    "workspaces.name": "a workspace with this name already exists",
+    "projects.workspace_id, projects.name": "a project with this name already exists on this workspace",
+    "statuses.workspace_id, statuses.name": "a status with this name already exists on this workspace",
+    "tags.workspace_id, tags.name": "a tag with this name already exists on this workspace",
     "groups.project_id, groups.title": "a group with this title already exists in this project",
-    "tasks.board_id, tasks.title": "a task with this title already exists on this board",
+    "tasks.workspace_id, tasks.title": "a task with this title already exists on this workspace",
 }
 
 _UNIQUE_RE = re.compile(r"UNIQUE constraint failed: (.+)")
@@ -87,7 +87,7 @@ def _translate_integrity_error(
     if "FOREIGN KEY constraint failed" in msg:
         if context:
             return ValueError(context)
-        return ValueError("referenced entity does not exist or belongs to a different board")
+        return ValueError("referenced entity does not exist or belongs to a different workspace")
     if "CHECK constraint failed" in msg:
         if context:
             return ValueError(context)
@@ -113,7 +113,7 @@ def _friendly_errors(
 def _validate_task_fields(
     changes: dict[str, Any],
     *,
-    board_id: int | None = None,
+    workspace_id: int | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     if "priority" in changes:
@@ -128,14 +128,14 @@ def _validate_task_fields(
     finish = changes.get("finish_date")
     if start is not None and finish is not None and finish < start:
         raise ValueError("finish date must be on or after start date")
-    if conn is not None and board_id is not None:
+    if conn is not None and workspace_id is not None:
         if "status_id" in changes:
             col = repo.get_status(conn, changes["status_id"])
             if col is None:
                 raise LookupError(f"status {changes['status_id']} not found")
-            if col.board_id != board_id:
+            if col.workspace_id != workspace_id:
                 raise ValueError(
-                    f"status {col.id} belongs to board {col.board_id}, not {board_id}"
+                    f"status {col.id} belongs to workspace {col.workspace_id}, not {workspace_id}"
                 )
             if col.archived:
                 raise ValueError(f"status {col.id} is archived")
@@ -143,19 +143,19 @@ def _validate_task_fields(
             proj = repo.get_project(conn, changes["project_id"])
             if proj is None:
                 raise LookupError(f"project {changes['project_id']} not found")
-            if proj.board_id != board_id:
+            if proj.workspace_id != workspace_id:
                 raise ValueError(
-                    f"project {proj.id} belongs to board {proj.board_id}, not {board_id}"
+                    f"project {proj.id} belongs to workspace {proj.workspace_id}, not {workspace_id}"
                 )
             if proj.archived:
                 raise ValueError(f"project {proj.id} is archived")
 
 
-def _ensure_tag(conn: sqlite3.Connection, board_id: int, name: str) -> Tag:
-    """Return the active tag on board_id matching name, creating it if absent."""
-    tag = repo.get_tag_by_name(conn, board_id, name)
+def _ensure_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
+    """Return the active tag on workspace_id matching name, creating it if absent."""
+    tag = repo.get_tag_by_name(conn, workspace_id, name)
     if tag is None:
-        tag = repo.insert_tag(conn, NewTag(board_id=board_id, name=name))
+        tag = repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
     return tag
 
 
@@ -182,62 +182,62 @@ def _record_changes(
         )
 
 
-# ---- Board ----
+# ---- Workspace ----
 
 
-def create_board(conn: sqlite3.Connection, name: str) -> Board:
+def create_workspace(conn: sqlite3.Connection, name: str) -> Workspace:
     with transaction(conn), _friendly_errors():
-        return repo.insert_board(conn, NewBoard(name=name))
+        return repo.insert_workspace(conn, NewWorkspace(name=name))
 
 
-def get_board(conn: sqlite3.Connection, board_id: int) -> Board:
-    board = repo.get_board(conn, board_id)
-    if board is None:
-        raise LookupError(f"board {board_id} not found")
-    return board
+def get_workspace(conn: sqlite3.Connection, workspace_id: int) -> Workspace:
+    workspace = repo.get_workspace(conn, workspace_id)
+    if workspace is None:
+        raise LookupError(f"workspace {workspace_id} not found")
+    return workspace
 
 
-def get_board_by_name(conn: sqlite3.Connection, name: str) -> Board:
-    board = repo.get_board_by_name(conn, name)
-    if board is None:
-        raise LookupError(f"board {name!r} not found")
-    return board
+def get_workspace_by_name(conn: sqlite3.Connection, name: str) -> Workspace:
+    workspace = repo.get_workspace_by_name(conn, name)
+    if workspace is None:
+        raise LookupError(f"workspace {name!r} not found")
+    return workspace
 
 
-def list_boards(
+def list_workspaces(
     conn: sqlite3.Connection,
     *,
     include_archived: bool = False,
-) -> tuple[Board, ...]:
-    return repo.list_boards(conn, include_archived=include_archived)
+) -> tuple[Workspace, ...]:
+    return repo.list_workspaces(conn, include_archived=include_archived)
 
 
-def update_board(
+def update_workspace(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     changes: dict[str, Any],
-) -> Board:
+) -> Workspace:
     with transaction(conn), _friendly_errors():
         if changes.get("archived") is True:
-            active_cols = repo.list_statuses(conn, board_id)
+            active_cols = repo.list_statuses(conn, workspace_id)
             if active_cols:
                 raise ValueError(
-                    f"board has {len(active_cols)} active status(es); "
+                    f"workspace has {len(active_cols)} active status(es); "
                     "archive or remove them first"
                 )
-            active_projs = repo.list_projects(conn, board_id)
+            active_projs = repo.list_projects(conn, workspace_id)
             if active_projs:
                 raise ValueError(
-                    f"board has {len(active_projs)} active project(s); "
+                    f"workspace has {len(active_projs)} active project(s); "
                     "archive or remove them first"
                 )
-            active_tasks = repo.list_tasks(conn, board_id)
+            active_tasks = repo.list_tasks(conn, workspace_id)
             if active_tasks:
                 raise ValueError(
-                    f"board has {len(active_tasks)} active task(s); "
+                    f"workspace has {len(active_tasks)} active task(s); "
                     "archive or remove them first"
                 )
-        return repo.update_board(conn, board_id, changes)
+        return repo.update_workspace(conn, workspace_id, changes)
 
 
 # ---- Status ----
@@ -245,11 +245,11 @@ def update_board(
 
 def create_status(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Status:
     with transaction(conn), _friendly_errors():
-        return repo.insert_status(conn, NewStatus(board_id=board_id, name=name))
+        return repo.insert_status(conn, NewStatus(workspace_id=workspace_id, name=name))
 
 
 def get_status(conn: sqlite3.Connection, status_id: int) -> Status:
@@ -261,10 +261,10 @@ def get_status(conn: sqlite3.Connection, status_id: int) -> Status:
 
 def get_status_by_name(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Status:
-    col = repo.get_status_by_name(conn, board_id, name)
+    col = repo.get_status_by_name(conn, workspace_id, name)
     if col is None:
         raise LookupError(f"status {name!r} not found")
     return col
@@ -272,11 +272,11 @@ def get_status_by_name(
 
 def list_statuses(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Status, ...]:
-    return repo.list_statuses(conn, board_id, include_archived=include_archived)
+    return repo.list_statuses(conn, workspace_id, include_archived=include_archived)
 
 
 def update_status(
@@ -325,13 +325,13 @@ def archive_status(
 
 def create_project(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
     description: str | None = None,
 ) -> Project:
     with transaction(conn), _friendly_errors():
         return repo.insert_project(
-            conn, NewProject(board_id=board_id, name=name, description=description)
+            conn, NewProject(workspace_id=workspace_id, name=name, description=description)
         )
 
 
@@ -344,10 +344,10 @@ def get_project(conn: sqlite3.Connection, project_id: int) -> Project:
 
 def get_project_by_name(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Project:
-    project = repo.get_project_by_name(conn, board_id, name)
+    project = repo.get_project_by_name(conn, workspace_id, name)
     if project is None:
         raise LookupError(f"project {name!r} not found")
     return project
@@ -361,11 +361,11 @@ def get_project_detail(conn: sqlite3.Connection, project_id: int) -> ProjectDeta
 
 def list_projects(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Project, ...]:
-    return repo.list_projects(conn, board_id, include_archived=include_archived)
+    return repo.list_projects(conn, workspace_id, include_archived=include_archived)
 
 
 def update_project(
@@ -395,7 +395,7 @@ def update_project(
 
 def create_task(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     title: str,
     status_id: int,
     *,
@@ -416,12 +416,12 @@ def create_task(
         fields["start_date"] = start_date
     if finish_date is not None:
         fields["finish_date"] = finish_date
-    _validate_task_fields(fields, board_id=board_id, conn=conn)
+    _validate_task_fields(fields, workspace_id=workspace_id, conn=conn)
     with transaction(conn), _friendly_errors():
         task = repo.insert_task(
             conn,
             NewTask(
-                board_id=board_id,
+                workspace_id=workspace_id,
                 title=title,
                 status_id=status_id,
                 project_id=project_id,
@@ -434,7 +434,7 @@ def create_task(
             ),
         )
         for tag_name in tags:
-            tag = _ensure_tag(conn, board_id, tag_name)
+            tag = _ensure_tag(conn, workspace_id, tag_name)
             repo.add_tag_to_task(conn, task.id, tag.id)
         return task
 
@@ -446,8 +446,8 @@ def get_task(conn: sqlite3.Connection, task_id: int) -> Task:
     return task
 
 
-def get_task_by_title(conn: sqlite3.Connection, board_id: int, title: str) -> Task:
-    task = repo.get_task_by_title(conn, board_id, title)
+def get_task_by_title(conn: sqlite3.Connection, workspace_id: int, title: str) -> Task:
+    task = repo.get_task_by_title(conn, workspace_id, title)
     if task is None:
         raise LookupError(f"task {title!r} not found")
     return task
@@ -455,7 +455,7 @@ def get_task_by_title(conn: sqlite3.Connection, board_id: int, title: str) -> Ta
 
 def resolve_task_id(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     raw: str,
     *,
     by_title: bool = False,
@@ -463,14 +463,14 @@ def resolve_task_id(
     """Resolve a task identifier to its ID.
 
     By default only accepts numeric formats ('1', 'task-0001', '#1').
-    Pass by_title=True to also fall back to title lookup on this board.
+    Pass by_title=True to also fall back to title lookup on this workspace.
     """
     try:
         return parse_task_num(raw)
     except ValueError:
         pass
     if by_title:
-        return get_task_by_title(conn, board_id, raw).id
+        return get_task_by_title(conn, workspace_id, raw).id
     raise LookupError(f"invalid task number {raw!r}; use an integer, 'task-NNNN', or '#N'")
 
 
@@ -497,25 +497,25 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
 
 def list_tasks(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
-    return repo.list_tasks(conn, board_id, include_archived=include_archived)
+    return repo.list_tasks(conn, workspace_id, include_archived=include_archived)
 
 
 def list_tasks_filtered(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     task_filter: TaskFilter | None = None,
 ) -> tuple[Task, ...]:
-    return repo.list_tasks_filtered(conn, board_id, task_filter=task_filter)
+    return repo.list_tasks_filtered(conn, workspace_id, task_filter=task_filter)
 
 
-def get_board_list_view(
+def get_workspace_list_view(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     status_id: int | None = None,
     project_id: int | None = None,
@@ -525,12 +525,12 @@ def get_board_list_view(
     search: str | None = None,
     include_archived: bool = False,
     only_archived: bool = False,
-) -> BoardListView:
-    """Denormalized board view for list rendering. Groups task list items by
+) -> WorkspaceListView:
+    """Denormalized workspace view for list rendering. Groups task list items by
     status (alphabetical by name) with project and tag names pre-resolved,
     so callers don't need to re-query projects/tags for display. When
     include_archived is True, archived statuses are included as well."""
-    board = get_board(conn, board_id)
+    workspace = get_workspace(conn, workspace_id)
     task_filter = TaskFilter(
         status_id=status_id,
         project_id=project_id,
@@ -541,11 +541,11 @@ def get_board_list_view(
         include_archived=include_archived,
         only_archived=only_archived,
     )
-    tasks = repo.list_tasks_filtered(conn, board_id, task_filter=task_filter)
-    statuses = repo.list_statuses(conn, board_id, include_archived=include_archived or only_archived)
-    projects = repo.list_projects(conn, board_id, include_archived=True)
+    tasks = repo.list_tasks_filtered(conn, workspace_id, task_filter=task_filter)
+    statuses = repo.list_statuses(conn, workspace_id, include_archived=include_archived or only_archived)
+    projects = repo.list_projects(conn, workspace_id, include_archived=True)
     proj_name_by_id: dict[int, str] = {p.id: p.name for p in projects}
-    tags = repo.list_tags(conn, board_id, include_archived=True)
+    tags = repo.list_tags(conn, workspace_id, include_archived=True)
     tag_name_by_id: dict[int, str] = {t.id: t.name for t in tags}
 
     task_ids = tuple(t.id for t in tasks)
@@ -565,21 +565,21 @@ def get_board_list_view(
         return task_to_list_item(task, project_name=proj_name, tag_names=tag_names)
 
     status_list = tuple(
-        BoardListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
+        WorkspaceListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
         for s in statuses
     )
-    return BoardListView(board=board, statuses=status_list)
+    return WorkspaceListView(workspace=workspace, statuses=status_list)
 
 
-def get_board_context(conn: sqlite3.Connection, board_id: int) -> BoardContext:
-    """Aggregated board state: view + projects + tags + all groups. Active items only."""
-    view = get_board_list_view(conn, board_id)
-    projects = list_projects(conn, board_id)
-    tags = list_tags(conn, board_id)
+def get_workspace_context(conn: sqlite3.Connection, workspace_id: int) -> WorkspaceContext:
+    """Aggregated workspace state: view + projects + tags + all groups. Active items only."""
+    view = get_workspace_list_view(conn, workspace_id)
+    projects = list_projects(conn, workspace_id)
+    tags = list_tags(conn, workspace_id)
     groups: list[GroupRef] = []
     for proj in projects:
         groups.extend(list_groups(conn, proj.id))
-    return BoardContext(view=view, projects=projects, tags=tags, groups=tuple(groups))
+    return WorkspaceContext(view=view, projects=projects, tags=tags, groups=tuple(groups))
 
 
 def update_task(
@@ -600,17 +600,17 @@ def update_task(
             merged["start_date"] = changes.get("start_date", old.start_date)
             merged["finish_date"] = changes.get("finish_date", old.finish_date)
         merged.update(changes)
-        _validate_task_fields(merged, board_id=old.board_id, conn=conn)
+        _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
         if changes:
             updated = repo.update_task(conn, task_id, changes)
             _record_changes(conn, task_id, old, changes, source)
         else:
             updated = old
         for tag_name in add_tags:
-            tag = _ensure_tag(conn, old.board_id, tag_name)
+            tag = _ensure_tag(conn, old.workspace_id, tag_name)
             repo.add_tag_to_task(conn, task_id, tag.id)
         for tag_name in remove_tags:
-            tag = repo.get_tag_by_name(conn, old.board_id, tag_name)
+            tag = repo.get_tag_by_name(conn, old.workspace_id, tag_name)
             if tag is None:
                 raise LookupError(f"tag {tag_name!r} not found")
             existing = repo.list_tag_ids_by_task(conn, task_id)
@@ -637,14 +637,14 @@ def move_task(
     return update_task(conn, task_id, changes, source)
 
 
-def _validate_move_to_board(
+def _validate_move_to_workspace(
     conn: sqlite3.Connection,
     task_id: int,
-    target_board_id: int,
+    target_workspace_id: int,
     target_status_id: int,
     project_id: int | None,
 ) -> tuple[Task, bool, str | None, tuple[int, ...]]:
-    """Check move-to-board preconditions. Non-mutating.
+    """Check move-to-workspace preconditions. Non-mutating.
     Returns (task, can_move, blocking_reason, dependency_ids).
     Raises LookupError only if task_id does not exist."""
     task = get_task(conn, task_id)
@@ -657,43 +657,43 @@ def _validate_move_to_board(
         dep_ids = tuple(sorted({*blocked_by, *blocks}))
         return task, False, (
             f"task {task_id} has dependencies ({', '.join(str(d) for d in dep_ids)}); "
-            "remove them before moving to another board"
+            "remove them before moving to another workspace"
         ), dep_ids
     target_col = repo.get_status(conn, target_status_id)
-    if target_col is None or target_col.board_id != target_board_id:
+    if target_col is None or target_col.workspace_id != target_workspace_id:
         return task, False, (
-            f"status {target_status_id} does not belong to board {target_board_id}"
+            f"status {target_status_id} does not belong to workspace {target_workspace_id}"
         ), dep_ids
     if target_col.archived:
         return task, False, f"status {target_status_id} is archived", dep_ids
     if project_id is not None:
         proj = repo.get_project(conn, project_id)
-        if proj is None or proj.board_id != target_board_id:
+        if proj is None or proj.workspace_id != target_workspace_id:
             return task, False, (
-                f"project {project_id} does not belong to board {target_board_id}"
+                f"project {project_id} does not belong to workspace {target_workspace_id}"
             ), dep_ids
         if proj.archived:
             return task, False, f"project {project_id} is archived", dep_ids
     return task, True, None, dep_ids
 
 
-def preview_move_to_board(
+def preview_move_to_workspace(
     conn: sqlite3.Connection,
     task_id: int,
-    target_board_id: int,
+    target_workspace_id: int,
     target_status_id: int,
     *,
     project_id: int | None = None,
-) -> MoveToBoardPreview:
-    """Dry-run the same validation as move_task_to_board. Does not mutate."""
-    task, can_move, reason, dep_ids = _validate_move_to_board(
-        conn, task_id, target_board_id, target_status_id, project_id,
+) -> MoveToWorkspacePreview:
+    """Dry-run the same validation as move_task_to_workspace. Does not mutate."""
+    task, can_move, reason, dep_ids = _validate_move_to_workspace(
+        conn, task_id, target_workspace_id, target_status_id, project_id,
     )
-    return MoveToBoardPreview(
+    return MoveToWorkspacePreview(
         task_id=task.id,
         task_title=task.title,
-        source_board_id=task.board_id,
-        target_board_id=target_board_id,
+        source_workspace_id=task.workspace_id,
+        target_workspace_id=target_workspace_id,
         target_status_id=target_status_id,
         can_move=can_move,
         blocking_reason=reason,
@@ -702,18 +702,18 @@ def preview_move_to_board(
     )
 
 
-def move_task_to_board(
+def move_task_to_workspace(
     conn: sqlite3.Connection,
     task_id: int,
-    target_board_id: int,
+    target_workspace_id: int,
     target_status_id: int,
     *,
     project_id: int | None = None,
     source: str,
 ) -> Task:
     with transaction(conn), _friendly_errors():
-        old, can_move, reason, _ = _validate_move_to_board(
-            conn, task_id, target_board_id, target_status_id, project_id,
+        old, can_move, reason, _ = _validate_move_to_workspace(
+            conn, task_id, target_workspace_id, target_status_id, project_id,
         )
         if not can_move:
             raise ValueError(reason)
@@ -721,7 +721,7 @@ def move_task_to_board(
         new = repo.insert_task(
             conn,
             NewTask(
-                board_id=target_board_id,
+                workspace_id=target_workspace_id,
                 title=old.title,
                 status_id=target_status_id,
                 project_id=project_id,
@@ -734,14 +734,14 @@ def move_task_to_board(
             ),
         )
 
-        # Migrate active tags by name to the target board.  Archived tags on
-        # the source board are intentionally skipped: they cannot be referenced
-        # on the destination board and recreating them there would resurrect
+        # Migrate active tags by name to the target workspace.  Archived tags on
+        # the source workspace are intentionally skipped: they cannot be referenced
+        # on the destination workspace and recreating them there would resurrect
         # tags the user had already retired.
         for tag in repo.list_tags_by_task(conn, task_id):
-            target_tag = repo.get_tag_by_name(conn, target_board_id, tag.name)
+            target_tag = repo.get_tag_by_name(conn, target_workspace_id, tag.name)
             if target_tag is None:
-                target_tag = repo.insert_tag(conn, NewTag(board_id=target_board_id, name=tag.name))
+                target_tag = repo.insert_tag(conn, NewTag(workspace_id=target_workspace_id, name=tag.name))
             repo.add_tag_to_task(conn, new.id, target_tag.id)
 
         repo.update_task(conn, task_id, {"archived": True})
@@ -762,11 +762,11 @@ def add_dependency(
             raise ValueError("a task cannot depend on itself")
         task = get_task(conn, task_id)
         dep = get_task(conn, depends_on_id)
-        if task.board_id != dep.board_id:
+        if task.workspace_id != dep.workspace_id:
             raise ValueError(
-                f"tasks must be on the same board: "
-                f"task {task_id} is on board {task.board_id}, "
-                f"task {depends_on_id} is on board {dep.board_id}"
+                f"tasks must be on the same workspace: "
+                f"task {task_id} is on workspace {task.workspace_id}, "
+                f"task {depends_on_id} is on workspace {dep.workspace_id}"
             )
         existing = repo.list_blocked_by_ids(conn, task_id)
         if depends_on_id in existing:
@@ -819,11 +819,11 @@ def add_group_dependency(
             raise LookupError(f"group {depends_on_id} not found")
         grp_proj = repo.get_project(conn, grp.project_id)
         dep_proj = repo.get_project(conn, dep.project_id)
-        if grp_proj is None or dep_proj is None or grp_proj.board_id != dep_proj.board_id:
+        if grp_proj is None or dep_proj is None or grp_proj.workspace_id != dep_proj.workspace_id:
             raise ValueError(
-                f"groups must be on the same board: "
-                f"group {group_id} is on board {grp_proj.board_id if grp_proj else '?'}, "
-                f"group {depends_on_id} is on board {dep_proj.board_id if dep_proj else '?'}"
+                f"groups must be on the same workspace: "
+                f"group {group_id} is on workspace {grp_proj.workspace_id if grp_proj else '?'}, "
+                f"group {depends_on_id} is on workspace {dep_proj.workspace_id if dep_proj else '?'}"
             )
         existing = repo.list_group_blocked_by_ids(conn, group_id)
         if depends_on_id in existing:
@@ -927,17 +927,17 @@ def get_group_by_title(
 
 def resolve_group_by_title(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     title: str,
     *,
     project_id: int | None = None,
 ) -> Group:
     """Resolve a group by title. If project_id is given, scope the search to that project.
-    Otherwise search all projects on the board; raises LookupError on ambiguity.
+    Otherwise search all projects on the workspace; raises LookupError on ambiguity.
     Comparison is case-insensitive (matching the underlying title COLLATE NOCASE)."""
     if project_id is not None:
         return get_group_by_title(conn, project_id, title)
-    candidates = repo.list_groups_by_board(conn, board_id, title=title)
+    candidates = repo.list_groups_by_workspace(conn, workspace_id, title=title)
     if not candidates:
         raise LookupError(f"group {title!r} not found")
     if len(candidates) > 1:
@@ -956,16 +956,16 @@ def resolve_group_by_title(
 
 def resolve_group(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     title: str,
     *,
     project_name: str | None = None,
 ) -> Group:
     """Resolve a group by title. If project_name is given, translates it to a
     project_id and scopes the search; otherwise searches all projects on the
-    board (raising LookupError on ambiguity)."""
-    project_id = get_project_by_name(conn, board_id, project_name).id if project_name else None
-    return resolve_group_by_title(conn, board_id, title, project_id=project_id)
+    workspace (raising LookupError on ambiguity)."""
+    project_id = get_project_by_name(conn, workspace_id, project_name).id if project_name else None
+    return resolve_group_by_title(conn, workspace_id, title, project_id=project_id)
 
 
 def get_group_ancestry(
@@ -1140,13 +1140,13 @@ def list_tasks_by_ids(
     return repo.list_tasks_by_ids(conn, task_ids)
 
 
-def list_groups_for_board(
+def list_groups_for_workspace(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Group, ...]:
-    return repo.list_groups_by_board(conn, board_id, include_archived=include_archived)
+    return repo.list_groups_by_workspace(conn, workspace_id, include_archived=include_archived)
 
 
 def list_ungrouped_task_ids(
@@ -1159,9 +1159,9 @@ def list_ungrouped_task_ids(
 # ---- Tag ----
 
 
-def create_tag(conn: sqlite3.Connection, board_id: int, name: str) -> Tag:
+def create_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
     with transaction(conn), _friendly_errors():
-        return repo.insert_tag(conn, NewTag(board_id=board_id, name=name))
+        return repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
 
 
 def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag:
@@ -1171,8 +1171,8 @@ def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag:
     return tag
 
 
-def get_tag_by_name(conn: sqlite3.Connection, board_id: int, name: str) -> Tag:
-    tag = repo.get_tag_by_name(conn, board_id, name)
+def get_tag_by_name(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
+    tag = repo.get_tag_by_name(conn, workspace_id, name)
     if tag is None:
         raise LookupError(f"tag {name!r} not found")
     return tag
@@ -1180,11 +1180,11 @@ def get_tag_by_name(conn: sqlite3.Connection, board_id: int, name: str) -> Tag:
 
 def list_tags(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Tag, ...]:
-    return repo.list_tags(conn, board_id, include_archived=include_archived)
+    return repo.list_tags(conn, workspace_id, include_archived=include_archived)
 
 
 def archive_tag(conn: sqlite3.Connection, tag_id: int, *, unassign: bool = False) -> Tag:
@@ -1198,16 +1198,16 @@ def tag_task(
     conn: sqlite3.Connection,
     task_id: int,
     tag_name: str,
-    board_id: int,
+    workspace_id: int,
 ) -> Tag:
     with transaction(conn), _friendly_errors():
         task = get_task(conn, task_id)
-        if task.board_id != board_id:
+        if task.workspace_id != workspace_id:
             raise ValueError(
-                f"task {task_id} belongs to board {task.board_id}, "
-                f"not board {board_id}"
+                f"task {task_id} belongs to workspace {task.workspace_id}, "
+                f"not workspace {workspace_id}"
             )
-        tag = _ensure_tag(conn, board_id, tag_name)
+        tag = _ensure_tag(conn, workspace_id, tag_name)
         repo.add_tag_to_task(conn, task_id, tag.id)
         return tag
 
@@ -1216,16 +1216,16 @@ def untag_task(
     conn: sqlite3.Connection,
     task_id: int,
     tag_name: str,
-    board_id: int,
+    workspace_id: int,
 ) -> None:
     with transaction(conn), _friendly_errors():
         task = get_task(conn, task_id)
-        if task.board_id != board_id:
+        if task.workspace_id != workspace_id:
             raise ValueError(
-                f"task {task_id} belongs to board {task.board_id}, "
-                f"not board {board_id}"
+                f"task {task_id} belongs to workspace {task.workspace_id}, "
+                f"not workspace {workspace_id}"
             )
-        tag = repo.get_tag_by_name(conn, board_id, tag_name)
+        tag = repo.get_tag_by_name(conn, workspace_id, tag_name)
         if tag is None:
             raise LookupError(f"tag {tag_name!r} not found")
         existing = repo.list_tag_ids_by_task(conn, task_id)

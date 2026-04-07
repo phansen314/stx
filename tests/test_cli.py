@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
-from sticky_notes.active_board import (
-    active_board_path,
-    get_active_board_id,
-    set_active_board_id,
+from sticky_notes.active_workspace import (
+    active_workspace_path,
+    get_active_workspace_id,
+    set_active_workspace_id,
 )
 from sticky_notes.cli import main
 from sticky_notes.formatting import (
@@ -86,83 +86,83 @@ class TestFormatHelpers:
         assert format_priority(3) == "[P3]"
 
 
-# ---- Active board helpers ----
+# ---- Active workspace helpers ----
 
 
-class TestActiveBoard:
+class TestActiveWorkspace:
     def test_path(self, db_path: Path):
-        assert active_board_path(db_path) == db_path.parent / "active-board"
+        assert active_workspace_path(db_path) == db_path.parent / "active-workspace"
 
     def test_get_none(self, db_path: Path):
-        assert get_active_board_id(db_path) is None
+        assert get_active_workspace_id(db_path) is None
 
     def test_set_and_get(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        set_active_board_id(db_path, 42)
-        assert get_active_board_id(db_path) == 42
+        set_active_workspace_id(db_path, 42)
+        assert get_active_workspace_id(db_path) == 42
 
 
-# ---- Board commands ----
+# ---- Workspace commands ----
 
 
-class TestBoardCommands:
+class TestWorkspaceCommands:
     def test_create(self, cli):
-        out, _ = cli("board", "create", "dev")
-        assert "created board 'dev' (active)" in out
+        out, _ = cli("workspace", "create", "dev")
+        assert "created workspace 'dev' (active)" in out
 
     def test_create_auto_activates(self, cli, db_path):
-        cli("board", "create", "dev")
-        assert get_active_board_id(db_path) is not None
+        cli("workspace", "create", "dev")
+        assert get_active_workspace_id(db_path) is not None
 
     def test_ls(self, cli):
-        cli("board", "create", "dev")
-        cli("board", "create", "ops")
-        out, _ = cli("board", "ls")
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        out, _ = cli("workspace", "ls")
         assert "dev" in out
         assert "ops" in out
 
     def test_ls_shows_active_marker(self, cli):
-        cli("board", "create", "dev")
-        out, _ = cli("board", "ls")
+        cli("workspace", "create", "dev")
+        out, _ = cli("workspace", "ls")
         assert "dev *" in out
 
     def test_ls_empty(self, cli):
-        out, _ = cli("board", "ls")
-        assert "no boards" in out
+        out, _ = cli("workspace", "ls")
+        assert "no workspaces" in out
 
     def test_use(self, cli, db_path):
-        cli("board", "create", "dev")
-        cli("board", "create", "ops")
-        cli("board", "use", "dev")
-        out, _ = cli("board", "ls")
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
+        out, _ = cli("workspace", "ls")
         assert "dev *" in out
 
     def test_rename(self, cli):
-        cli("board", "create", "dev")
-        out, _ = cli("board", "rename", "staging")
-        assert "renamed board 'dev' -> 'staging'" in out
+        cli("workspace", "create", "dev")
+        out, _ = cli("workspace", "rename", "staging")
+        assert "renamed workspace 'dev' -> 'staging'" in out
 
     def test_archive(self, cli):
-        cli("board", "create", "dev")
-        out, _ = cli("board", "rm")
-        assert "archived board" in out
+        cli("workspace", "create", "dev")
+        out, _ = cli("workspace", "rm")
+        assert "archived workspace" in out
 
     def test_archive_active_board_clears_pointer(self, cli, db_path):
-        cli("board", "create", "dev")
-        assert get_active_board_id(db_path) is not None
-        cli("board", "rm")
-        assert get_active_board_id(db_path) is None
+        cli("workspace", "create", "dev")
+        assert get_active_workspace_id(db_path) is not None
+        cli("workspace", "rm")
+        assert get_active_workspace_id(db_path) is None
 
     def test_archive_non_active_board_leaves_pointer(self, cli, db_path):
-        cli("board", "create", "dev")
-        cli("board", "create", "ops")
-        cli("board", "use", "dev")
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
         # ops is not active — archiving it must not clear the pointer
-        cli("-b", "ops", "board", "rm")
-        assert get_active_board_id(db_path) is not None
+        cli("-w", "ops", "workspace", "rm")
+        assert get_active_workspace_id(db_path) is not None
 
     def test_use_nonexistent(self, cli):
-        _, err = cli("board", "use", "nope", expect_exit=1)
+        _, err = cli("workspace", "use", "nope", expect_exit=1)
         assert "error:" in err
 
 
@@ -171,12 +171,12 @@ class TestBoardCommands:
 
 class TestStatusCommands:
     def test_add(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         out, _ = cli("status", "create", "backlog")
         assert "created status 'backlog'" in out
 
     def test_list_statuses_ordered_alphabetically(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "backlog")
         cli("status", "create", "done")
         cli("status", "create", "in progress")
@@ -186,7 +186,7 @@ class TestStatusCommands:
         assert "in progress" in out
 
     def test_ls(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
         out, _ = cli("status", "ls")
@@ -194,18 +194,18 @@ class TestStatusCommands:
         assert "done" in out
 
     def test_ls_empty(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         out, _ = cli("status", "ls")
         assert "no statuses" in out
 
     def test_rename(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         out, _ = cli("status", "rename", "todo", "backlog")
         assert "renamed status 'todo' -> 'backlog'" in out
 
     def test_archive(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         out, _ = cli("status", "rm", "todo")
         assert "archived status 'todo'" in out
@@ -217,7 +217,7 @@ class TestStatusCommands:
 class TestTaskCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "in progress")
         cli("status", "create", "done")
@@ -404,7 +404,7 @@ class TestTaskCommands:
 class TestProjectCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
 
     def test_create(self, cli):
         out, _ = cli("project", "create", "backend")
@@ -447,7 +447,7 @@ class TestProjectCommands:
 class TestDependencyCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
 
     def test_add(self, cli):
@@ -470,37 +470,37 @@ class TestDependencyCommands:
 class TestErrorHandling:
     def test_no_active_board(self, cli):
         _, err = cli("task", "ls", expect_exit=1)
-        assert "no active board" in err
+        assert "no active workspace" in err
 
     def test_not_found(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         _, err = cli("task", "show", "999", expect_exit=1)
         assert "error:" in err
 
     def test_duplicate_board_name(self, cli):
-        cli("board", "create", "dev")
-        _, err = cli("board", "create", "dev", expect_exit=1)
+        cli("workspace", "create", "dev")
+        _, err = cli("workspace", "create", "dev", expect_exit=1)
         assert "error:" in err
 
     def test_invalid_task_num(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         _, err = cli("task", "show", "abc", expect_exit=1)
         assert "error:" in err
 
     def test_status_not_found(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         _, err = cli("task", "create", "Task", "-S", "nonexistent", expect_exit=1)
         assert "not found" in err
 
     def test_project_not_found(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         _, err = cli("task", "create", "Task", "-S", "todo", "-p", "nonexistent", expect_exit=1)
         assert "not found" in err
 
     def test_archive_status_with_active_tasks_blocked(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("task", "create", "Task", "-S", "todo")
         _, err = cli("status", "rm", "todo", expect_exit=1)
@@ -510,20 +510,20 @@ class TestErrorHandling:
 # ---- Board flag override ----
 
 
-class TestBoardFlag:
+class TestWorkspaceFlag:
     def test_board_flag(self, cli):
-        cli("board", "create", "dev")
-        cli("board", "create", "ops")
-        cli("-b", "dev", "status", "create", "todo")
-        out, _ = cli("-b", "dev", "status", "ls")
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("-w", "dev", "status", "create", "todo")
+        out, _ = cli("-w", "dev", "status", "ls")
         assert "todo" in out
 
     def test_board_flag_overrides_active(self, cli):
-        cli("board", "create", "dev")
-        cli("board", "create", "ops")
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
         # ops is now active (last created)
-        cli("-b", "dev", "status", "create", "backlog")
-        out, _ = cli("-b", "dev", "status", "ls")
+        cli("-w", "dev", "status", "create", "backlog")
+        out, _ = cli("-w", "dev", "status", "ls")
         assert "backlog" in out
         # ops has no statuses
         out2, _ = cli("status", "ls")
@@ -535,7 +535,7 @@ class TestBoardFlag:
 
 class TestLsFilters:
     def _setup_board(self, cli):
-        cli("board", "create", "work")
+        cli("workspace", "create", "work")
         cli("status", "create", "backlog")
         cli("status", "create", "doing")
         cli("project", "create", "alpha")
@@ -600,35 +600,35 @@ class TestLsFilters:
 class TestMvBoard:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
 
     def test_transfer_to_board(self, cli):
-        cli("board", "create", "ops")
-        cli("board", "use", "ops")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "ops")
         cli("status", "create", "backlog")
-        cli("board", "use", "dev")
+        cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog")
-        assert "board 'ops'" in out
+        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog")
+        assert "workspace 'ops'" in out
         assert "status 'backlog'" in out
 
     def test_transfer_to_board_with_project(self, cli):
-        cli("board", "create", "ops")
-        cli("board", "use", "ops")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "ops")
         cli("status", "create", "backlog")
         cli("project", "create", "infra")
-        cli("board", "use", "dev")
+        cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "-p", "infra")
-        assert "board 'ops'" in out
+        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "-p", "infra")
+        assert "workspace 'ops'" in out
 
     def test_transfer_no_column_fails(self, cli):
-        cli("board", "create", "ops")
-        cli("board", "use", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        _, err = cli("task", "transfer", "1", "--board", "ops", expect_exit=2)
+        _, err = cli("task", "transfer", "1", "--workspace", "ops", expect_exit=2)
         assert "--status" in err or "required" in err
 
     def test_mv_project_only_use_edit(self, cli):
@@ -643,24 +643,24 @@ class TestMvBoard:
         assert "error" in err.lower() or "usage" in err.lower()
 
     def test_transfer_dry_run(self, cli):
-        cli("board", "create", "ops")
-        cli("board", "use", "ops")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "ops")
         cli("status", "create", "backlog")
-        cli("board", "use", "dev")
+        cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "--dry-run")
+        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "--dry-run")
         assert "dry-run" in out
         assert "transfer OK" in out
 
     def test_transfer_dry_run_with_deps(self, cli):
-        cli("board", "create", "ops")
-        cli("board", "use", "ops")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "ops")
         cli("status", "create", "backlog")
-        cli("board", "use", "dev")
+        cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
         cli("dep", "create", "2", "1")
-        out, _ = cli("task", "transfer", "1", "--board", "ops", "--status", "backlog", "--dry-run")
+        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "--dry-run")
         assert "dependencies" in out
         assert "FAIL" in out
 
@@ -672,7 +672,7 @@ class TestGroupCLI:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         self.cli = cli
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("project", "create", "sprint1")
 
@@ -822,7 +822,7 @@ class TestGroupCLI:
 class TestTagCommands:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
 
@@ -957,7 +957,7 @@ class TestHelp:
 
 class TestContext:
     def test_context_text_output(self, cli):
-        cli("board", "create", "dev")
+        cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("project", "create", "backend")
         cli("tag", "create", "bug")
@@ -972,7 +972,7 @@ class TestContext:
         assert "G1" in out
 
     def test_context_empty_board_text(self, cli):
-        cli("board", "create", "empty")
+        cli("workspace", "create", "empty")
         out, _ = cli("context")
         assert "== empty ==" in out
         assert "Projects:" not in out
@@ -995,7 +995,7 @@ class TestJsonOutput:
     # -- Mutations --
 
     def test_add(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         data = self._json(cli, "task", "create", "My task", "-S", "Todo")
         assert data["ok"] is True
@@ -1003,7 +1003,7 @@ class TestJsonOutput:
         assert data["data"]["title"] == "My task"
 
     def test_edit(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "Original", "-S", "todo")
         data = self._json(cli, "task", "edit", "1", "--title", "Updated")
@@ -1012,7 +1012,7 @@ class TestJsonOutput:
         assert data["data"]["title"] == "Updated"
 
     def test_rm(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "rm", "1")
@@ -1020,28 +1020,28 @@ class TestJsonOutput:
         assert data["data"]["id"] == 1
         assert data["data"]["archived"] is True
 
-    def test_board_create(self, cli):
-        data = self._json(cli, "board", "create", "NewBoard")
+    def test_workspace_create(self, cli):
+        data = self._json(cli, "workspace", "create", "NewBoard")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["name"] == "NewBoard"
 
     def test_col_create(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         data = self._json(cli, "status", "create", "Backlog")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["name"] == "Backlog"
 
     def test_project_create(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         data = self._json(cli, "project", "create", "P1")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["name"] == "P1"
 
     def test_dep_create(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         cli("task", "create", "T2", "-S", "todo")
@@ -1051,7 +1051,7 @@ class TestJsonOutput:
         assert data["data"]["depends_on_id"] == 2
 
     def test_tag_create(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         data = self._json(cli, "tag", "create", "bug")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
@@ -1060,21 +1060,21 @@ class TestJsonOutput:
     # -- Lists --
 
     def test_ls(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "Task A", "-S", "todo")
         data = self._json(cli, "task", "ls")
         assert data["ok"] is True
         payload = data["data"]
-        assert payload["board"]["name"] == "B"
+        assert payload["workspace"]["name"] == "B"
         assert len(payload["statuses"]) == 1
         assert payload["statuses"][0]["status"]["name"] == "Todo"
         assert len(payload["statuses"][0]["tasks"]) == 1
         assert payload["statuses"][0]["tasks"][0]["title"] == "Task A"
 
-    def test_board_ls(self, cli):
-        cli("board", "create", "B1")
-        data = self._json(cli, "board", "ls")
+    def test_workspace_ls(self, cli):
+        cli("workspace", "create", "B1")
+        data = self._json(cli, "workspace", "ls")
         assert data["ok"] is True
         payload = data["data"]
         assert isinstance(payload, list)
@@ -1083,7 +1083,7 @@ class TestJsonOutput:
         assert payload[0]["active"] is True
 
     def test_col_ls(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("status", "create", "Done")
         data = self._json(cli, "status", "ls")
@@ -1092,7 +1092,7 @@ class TestJsonOutput:
         assert len(data["data"]) == 2
 
     def test_project_ls(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("project", "create", "P1")
         data = self._json(cli, "project", "ls")
         assert data["ok"] is True
@@ -1101,7 +1101,7 @@ class TestJsonOutput:
         assert payload[0]["name"] == "P1"
 
     def test_log_empty(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "task", "log", "1")
@@ -1109,7 +1109,7 @@ class TestJsonOutput:
         assert isinstance(data["data"], list)
 
     def test_group_ls(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
@@ -1120,7 +1120,7 @@ class TestJsonOutput:
         assert payload[0]["title"] == "G1"
 
     def test_tag_ls(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("tag", "create", "bug")
         cli("tag", "create", "feature")
         data = self._json(cli, "tag", "ls")
@@ -1133,7 +1133,7 @@ class TestJsonOutput:
     # -- Details --
 
     def test_show(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "Task A", "--priority", "3", "-S", "todo")
         data = self._json(cli, "task", "show", "1")
@@ -1146,7 +1146,7 @@ class TestJsonOutput:
         assert "group_id" in payload
 
     def test_show_with_tags(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "Task A", "-t", "bug", "-t", "feature", "-S", "todo")
         data = self._json(cli, "task", "show", "1")
@@ -1157,7 +1157,7 @@ class TestJsonOutput:
         assert payload["tags"][1]["name"] == "feature"
 
     def test_project_show(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1", "-d", "desc")
         cli("task", "create", "T1", "-p", "P1", "-S", "todo")
@@ -1169,7 +1169,7 @@ class TestJsonOutput:
         assert len(payload["tasks"]) == 1
 
     def test_group_show(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
@@ -1180,7 +1180,7 @@ class TestJsonOutput:
     # -- Moves --
 
     def test_mv_within_board(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("status", "create", "Done")
         cli("task", "create", "T1", "-S", "todo")
@@ -1189,23 +1189,23 @@ class TestJsonOutput:
         assert data["data"]["id"] == 1
 
     def test_transfer_cross_board(self, cli):
-        cli("board", "create", "B1")
+        cli("workspace", "create", "B1")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
-        cli("board", "create", "B2")
+        cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--status", "Inbox")
+        data = self._json(cli, "task", "transfer", "1", "--workspace", "B2", "--status", "Inbox")
         assert data["ok"] is True
         assert data["data"]["task"]["title"] == "T1"
         assert data["data"]["source_task_id"] == 1
 
     def test_transfer_dry_run(self, cli):
-        cli("board", "create", "B1")
+        cli("workspace", "create", "B1")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
-        cli("board", "create", "B2")
+        cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--board", "B2", "--status", "Inbox", "--dry-run")
+        data = self._json(cli, "task", "transfer", "1", "--workspace", "B2", "--status", "Inbox", "--dry-run")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["can_move"] is True
@@ -1214,7 +1214,7 @@ class TestJsonOutput:
         assert payload["is_archived"] is False
 
     def test_mv_project_only_use_edit(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("task", "create", "T1", "-S", "todo")
@@ -1227,7 +1227,7 @@ class TestJsonOutput:
 
     def test_edit_no_changes(self, cli):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         out, _ = cli("--json", "task", "edit", "1")
@@ -1238,7 +1238,7 @@ class TestJsonOutput:
     # -- Log with entries --
 
     def test_log_with_history(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         cli("task", "edit", "1", "--title", "Updated")
@@ -1252,7 +1252,7 @@ class TestJsonOutput:
     # -- Export --
 
     def test_export_json_default(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "export")
@@ -1263,7 +1263,7 @@ class TestJsonOutput:
         assert any(t["title"] == "T1" for t in payload["tasks"])
 
     def test_export_md_flag(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "export", "--md")
@@ -1275,7 +1275,7 @@ class TestJsonOutput:
     # -- Group assign/unassign --
 
     def test_group_assign(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
@@ -1286,7 +1286,7 @@ class TestJsonOutput:
         assert data["data"]["group_id"] == 1
 
     def test_group_unassign(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("group", "create", "G1", "-p", "P1")
@@ -1299,7 +1299,7 @@ class TestJsonOutput:
     # -- Context --
 
     def test_context(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("tag", "create", "bug")
@@ -1308,7 +1308,7 @@ class TestJsonOutput:
         data = self._json(cli, "context")
         assert data["ok"] is True
         payload = data["data"]
-        assert payload["view"]["board"]["name"] == "B"
+        assert payload["view"]["workspace"]["name"] == "B"
         assert len(payload["view"]["statuses"]) == 1
         assert len(payload["projects"]) == 1
         assert payload["projects"][0]["name"] == "P1"
@@ -1318,11 +1318,11 @@ class TestJsonOutput:
         assert payload["groups"][0]["title"] == "G1"
 
     def test_context_empty_board(self, cli):
-        cli("board", "create", "Empty")
+        cli("workspace", "create", "Empty")
         data = self._json(cli, "context")
         assert data["ok"] is True
         payload = data["data"]
-        assert payload["view"]["board"]["name"] == "Empty"
+        assert payload["view"]["workspace"]["name"] == "Empty"
         assert payload["projects"] == []
         assert payload["tags"] == []
         assert payload["groups"] == []
@@ -1331,7 +1331,7 @@ class TestJsonOutput:
 
     def test_error_json(self, cli):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         _, err = cli("--json", "task", "show", "999", expect_exit=1)
         data = json.loads(err)
         assert data["ok"] is False
@@ -1394,7 +1394,7 @@ class TestErrorHandlingExtended:
 class TestExportJson:
     def test_export_json_stdout(self, cli):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         out, _ = cli("export")
@@ -1404,7 +1404,7 @@ class TestExportJson:
 
     def test_export_json_to_file(self, cli, tmp_path):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         out_file = tmp_path / "dump.json"
         cli("export", "-o", str(out_file))
@@ -1414,7 +1414,7 @@ class TestExportJson:
 
     def test_export_json_file_data_payload(self, cli, tmp_path):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         out_file = tmp_path / "dump.json"
         out, _ = cli("--json", "export", "-o", str(out_file))
         result = json.loads(out)
@@ -1423,13 +1423,13 @@ class TestExportJson:
         assert result["data"]["bytes"] > 0
 
     def test_export_md_stdout(self, cli):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         out, _ = cli("export", "--md")
         assert "# Sticky Notes Export" in out
 
     def test_export_md_to_file(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         output = tmp_path / "new" / "sub" / "out.md"
         cli("export", "--md", "-o", str(output))
         assert output.exists()
@@ -1437,7 +1437,7 @@ class TestExportJson:
 
     def test_export_json_creates_parent_dirs(self, cli, tmp_path):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         output = tmp_path / "new" / "sub" / "dump.json"
         cli("export", "-o", str(output))
         assert output.exists()
@@ -1447,7 +1447,7 @@ class TestExportJson:
 
 class TestExportParentDir:
     def test_export_creates_parent_dirs(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         output = tmp_path / "new" / "sub" / "out.md"
         out, _ = cli("export", "--md", "-o", str(output))
         assert output.exists()
@@ -1456,7 +1456,7 @@ class TestExportParentDir:
 
 class TestBackup:
     def test_backup_creates_file(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         dest = tmp_path / "backup.db"
@@ -1466,7 +1466,7 @@ class TestBackup:
 
     def test_backup_file_is_valid_sqlite(self, cli, tmp_path):
         import sqlite3 as _sqlite3
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         dest = tmp_path / "backup.db"
@@ -1477,14 +1477,14 @@ class TestBackup:
         assert count == 1
 
     def test_backup_refuses_overwrite_by_default(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         dest = tmp_path / "backup.db"
         dest.write_bytes(b"existing")
         _, err = cli("backup", str(dest), expect_exit=1)
         assert "already exists" in err
 
     def test_backup_overwrite_flag(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         dest = tmp_path / "backup.db"
         dest.write_bytes(b"existing")
         out, _ = cli("backup", str(dest), "--overwrite")
@@ -1492,14 +1492,14 @@ class TestBackup:
         assert dest.stat().st_size > 8  # replaced with real DB
 
     def test_backup_creates_parent_dirs(self, cli, tmp_path):
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         dest = tmp_path / "nested" / "dir" / "backup.db"
         out, _ = cli("backup", str(dest))
         assert dest.exists()
 
     def test_backup_json_payload(self, cli, tmp_path):
         import json
-        cli("board", "create", "B")
+        cli("workspace", "create", "B")
         dest = tmp_path / "backup.db"
         out, _ = cli("--json", "backup", str(dest))
         result = json.loads(out)
@@ -1514,12 +1514,12 @@ class TestBackup:
 class TestInfo:
     def test_info_text_labels(self, cli):
         out, _ = cli("info")
-        for label in ["database", "wal sidecar", "shm sidecar", "active-board pointer"]:
+        for label in ["database", "wal sidecar", "shm sidecar", "active-workspace pointer"]:
             assert label in out
         assert "wipe_db.py" in out
 
     def test_info_text_existence_markers(self, cli, db_path):
-        cli("board", "create", "X")
+        cli("workspace", "create", "X")
         cli("status", "create", "todo")
         out, _ = cli("info")
         assert "[exists]" in out

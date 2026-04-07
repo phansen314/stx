@@ -7,7 +7,7 @@ from typing import NamedTuple
 import pytest
 
 from helpers import (
-    insert_board,
+    insert_workspace,
     insert_status,
     insert_project,
     insert_task,
@@ -19,7 +19,7 @@ from sticky_notes.mappers import (
     group_to_detail,
     group_to_ref,
     project_to_detail,
-    row_to_board,
+    row_to_workspace,
     row_to_status,
     row_to_project,
     row_to_task,
@@ -29,10 +29,10 @@ from sticky_notes.mappers import (
     task_to_list_item,
 )
 from sticky_notes.models import (
-    Board,
+    Workspace,
     Status,
     Group,
-    NewBoard,
+    NewWorkspace,
     NewStatus,
     NewProject,
     NewTask,
@@ -62,7 +62,7 @@ class FullSeed(NamedTuple):
 def seeded(conn: sqlite3.Connection) -> FullSeed:
     """Full data graph for tests that need tasks, deps, and history."""
     with transaction(conn):
-        board_id = insert_board(conn)
+        board_id = insert_workspace(conn)
         project_id = insert_project(conn, board_id)
         status_id = insert_status(conn, board_id)
         task1_id = insert_task(
@@ -88,35 +88,35 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
 # ---- Row → model tests ----
 
 
-class TestRowToBoard:
+class TestRowToWorkspace:
     def test_maps_row(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            workspace_id = insert_workspace(conn)
         row = conn.execute(
-            "SELECT * FROM boards WHERE id = ?", (board_id,),
+            "SELECT * FROM workspaces WHERE id = ?", (workspace_id,),
         ).fetchone()
-        board = row_to_board(row)
-        assert isinstance(board, Board)
-        assert board.id == board_id
-        assert board.name == "board1"
-        assert board.archived is False
+        workspace = row_to_workspace(row)
+        assert isinstance(workspace, Workspace)
+        assert workspace.id == workspace_id
+        assert workspace.name == "workspace1"
+        assert workspace.archived is False
 
     def test_archived_is_bool(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            workspace_id = insert_workspace(conn)
         with transaction(conn):
-            conn.execute("UPDATE boards SET archived = 1 WHERE id = ?", (board_id,))
+            conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (workspace_id,))
         row = conn.execute(
-            "SELECT * FROM boards WHERE id = ?", (board_id,),
+            "SELECT * FROM workspaces WHERE id = ?", (workspace_id,),
         ).fetchone()
-        board = row_to_board(row)
-        assert board.archived is True
+        workspace = row_to_workspace(row)
+        assert workspace.archived is True
 
 
 class TestRowToStatus:
     def test_maps_row(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             col_id = insert_status(conn, board_id)
         row = conn.execute(
             "SELECT * FROM statuses WHERE id = ?", (col_id,),
@@ -130,7 +130,7 @@ class TestRowToStatus:
 
     def test_archived_is_bool(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             col_id = insert_status(conn, board_id)
         with transaction(conn):
             conn.execute("UPDATE statuses SET archived = 1 WHERE id = ?", (col_id,))
@@ -144,7 +144,7 @@ class TestRowToStatus:
 class TestRowToProject:
     def test_maps_row(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             proj_id = insert_project(conn, board_id)
         row = conn.execute(
             "SELECT * FROM projects WHERE id = ?", (proj_id,),
@@ -156,7 +156,7 @@ class TestRowToProject:
 
     def test_archived_is_bool(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             proj_id = insert_project(conn, board_id)
         with transaction(conn):
             conn.execute("UPDATE projects SET archived = 1 WHERE id = ?", (proj_id,))
@@ -225,13 +225,13 @@ class TestRowToTaskHistory:
 class TestShallowFields:
     def test_extracts_all_fields(self) -> None:
         task = Task(
-            id=1, board_id=1, title="t", project_id=None, description=None,
+            id=1, workspace_id=1, title="t", project_id=None, description=None,
             status_id=1, priority=1, due_date=None, position=0,
             archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
         )
         fields = shallow_fields(task, Task)
         assert set(fields.keys()) == {
-            "id", "board_id", "title", "project_id", "description",
+            "id", "workspace_id", "title", "project_id", "description",
             "status_id", "priority", "due_date", "position",
             "archived", "created_at", "start_date", "finish_date", "group_id",
         }
@@ -241,7 +241,7 @@ class TestShallowFields:
             shallow_fields("not a dataclass", str)
 
     def test_rejects_wrong_instance_type(self) -> None:
-        board = Board(id=1, name="b", archived=False, created_at=0)
+        board = Workspace(id=1, name="b", archived=False, created_at=0)
         with pytest.raises(TypeError, match="is not an instance of"):
             shallow_fields(board, Task)
 
@@ -251,14 +251,14 @@ class TestShallowFields:
 
 def _task() -> Task:
     return Task(
-        id=1, board_id=1, title="t", project_id=None, description=None,
+        id=1, workspace_id=1, title="t", project_id=None, description=None,
         status_id=1, priority=1, due_date=None, position=0,
         archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
     )
 
 
 def _status() -> Status:
-    return Status(id=1, board_id=1, name="todo", archived=False, created_at=0)
+    return Status(id=1, workspace_id=1, name="todo", archived=False, created_at=0)
 
 
 def _group() -> Group:
@@ -328,7 +328,7 @@ class TestTaskToDetail:
 
 class TestProjectToDetail:
     def test_creates_detail(self) -> None:
-        project = Project(id=1, board_id=1, name="p", description=None, archived=False, created_at=0)
+        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0)
         task = _task()
         detail = project_to_detail(project, tasks=(task,))
         assert isinstance(detail, ProjectDetail)
@@ -336,7 +336,7 @@ class TestProjectToDetail:
         assert detail.tasks == (task,)
 
     def test_project_fields_copied(self) -> None:
-        project = Project(id=1, board_id=1, name="p", description=None, archived=False, created_at=0)
+        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0)
         detail = project_to_detail(project, tasks=())
         for f in dataclasses.fields(project):
             assert getattr(detail, f.name) == getattr(project, f.name)
@@ -379,20 +379,20 @@ class TestGroupToDetail:
 
 
 class TestPreInsertDefaults:
-    def test_new_board_has_no_defaults(self) -> None:
-        board = NewBoard(name="b")
-        assert board.name == "b"
+    def test_new_workspace_has_no_defaults(self) -> None:
+        workspace = NewWorkspace(name="b")
+        assert workspace.name == "b"
 
     def test_new_project_defaults(self) -> None:
-        proj = NewProject(board_id=1, name="p")
+        proj = NewProject(workspace_id=1, name="p")
         assert proj.description is None
 
     def test_new_status_defaults(self) -> None:
-        col = NewStatus(board_id=1, name="c")
+        col = NewStatus(workspace_id=1, name="c")
         assert col.name == "c"
 
     def test_new_task_defaults(self) -> None:
-        task = NewTask(board_id=1, title="t", status_id=1)
+        task = NewTask(workspace_id=1, title="t", status_id=1)
         assert task.project_id is None
         assert task.description is None
         assert task.priority == 1
@@ -425,12 +425,12 @@ class TestTaskFieldMatchesSchema:
         assert "__TASK_FIELD_VALUES__" not in schema, "placeholder was not substituted"
 
 
-class TestNewBoardFieldsMatchSchema:
-    def test_new_board_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "boards")
+class TestNewWorkspaceFieldsMatchSchema:
+    def test_new_workspace_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "workspaces")
         db_defaulted = {"id", "created_at", "archived"}
-        new_board_fields = {f.name for f in dataclasses.fields(NewBoard)}
-        assert new_board_fields | db_defaulted == schema_cols
+        new_workspace_fields = {f.name for f in dataclasses.fields(NewWorkspace)}
+        assert new_workspace_fields | db_defaulted == schema_cols
 
 
 class TestNewProjectFieldsMatchSchema:
@@ -468,11 +468,11 @@ class TestNewTaskHistoryFieldsMatchSchema:
         assert new_hist_fields | db_defaulted == schema_cols
 
 
-class TestPersistedBoardFieldsMatchSchema:
-    def test_board_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "boards")
-        board_fields = {f.name for f in dataclasses.fields(Board)}
-        assert board_fields == schema_cols
+class TestPersistedWorkspaceFieldsMatchSchema:
+    def test_workspace_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "workspaces")
+        workspace_fields = {f.name for f in dataclasses.fields(Workspace)}
+        assert workspace_fields == schema_cols
 
 
 class TestPersistedProjectFieldsMatchSchema:
@@ -509,18 +509,18 @@ class TestPersistedTaskHistoryFieldsMatchSchema:
 class TestMapperFieldCoverage:
     """Ensure row_to_* mappers populate every field on the target model."""
 
-    def test_row_to_board_populates_all_fields(self, conn: sqlite3.Connection) -> None:
+    def test_row_to_workspace_populates_all_fields(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
-        row = conn.execute("SELECT * FROM boards WHERE id = ?", (board_id,)).fetchone()
-        board = row_to_board(row)
-        expected = {f.name for f in dataclasses.fields(Board)}
-        actual = {f.name for f in dataclasses.fields(board) if getattr(board, f.name) is not None}
+            workspace_id = insert_workspace(conn)
+        row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+        workspace = row_to_workspace(row)
+        expected = {f.name for f in dataclasses.fields(Workspace)}
+        actual = {f.name for f in dataclasses.fields(workspace) if getattr(workspace, f.name) is not None}
         assert actual == expected
 
     def test_row_to_status_populates_all_fields(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             col_id = insert_status(conn, board_id)
         row = conn.execute("SELECT * FROM statuses WHERE id = ?", (col_id,)).fetchone()
         col = row_to_status(row)
@@ -530,7 +530,7 @@ class TestMapperFieldCoverage:
 
     def test_row_to_project_populates_all_fields(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
-            board_id = insert_board(conn)
+            board_id = insert_workspace(conn)
             proj_id = insert_project(conn, board_id)
         row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
         proj = row_to_project(row)

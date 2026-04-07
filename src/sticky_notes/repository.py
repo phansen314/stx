@@ -6,30 +6,30 @@ import sqlite3
 from typing import Any
 
 from .mappers import (
-    row_to_board,
     row_to_group,
     row_to_project,
     row_to_status,
     row_to_tag,
     row_to_task,
     row_to_task_history,
+    row_to_workspace,
 )
 from .models import (
-    Board,
     Group,
-    NewBoard,
     NewGroup,
     NewProject,
     NewStatus,
     NewTag,
     NewTask,
     NewTaskHistory,
+    NewWorkspace,
     Project,
     Status,
     Tag,
     Task,
     TaskFilter,
     TaskHistory,
+    Workspace,
 )
 
 # ---- Updatable-field allowlists ----
@@ -87,51 +87,51 @@ def _asdict_for_insert(obj: object) -> dict[str, Any]:
     return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}  # type: ignore[arg-type]
 
 
-# ---- Board functions ----
+# ---- Workspace functions ----
 
 
-def insert_board(conn: sqlite3.Connection, new: NewBoard) -> Board:
+def insert_workspace(conn: sqlite3.Connection, new: NewWorkspace) -> Workspace:
     d = _asdict_for_insert(new)
-    cur = conn.execute("INSERT INTO boards (name) VALUES (:name)", d)
-    row = conn.execute("SELECT * FROM boards WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return row_to_board(row)
+    cur = conn.execute("INSERT INTO workspaces (name) VALUES (:name)", d)
+    row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return row_to_workspace(row)
 
 
-def get_board(conn: sqlite3.Connection, board_id: int) -> Board | None:
-    row = conn.execute("SELECT * FROM boards WHERE id = ?", (board_id,)).fetchone()
-    return row_to_board(row) if row else None
+def get_workspace(conn: sqlite3.Connection, workspace_id: int) -> Workspace | None:
+    row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+    return row_to_workspace(row) if row else None
 
 
-def get_board_by_name(conn: sqlite3.Connection, name: str) -> Board | None:
+def get_workspace_by_name(conn: sqlite3.Connection, name: str) -> Workspace | None:
     row = conn.execute(
-        "SELECT * FROM boards WHERE name = ? AND archived = 0", (name,)
+        "SELECT * FROM workspaces WHERE name = ? AND archived = 0", (name,)
     ).fetchone()
-    return row_to_board(row) if row else None
+    return row_to_workspace(row) if row else None
 
 
-def list_boards(
+def list_workspaces(
     conn: sqlite3.Connection,
     *,
     include_archived: bool = False,
-) -> tuple[Board, ...]:
+) -> tuple[Workspace, ...]:
     archive_clause = "" if include_archived else " WHERE archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM boards{archive_clause} ORDER BY created_at"
+        f"SELECT * FROM workspaces{archive_clause} ORDER BY created_at"
     ).fetchall()
-    return tuple(row_to_board(r) for r in rows)
+    return tuple(row_to_workspace(r) for r in rows)
 
 
-def update_board(
+def update_workspace(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     changes: dict[str, Any],
-) -> Board:
-    sql, params = _build_update("boards", board_id, changes, _BOARD_UPDATABLE)
+) -> Workspace:
+    sql, params = _build_update("workspaces", workspace_id, changes, _BOARD_UPDATABLE)
     cur = conn.execute(sql, params)
     if cur.rowcount == 0:
-        raise LookupError(f"board {board_id} not found")
-    row = conn.execute("SELECT * FROM boards WHERE id = ?", (board_id,)).fetchone()
-    return row_to_board(row)
+        raise LookupError(f"workspace {workspace_id} not found")
+    row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+    return row_to_workspace(row)
 
 
 # ---- Status functions ----
@@ -140,7 +140,7 @@ def update_board(
 def insert_status(conn: sqlite3.Connection, new: NewStatus) -> Status:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO statuses (board_id, name) VALUES (:board_id, :name)",
+        "INSERT INTO statuses (workspace_id, name) VALUES (:workspace_id, :name)",
         d,
     )
     row = conn.execute("SELECT * FROM statuses WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -149,12 +149,12 @@ def insert_status(conn: sqlite3.Connection, new: NewStatus) -> Status:
 
 def get_status_by_name(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Status | None:
     row = conn.execute(
-        "SELECT * FROM statuses WHERE board_id = ? AND name = ? AND archived = 0",
-        (board_id, name),
+        "SELECT * FROM statuses WHERE workspace_id = ? AND name = ? AND archived = 0",
+        (workspace_id, name),
     ).fetchone()
     return row_to_status(row) if row else None
 
@@ -166,14 +166,14 @@ def get_status(conn: sqlite3.Connection, status_id: int) -> Status | None:
 
 def list_statuses(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Status, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM statuses WHERE board_id = ?{archive_clause} ORDER BY name, id",
-        (board_id,),
+        f"SELECT * FROM statuses WHERE workspace_id = ?{archive_clause} ORDER BY name, id",
+        (workspace_id,),
     ).fetchall()
     return tuple(row_to_status(r) for r in rows)
 
@@ -197,8 +197,8 @@ def update_status(
 def insert_project(conn: sqlite3.Connection, new: NewProject) -> Project:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO projects (board_id, name, description) "
-        "VALUES (:board_id, :name, :description)",
+        "INSERT INTO projects (workspace_id, name, description) "
+        "VALUES (:workspace_id, :name, :description)",
         d,
     )
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -207,12 +207,12 @@ def insert_project(conn: sqlite3.Connection, new: NewProject) -> Project:
 
 def get_project_by_name(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Project | None:
     row = conn.execute(
-        "SELECT * FROM projects WHERE board_id = ? AND name = ? AND archived = 0",
-        (board_id, name),
+        "SELECT * FROM projects WHERE workspace_id = ? AND name = ? AND archived = 0",
+        (workspace_id, name),
     ).fetchone()
     return row_to_project(row) if row else None
 
@@ -224,14 +224,14 @@ def get_project(conn: sqlite3.Connection, project_id: int) -> Project | None:
 
 def list_projects(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Project, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM projects WHERE board_id = ?{archive_clause} ORDER BY created_at",
-        (board_id,),
+        f"SELECT * FROM projects WHERE workspace_id = ?{archive_clause} ORDER BY created_at",
+        (workspace_id,),
     ).fetchall()
     return tuple(row_to_project(r) for r in rows)
 
@@ -256,8 +256,8 @@ def insert_task(conn: sqlite3.Connection, new: NewTask) -> Task:
     d = _asdict_for_insert(new)
     cur = conn.execute(
         "INSERT INTO tasks "
-        "(board_id, title, status_id, project_id, description, priority, due_date, position, start_date, finish_date) "
-        "VALUES (:board_id, :title, :status_id, :project_id, :description, :priority, :due_date, :position, :start_date, :finish_date)",
+        "(workspace_id, title, status_id, project_id, description, priority, due_date, position, start_date, finish_date) "
+        "VALUES (:workspace_id, :title, :status_id, :project_id, :description, :priority, :due_date, :position, :start_date, :finish_date)",
         d,
     )
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -271,26 +271,26 @@ def get_task(conn: sqlite3.Connection, task_id: int) -> Task | None:
 
 def get_task_by_title(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     title: str,
 ) -> Task | None:
     row = conn.execute(
-        "SELECT * FROM tasks WHERE board_id = ? AND title = ? AND archived = 0",
-        (board_id, title),
+        "SELECT * FROM tasks WHERE workspace_id = ? AND title = ? AND archived = 0",
+        (workspace_id, title),
     ).fetchone()
     return row_to_task(row) if row else None
 
 
 def list_tasks(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Task, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM tasks WHERE board_id = ?{archive_clause} ORDER BY position, id",
-        (board_id,),
+        f"SELECT * FROM tasks WHERE workspace_id = ?{archive_clause} ORDER BY position, id",
+        (workspace_id,),
     ).fetchall()
     return tuple(row_to_task(r) for r in rows)
 
@@ -325,12 +325,12 @@ def list_tasks_by_project(
 
 def list_tasks_filtered(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     task_filter: TaskFilter | None = None,
 ) -> tuple[Task, ...]:
-    clauses = ["board_id = ?"]
-    params: list[object] = [board_id]
+    clauses = ["workspace_id = ?"]
+    params: list[object] = [workspace_id]
     f = task_filter or TaskFilter()
     if f.only_archived:
         clauses.append("archived = 1")
@@ -399,8 +399,8 @@ def add_dependency(
     depends_on_id: int,
 ) -> None:
     conn.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on_id, board_id) "
-        "VALUES (?, ?, (SELECT board_id FROM tasks WHERE id = ?))",
+        "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
+        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
         (task_id, depends_on_id, task_id),
     )
 
@@ -523,9 +523,9 @@ def list_all_task_dependencies(
 ) -> tuple[dict, ...]:
     """Return all task_dependencies rows as plain dicts (full FK columns preserved)."""
     rows = conn.execute(
-        "SELECT task_id, depends_on_id, board_id FROM task_dependencies"
+        "SELECT task_id, depends_on_id, workspace_id FROM task_dependencies"
     ).fetchall()
-    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "board_id": r["board_id"]} for r in rows)
+    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "workspace_id": r["workspace_id"]} for r in rows)
 
 
 def list_all_task_tags(
@@ -533,9 +533,9 @@ def list_all_task_tags(
 ) -> tuple[dict, ...]:
     """Return all task_tags rows as plain dicts (full FK columns preserved)."""
     rows = conn.execute(
-        "SELECT task_id, tag_id, board_id FROM task_tags"
+        "SELECT task_id, tag_id, workspace_id FROM task_tags"
     ).fetchall()
-    return tuple({"task_id": r["task_id"], "tag_id": r["tag_id"], "board_id": r["board_id"]} for r in rows)
+    return tuple({"task_id": r["task_id"], "tag_id": r["tag_id"], "workspace_id": r["workspace_id"]} for r in rows)
 
 
 # ---- Task history functions ----
@@ -584,7 +584,7 @@ def list_all_task_history(
 def insert_tag(conn: sqlite3.Connection, new: NewTag) -> Tag:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO tags (board_id, name) VALUES (:board_id, :name)",
+        "INSERT INTO tags (workspace_id, name) VALUES (:workspace_id, :name)",
         d,
     )
     row = conn.execute("SELECT * FROM tags WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -598,26 +598,26 @@ def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag | None:
 
 def get_tag_by_name(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     name: str,
 ) -> Tag | None:
     row = conn.execute(
-        "SELECT * FROM tags WHERE board_id = ? AND name = ? AND archived = 0",
-        (board_id, name),
+        "SELECT * FROM tags WHERE workspace_id = ? AND name = ? AND archived = 0",
+        (workspace_id, name),
     ).fetchone()
     return row_to_tag(row) if row else None
 
 
 def list_tags(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
 ) -> tuple[Tag, ...]:
     archive_clause = "" if include_archived else " AND archived = 0"
     rows = conn.execute(
-        f"SELECT * FROM tags WHERE board_id = ?{archive_clause} ORDER BY name",
-        (board_id,),
+        f"SELECT * FROM tags WHERE workspace_id = ?{archive_clause} ORDER BY name",
+        (workspace_id,),
     ).fetchall()
     return tuple(row_to_tag(r) for r in rows)
 
@@ -644,8 +644,8 @@ def add_tag_to_task(
     tag_id: int,
 ) -> None:
     conn.execute(
-        "INSERT INTO task_tags (task_id, tag_id, board_id) "
-        "VALUES (?, ?, (SELECT board_id FROM tasks WHERE id = ?))",
+        "INSERT INTO task_tags (task_id, tag_id, workspace_id) "
+        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
         (task_id, tag_id, task_id),
     )
 
@@ -882,14 +882,14 @@ def batch_child_ids_by_group(
     return {gid: tuple(mapping.get(gid, ())) for gid in group_ids}
 
 
-def list_groups_by_board(
+def list_groups_by_workspace(
     conn: sqlite3.Connection,
-    board_id: int,
+    workspace_id: int,
     *,
     include_archived: bool = False,
     title: str | None = None,
 ) -> tuple[Group, ...]:
-    """Return all groups for projects on a board, ordered by position.
+    """Return all groups for projects on a workspace, ordered by position.
 
     If *title* is given, only groups whose title matches are returned.
     The match is case-insensitive because the groups.title column has
@@ -897,13 +897,13 @@ def list_groups_by_board(
     """
     archive_clause = "" if include_archived else " AND g.archived = 0"
     title_clause = " AND g.title = ?" if title is not None else ""
-    params: list[object] = [board_id]
+    params: list[object] = [workspace_id]
     if title is not None:
         params.append(title)
     rows = conn.execute(
         "SELECT g.* FROM groups g "
         "JOIN projects p ON g.project_id = p.id "
-        f"WHERE p.board_id = ?{archive_clause}{title_clause} "
+        f"WHERE p.workspace_id = ?{archive_clause}{title_clause} "
         "ORDER BY g.position, g.id",
         params,
     ).fetchall()
@@ -994,8 +994,8 @@ def add_group_dependency(
     depends_on_id: int,
 ) -> None:
     conn.execute(
-        "INSERT INTO group_dependencies (group_id, depends_on_id, board_id) "
-        "VALUES (?, ?, (SELECT p.board_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?))",
+        "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
+        "VALUES (?, ?, (SELECT p.workspace_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?))",
         (group_id, depends_on_id, group_id),
     )
 

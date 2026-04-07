@@ -5,7 +5,6 @@ import sqlite3
 from typing import Any
 
 from .models import (
-    Board,
     Group,
     Project,
     Status,
@@ -13,6 +12,7 @@ from .models import (
     Task,
     TaskField,
     TaskHistory,
+    Workspace,
 )
 from .service_models import (
     GroupDetail,
@@ -28,8 +28,8 @@ type Row = sqlite3.Row
 # ---- DB row -> persisted model ----
 
 
-def row_to_board(row: Row) -> Board:
-    return Board(
+def row_to_workspace(row: Row) -> Workspace:
+    return Workspace(
         id=row["id"],
         name=row["name"],
         archived=bool(row["archived"]),
@@ -40,7 +40,7 @@ def row_to_board(row: Row) -> Board:
 def row_to_project(row: Row) -> Project:
     return Project(
         id=row["id"],
-        board_id=row["board_id"],
+        workspace_id=row["workspace_id"],
         name=row["name"],
         description=row["description"],
         archived=bool(row["archived"]),
@@ -51,7 +51,7 @@ def row_to_project(row: Row) -> Project:
 def row_to_status(row: Row) -> Status:
     return Status(
         id=row["id"],
-        board_id=row["board_id"],
+        workspace_id=row["workspace_id"],
         name=row["name"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
@@ -61,7 +61,7 @@ def row_to_status(row: Row) -> Status:
 def row_to_task(row: Row) -> Task:
     return Task(
         id=row["id"],
-        board_id=row["board_id"],
+        workspace_id=row["workspace_id"],
         title=row["title"],
         project_id=row["project_id"],
         description=row["description"],
@@ -92,7 +92,7 @@ def row_to_group(row: Row) -> Group:
 def row_to_tag(row: Row) -> Tag:
     return Tag(
         id=row["id"],
-        board_id=row["board_id"],
+        workspace_id=row["workspace_id"],
         name=row["name"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
