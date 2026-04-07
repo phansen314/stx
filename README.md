@@ -100,44 +100,17 @@ todo task transfer task-0001 --workspace ops --column Backlog --dry-run
 
 Launch with `todo tui` (or `todo tui --db path/to/db`).
 
-The TUI provides a full kanban board view with keyboard-driven navigation and modal dialogs.
+For development with live reload and the Textual dev console:
 
-### Keybindings
+```sh
+textual run --dev sticky_notes.tui.app:StickyNotesApp
+```
 
-| Key | Action |
-|-----|--------|
-| Arrow keys | Navigate between tasks and columns |
-| `Enter` | Open task detail (read-only) |
-| `e` | Edit task |
-| `n` | Create new task in focused column |
-| `m` | Move task to a different workspace |
-| `d` / `Delete` | Archive task |
-| `Shift+Left/Right` | Move task between columns |
-| `s` | Open settings |
-| `a` | Open all-tasks view |
-| `b` | Switch workspace |
-| `p` | Filter by project |
-| `c` | Filter by column (in all-tasks view) |
+The TUI is being rewritten with an MVC architecture. Current state:
 
-### Settings
-
-Accessible via `s` key. Stored at `~/.config/sticky-notes/tui.toml`.
-
-- **Theme**: dark/light
-- **Show archived**: toggle archived task visibility
-- **Show task descriptions**: toggle description display on cards
-- **Confirm archive**: prompt before archiving
-- **Default priority**: 1-5 for new tasks
-- **Auto-refresh**: configurable interval (off, 15s, 30s, 60s, 120s)
-
-### Screens
-
-- **Board View** — main kanban grid with statuses and task cards
-- **All Tasks** — flat list of all tasks with status filtering
-- **Settings** — theme, display, and behavior preferences
-- **Task Detail** — read-only task view with history (press `e` to edit from here)
-- **Task Form** — create/edit task modal with validation
-- **Move to Workspace** — select target workspace, status, and optional project
+- **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right)
+- **Model**: Loads all non-archived data for the active workspace and organizes into a project → group → task tree
+- **Config**: Stored at `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, auto_refresh)
 
 ## Claude Code Plugin
 

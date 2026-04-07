@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+import pytest
+
+from sticky_notes.tui.model import (
+    GroupNode,
+    ProjectNode,
+    WorkspaceModel,
+    load_workspace_model,
+)
+from tests.helpers import (
+    insert_group,
+    insert_project,
+    insert_status,
+    insert_task,
+    insert_workspace,
+)
+
+
+class TestLoadWorkspaceModelNotFound:
+    def test_raises_lookup_error(self, conn):
+        with pytest.raises(LookupError):
+            load_workspace_model(conn, 999)
+
+
+class TestLoadWorkspaceModelBasic:
+    def test_loads_workspace(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id)
+        model = load_workspace_model(conn, ws_id)
+        assert model.workspace.id == ws_id
+
+    def test_loads_statuses(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id, "todo")
+        insert_status(conn, ws_id, "done")
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.statuses) == 2
+        assert {s.name for s in model.statuses} == {"todo", "done"}
+
+    def test_loads_projects(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id, "proj1")
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.projects) == 1
+        assert model.projects[0].project.id == p_id
+
+    def test_unassigned_tasks(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        t_id = insert_task(conn, ws_id, "loose task", s_id)
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.unassigned_tasks) == 1
+        assert model.unassigned_tasks[0].id == t_id
+
+    def test_excludes_archived_tasks(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        active = insert_task(conn, ws_id, "active", s_id)
+        archived = insert_task(conn, ws_id, "archived", s_id)
+        conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (archived,))
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.unassigned_tasks) == 1
+        assert model.unassigned_tasks[0].id == active
+
+    def test_excludes_archived_projects(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id)
+        insert_project(conn, ws_id, "active-proj")
+        arch_p = insert_project(conn, ws_id, "archived-proj")
+        conn.execute("UPDATE projects SET archived = 1 WHERE id = ?", (arch_p,))
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.projects) == 1
+        assert model.projects[0].project.name == "active-proj"
+
+    def test_excludes_archived_groups(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        insert_group(conn, p_id, "active-group")
+        arch_g = insert_group(conn, p_id, "archived-group")
+        conn.execute("UPDATE groups SET archived = 1 WHERE id = ?", (arch_g,))
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.projects[0].groups) == 1
+        assert model.projects[0].groups[0].group.title == "active-group"
+
+    def test_empty_workspace(self, conn):
+        ws_id = insert_workspace(conn)
+        insert_status(conn, ws_id)
+        model = load_workspace_model(conn, ws_id)
+        assert len(model.projects) == 0
+        assert len(model.unassigned_tasks) == 0
+
+
+class TestTreeStructure:
+    def test_task_in_group(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        g_id = insert_group(conn, p_id, "group1")
+        t_id = insert_task(conn, ws_id, "grouped", s_id, project_id=p_id)
+        conn.execute("UPDATE tasks SET group_id = ? WHERE id = ?", (g_id, t_id))
+
+        model = load_workspace_model(conn, ws_id)
+        pnode = model.projects[0]
+        assert len(pnode.groups) == 1
+        assert pnode.groups[0].group.id == g_id
+        assert len(pnode.groups[0].tasks) == 1
+        assert pnode.groups[0].tasks[0].id == t_id
+        assert len(pnode.ungrouped_tasks) == 0
+
+    def test_ungrouped_task_in_project(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        t_id = insert_task(conn, ws_id, "ungrouped", s_id, project_id=p_id)
+
+        model = load_workspace_model(conn, ws_id)
+        pnode = model.projects[0]
+        assert len(pnode.ungrouped_tasks) == 1
+        assert pnode.ungrouped_tasks[0].id == t_id
+        assert len(pnode.groups) == 0
+
+    def test_nested_groups(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        parent_g = insert_group(conn, p_id, "parent")
+        child_g = insert_group(conn, p_id, "child", parent_id=parent_g)
+        t_id = insert_task(conn, ws_id, "child task", s_id, project_id=p_id)
+        conn.execute("UPDATE tasks SET group_id = ? WHERE id = ?", (child_g, t_id))
+
+        model = load_workspace_model(conn, ws_id)
+        pnode = model.projects[0]
+        assert len(pnode.groups) == 1
+        root = pnode.groups[0]
+        assert root.group.id == parent_g
+        assert len(root.tasks) == 0
+        assert len(root.children) == 1
+        assert root.children[0].group.id == child_g
+        assert len(root.children[0].tasks) == 1
+        assert root.children[0].tasks[0].id == t_id
+
+    def test_mixed_assignment(self, conn):
+        """Tasks split across grouped, ungrouped-in-project, and unassigned."""
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        g_id = insert_group(conn, p_id, "group1")
+
+        grouped = insert_task(conn, ws_id, "grouped", s_id, project_id=p_id)
+        conn.execute("UPDATE tasks SET group_id = ? WHERE id = ?", (g_id, grouped))
+        ungrouped = insert_task(conn, ws_id, "ungrouped", s_id, project_id=p_id)
+        unassigned = insert_task(conn, ws_id, "unassigned", s_id)
+
+        model = load_workspace_model(conn, ws_id)
+        pnode = model.projects[0]
+        assert len(pnode.groups[0].tasks) == 1
+        assert pnode.groups[0].tasks[0].id == grouped
+        assert len(pnode.ungrouped_tasks) == 1
+        assert pnode.ungrouped_tasks[0].id == ungrouped
+        assert len(model.unassigned_tasks) == 1
+        assert model.unassigned_tasks[0].id == unassigned

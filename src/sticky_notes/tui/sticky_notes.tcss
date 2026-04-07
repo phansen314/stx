@@ -2,101 +2,39 @@ Screen {
     layout: vertical;
 }
 
-#settings-container {
-    padding: 1 2;
-    overflow-y: auto;
-}
-
-.section-title {
-    text-align: center;
-    text-style: bold;
-    padding: 1 0;
-}
-
-.section-heading {
-    text-style: bold;
-    margin-top: 1;
-    margin-bottom: 1;
-    color: $accent;
-}
-
-.setting-row {
-    height: 3;
-    align: left middle;
-    margin-bottom: 1;
-}
-
-.setting-row .label {
-    width: 30;
-    padding: 0 1;
-}
-
-.setting-row Select {
-    width: 30;
-}
-
-.setting-row Switch {
-    width: auto;
-}
-
-#board-header {
-    text-style: bold;
-    text-align: center;
-    height: 1;
-    dock: top;
-}
-
-#columns-container {
+#main-panels {
     height: 1fr;
 }
 
-#no-board-message, #no-columns-message {
-    width: 100%;
-    height: 100%;
-    content-align: center middle;
-    text-align: center;
+#workspaces-panel {
+    width: 25%;
 }
 
-.column-header {
+#kanban-panel {
+    width: 1fr;
+}
+
+#kanban-columns {
+    height: 1fr;
+}
+
+.status-col {
+    width: 1fr;
+    border-left: solid $surface-lighten-2;
+}
+
+.status-col:first-child {
+    border-left: none;
+}
+
+.status-col-title {
+    width: 1fr;
     text-style: bold;
     text-align: center;
-    padding: 1 0;
-}
-
-BoardView TaskCard:focus {
-    border: solid $accent;
-    background: $surface-lighten-2;
-}
-
-BoardView ColumnWidget:focus-within {
-    border: solid $accent;
-}
-
-AllTasksScreen #all-tasks-container {
-    padding: 1 2;
-}
-
-AllTasksScreen .project-group-header {
-    text-style: bold;
-    margin-top: 1;
     padding: 0 1;
-    color: $accent;
+    border-bottom: solid $surface-lighten-2;
 }
 
-AllTasksScreen .column-sub-header {
-    margin-left: 2;
-    color: $text 70%;
-}
-
-AllTasksScreen TaskCard {
-    margin-left: 4;
-}
-
-AllTasksScreen TaskCard:focus {
-    border: solid $accent;
-    background: $surface-lighten-2;
-}
-
-ModalScreen {
-    background: $background 60%;
+.task-card {
+    padding: 0 1;
 }

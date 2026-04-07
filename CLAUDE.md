@@ -33,19 +33,13 @@ src/sticky_notes/
   schema.sql         # DDL (current schema, used for fresh databases)
   migrations/        # numbered SQL migration files (001_*.sql, 002_*.sql, ...)
   tui/
-    app.py           # StickyNotesApp — main Textual app shell
+    app.py           # StickyNotesApp — main Textual app shell (two-panel layout: workspaces + kanban)
+    model.py         # WorkspaceModel — MVC model: loads workspace hierarchy via service, builds tree
     config.py        # TuiConfig dataclass, TOML load/save
     markup.py        # escape_markup helper for Textual rendering
     sticky_notes.tcss# global stylesheet
-    screens/
-      settings.py    # SettingsScreen — theme, workspace, display preferences
-      confirm_dialog.py # ConfirmDialog(ModalScreen[bool]) — reusable yes/no
-      task_detail.py # TaskDetailModal(ModalScreen[int|None]) — read-only detail
-      task_form.py   # TaskFormModal(ModalScreen[dict|None]) — create/edit form
-    widgets/
-      board_view.py  # BoardView — kanban grid with navigation, CRUD handlers
-      column_widget.py # ColumnWidget — single column with header and task cards
-      task_card.py   # TaskCard — focusable card with keybindings and messages
+    screens/         # (being rebuilt — currently empty)
+    widgets/         # (being rebuilt — currently empty)
 
 tests/
   conftest.py        # fixtures (fresh DB, seeded workspace/statuses/tasks)
@@ -58,7 +52,8 @@ tests/
   test_presenters.py # pure-function tests for text rendering (DB-free)
   test_repository.py
   test_service.py
-  test_tui.py        # TUI tests: config, app, settings, workspace, nav, move, archive, detail, create, edit
+  test_tui.py        # TUI tests: tree population, no-workspace handling, grouped/nested tree rendering
+  test_tui_model.py  # WorkspaceModel tests: tree building, archived filtering, unassigned tasks
 ```
 
 ## CLI
@@ -75,27 +70,14 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 
 Entry point: `todo tui` (or `todo tui --db path/to/db`).
 
-**Architecture:** `StickyNotesApp` → `BoardView` (main widget) → `ColumnWidget` → `TaskCard`. Screens are `ModalScreen[T]` overlays that dismiss with typed results via callbacks.
+**Status:** Being rewritten from scratch with MVC architecture. Screens and widgets are not yet rebuilt.
 
-**Keybindings (on TaskCard focus):**
-- `enter` — task detail modal (read-only)
-- `e` — edit task (form pre-populated)
-- `d` / `delete` — archive task (with optional confirmation)
-- `n` — new task in focused column
-- Arrow keys — navigate grid; `shift+left`/`shift+right` — move task between columns
+**Architecture (MVC):**
+- **Model** (`tui/model.py`): `WorkspaceModel` loads all non-archived data for the active workspace via existing service functions, then organizes it into a tree: `WorkspaceModel` → `ProjectNode` → `GroupNode` (recursive). Tasks without a project live in `unassigned_tasks`. Groups nest recursively via `parent_id`.
+- **View** (`tui/app.py`): `StickyNotesApp` — two-panel layout. Left: `#workspaces-panel` (25% width) with a `Tree` widget populated from `WorkspaceModel` on mount (projects → groups → tasks, ungrouped/unassigned leaves last). Right: `#kanban-panel` with `#kanban-columns` — one scrollable `Vertical` per status, each showing a title with task count and task card labels. `sticky_notes.tcss` controls layout. Tree nodes use emoji prefixes (📦 workspace, 🗂️ project, 📁 group, 📝 task). Node `data` carries the model object (`Project`, `Group`, or `Task`) for future event handling.
+- **Controller**: not yet implemented.
 
-**Screen patterns:**
-- `ConfirmDialog(ModalScreen[bool])` — generic yes/no, reusable for any destructive action
-- `TaskDetailModal(ModalScreen[int | None])` — dismisses with `None` (close) or task_id (edit transition)
-- `TaskFormModal(ModalScreen[dict | None])` — dual-mode (`Literal["create", "edit"]`), dismisses with field dict or `None` (cancel)
-
-**Key conventions:**
-- Deferred screen imports in `board_view.py` handler methods to avoid circular deps between widgets and screens
-- `BoardView.reload(focus_task_id=None)` is the single re-render path — all mutations call it
-- `BoardView._workspace_id` cached during `_load_board()` — handlers use it instead of fishing from column slots
-- `TaskFormModal` takes `conn` + `workspace_id` in constructor (pre-mount data fetching), `default_priority` as explicit param — no `typed_app` access before mount
-- Edit diffs form result against current DB state for minimal `update_task` changes dict
-- Config at `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order
+**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order. Loaded via `TuiConfig` dataclass in `tui/config.py`.
 
 ## Key Design Conventions
 
