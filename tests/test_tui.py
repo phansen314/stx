@@ -161,9 +161,9 @@ class TestKanbanColumns:
             titles = app.query(".status-col-title")
             title_texts = {str(t.render()) for t in titles}
             # Seed: Todo=4, In Progress=2, Done=2
-            assert "Todo (4)" in title_texts
-            assert "In Progress (2)" in title_texts
-            assert "Done (2)" in title_texts
+            assert "(4) Todo" in title_texts
+            assert "(2) In Progress" in title_texts
+            assert "(2) Done" in title_texts
 
     async def test_tasks_in_correct_columns(self, app):
         app, ids = app

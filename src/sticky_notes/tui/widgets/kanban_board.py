@@ -34,7 +34,7 @@ class KanbanBoard(Horizontal):
             tasks_by_status.setdefault(task.status_id, []).append(task)
         for status in model.statuses:
             bucket = tasks_by_status.get(status.id, [])
-            title = f"{escape_markup(status.name)} ({len(bucket)})"
+            title = f"({len(bucket)}) {escape_markup(status.name)}"
             cards = [TaskCard(t, classes="task-card") for t in bucket]
             col = Vertical(
                 Label(title, classes="status-col-title"),
