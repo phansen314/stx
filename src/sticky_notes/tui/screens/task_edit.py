@@ -18,7 +18,8 @@ class TaskEditModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="task-edit-container"):
-            yield Label(self.detail.title, id="task-edit-title")
+            yield Label(str(self.detail.id), id="task-edit-id")
+            yield TextArea(self.detail.title, id="task-edit-title")
             yield TextArea(
                 self.detail.description or "",
                 id="task-edit-description",

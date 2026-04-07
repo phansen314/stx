@@ -86,10 +86,15 @@ TaskEditModal {
     padding: 1 2;
 }
 
-#task-edit-title {
-    text-style: bold;
+#task-edit-id {
     width: 1fr;
-    padding-bottom: 1;
+    text-style: bold;
+    text-align: center;
+}
+
+#task-edit-title {
+    width: 1fr;
+    height: 3;
 }
 
 #task-edit-description {
