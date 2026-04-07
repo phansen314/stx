@@ -12,8 +12,11 @@ from textual.widgets import Header, Footer
 
 from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
+from sticky_notes.models import Task
+from sticky_notes.service import get_task_detail
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import load_workspace_model
+from sticky_notes.tui.screens import TaskEditModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -27,6 +30,7 @@ class StickyNotesApp(App):
     TITLE = "\U0001f4cc Sticky Notes \U0001f4cc"
     BINDINGS = [
         Binding("r", "refresh", "Refresh", show=True),
+        Binding("e", "edit_task", "Edit", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
 
@@ -118,6 +122,23 @@ class StickyNotesApp(App):
 
     def action_focus_previous(self) -> None:
         self._switch_panel()
+
+    def action_edit_task(self) -> None:
+        task = self._get_focused_task()
+        if task is None:
+            return
+        detail = get_task_detail(self.conn, task.id)
+        self.push_screen(TaskEditModal(detail))
+
+    def _get_focused_task(self) -> Task | None:
+        if self.active_panel == ActivePanel.TREE:
+            tree = self.query_one(WorkspaceTree)
+            node = tree.cursor_node
+            if node is not None and isinstance(node.data, Task):
+                return node.data
+        elif self._kanban_last_focused is not None:
+            return self._kanban_last_focused.task_data
+        return None
 
     def _switch_panel(self) -> None:
         if self.active_panel == ActivePanel.TREE:
