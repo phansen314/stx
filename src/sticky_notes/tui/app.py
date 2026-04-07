@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from textual.widgets import Header, Footer
 
 from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
-from sticky_notes.models import Task
+from sticky_notes.models import Status, Task
 from sticky_notes.service import get_task_detail, update_task
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
@@ -72,6 +73,7 @@ class StickyNotesApp(App):
         except LookupError:
             tree.show_empty("Workspace not found")
             return
+        model = replace(model, statuses=self._order_statuses(model.statuses))
         self._model = model
         tree.load(model)
         await kanban.load(model)
@@ -88,6 +90,7 @@ class StickyNotesApp(App):
             model = load_workspace_model(self.conn, self._workspace_id)
         except LookupError:
             return
+        model = replace(model, statuses=self._order_statuses(model.statuses))
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
         # Remember focused task id before reload
@@ -150,6 +153,13 @@ class StickyNotesApp(App):
             return
         update_task(self.conn, result["task_id"], result["changes"], source="tui")
         await self._refresh()
+
+    def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:
+        order = self.config.status_order
+        if not order:
+            return statuses
+        order_map = {sid: i for i, sid in enumerate(order)}
+        return tuple(sorted(statuses, key=lambda s: (order_map.get(s.id, len(order)), s.id)))
 
     def _get_focused_task(self) -> Task | None:
         if self.active_panel == ActivePanel.TREE:
