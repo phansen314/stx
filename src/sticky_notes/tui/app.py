@@ -13,11 +13,11 @@ from textual.widgets import Header, Footer
 
 from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
-from sticky_notes.models import Group, Project, Status, Task
-from sticky_notes.service import get_group_detail, get_project_detail, get_task_detail, update_group, update_project, update_task
+from sticky_notes.models import Group, Project, Status, Task, Workspace
+from sticky_notes.service import get_group_detail, get_project_detail, get_task_detail, update_group, update_project, update_task, update_workspace
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupEditModal, ProjectEditModal, TaskEditModal
+from sticky_notes.tui.screens import GroupEditModal, ProjectEditModal, TaskEditModal, WorkspaceEditModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -149,6 +149,8 @@ class StickyNotesApp(App):
                     self._edit_project(node.data)
                 elif isinstance(node.data, Group):
                     self._edit_group(node.data)
+                elif isinstance(node.data, Workspace):
+                    self._edit_workspace(node.data)
         elif self._kanban_last_focused is not None:
             self._edit_task(self._kanban_last_focused.task_data)
 
@@ -191,6 +193,18 @@ class StickyNotesApp(App):
         if result is None:
             return
         update_group(self.conn, result["group_id"], result["changes"])
+        await self._refresh()
+
+    def _edit_workspace(self, workspace: Workspace) -> None:
+        self.push_screen(
+            WorkspaceEditModal(workspace),
+            callback=self._on_workspace_edit_dismiss,
+        )
+
+    async def _on_workspace_edit_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        update_workspace(self.conn, result["workspace_id"], result["changes"])
         await self._refresh()
 
     def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:

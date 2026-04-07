@@ -5,12 +5,12 @@ from textual.message import Message
 from textual.widgets import Tree
 from textual.widgets._tree import TreeNode
 
-from sticky_notes.models import Group, Project, Task
+from sticky_notes.models import Group, Project, Task, Workspace
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.model import GroupNode, ProjectNode, WorkspaceModel
 
 
-class WorkspaceTree(Tree[Project | Group | Task]):
+class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
     ICON_WORKSPACE = "\U0001f4e6"
     ICON_PROJECT = "\U0001f5c2\ufe0f"
     ICON_GROUP = "\U0001f4c1"
@@ -57,6 +57,7 @@ class WorkspaceTree(Tree[Project | Group | Task]):
         self.root.set_label(
             f"{self.ICON_WORKSPACE} ({total}) {escape_markup(model.workspace.name)}"
         )
+        self.root.data = model.workspace
         for pnode in model.projects:
             pcount = self._count_project_tasks(pnode)
             proj_branch = self.root.add(
