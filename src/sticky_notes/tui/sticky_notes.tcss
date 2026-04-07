@@ -8,10 +8,16 @@ Screen {
 
 #workspaces-panel {
     width: 25%;
+    border: round $surface-lighten-2;
+}
+
+#workspaces-tree {
+    background: $background;
 }
 
 #kanban-panel {
     width: 1fr;
+    border: round $surface-lighten-2;
 }
 
 #kanban-columns {
@@ -45,5 +51,13 @@ Screen {
 }
 
 #workspaces-tree > .tree--cursor {
-    background: #2A4A4A;
+    background: green;
+}
+
+#workspaces-panel:focus-within {
+    border: round green;
+}
+
+#kanban-panel:focus-within {
+    border: round green;
 }

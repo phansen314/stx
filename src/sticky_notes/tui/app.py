@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from enum import StrEnum
 from pathlib import Path
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Header, Footer
@@ -11,7 +13,12 @@ from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import load_workspace_model
-from sticky_notes.tui.widgets import KanbanBoard, WorkspaceTree
+from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
+
+
+class ActivePanel(StrEnum):
+    TREE = "tree"
+    KANBAN = "kanban"
 
 
 class StickyNotesApp(App):
@@ -20,6 +27,8 @@ class StickyNotesApp(App):
 
     conn: sqlite3.Connection
     config: TuiConfig
+    active_panel: ActivePanel = ActivePanel.TREE
+    _kanban_last_focused: TaskCard | None = None
 
     def __init__(self, db_path: Path | None = None):
         super().__init__()
@@ -52,3 +61,31 @@ class StickyNotesApp(App):
             return
         tree.load(model)
         kanban.load(model)
+        tree.focus()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        widget = event.widget
+        if isinstance(widget, WorkspaceTree):
+            self.active_panel = ActivePanel.TREE
+        elif isinstance(widget, TaskCard):
+            self.active_panel = ActivePanel.KANBAN
+            self._kanban_last_focused = widget
+
+    def action_focus_next(self) -> None:
+        self._switch_panel()
+
+    def action_focus_previous(self) -> None:
+        self._switch_panel()
+
+    def _switch_panel(self) -> None:
+        if self.active_panel == ActivePanel.TREE:
+            # Try to focus kanban
+            if self._kanban_last_focused is not None and self._kanban_last_focused.parent is not None:
+                self.set_focus(self._kanban_last_focused)
+            else:
+                cards = self.query("TaskCard")
+                if cards:
+                    self.set_focus(cards.first())
+                # else: no cards, stay in tree
+        else:
+            self.set_focus(self.query_one(WorkspaceTree))
