@@ -21,7 +21,7 @@ class TestTreePopulation:
     async def test_root_label_is_workspace_name(self, app):
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
-            assert str(tree.root.label) == "\U0001f4e6 Coding"
+            assert str(tree.root.label) == "\U0001f4e6 (8) Coding"
 
     async def test_project_node_exists(self, app):
         async with app.run_test():
@@ -30,7 +30,7 @@ class TestTreePopulation:
                 n for n in tree.root.children if n.allow_expand
             ]
             assert len(project_nodes) == 1
-            assert str(project_nodes[0].label) == "\U0001f5c2\ufe0f apr-api"
+            assert str(project_nodes[0].label) == "\U0001f5c2\ufe0f (4) apr-api"
 
     async def test_ungrouped_tasks_under_project(self, app):
         async with app.run_test():
@@ -133,10 +133,10 @@ class TestTreeWithGroups:
             tree = app.query_one("#workspaces-tree")
             proj_node = tree.root.children[0]
             parent_node = [n for n in proj_node.children if n.allow_expand][0]
-            assert str(parent_node.label) == "\U0001f4c1 parent-group"
+            assert str(parent_node.label) == "\U0001f4c1 (1) parent-group"
             child_nodes = list(parent_node.children)
             assert len(child_nodes) == 1
-            assert str(child_nodes[0].label) == "\U0001f4c1 child-group"
+            assert str(child_nodes[0].label) == "\U0001f4c1 (1) child-group"
             # Task is under child group
             task_leaves = list(child_nodes[0].children)
             assert len(task_leaves) == 1

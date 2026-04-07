@@ -7,7 +7,7 @@ from textual.widgets._tree import TreeNode
 
 from sticky_notes.models import Group, Project, Task
 from sticky_notes.tui.markup import escape_markup
-from sticky_notes.tui.model import GroupNode, WorkspaceModel
+from sticky_notes.tui.model import GroupNode, ProjectNode, WorkspaceModel
 
 
 class WorkspaceTree(Tree[Project | Group | Task]):
@@ -37,14 +37,30 @@ class WorkspaceTree(Tree[Project | Group | Task]):
             self.group = group
             super().__init__()
 
+    @staticmethod
+    def _count_group_tasks(gnode: GroupNode) -> int:
+        count = len(gnode.tasks)
+        for child in gnode.children:
+            count += WorkspaceTree._count_group_tasks(child)
+        return count
+
+    @staticmethod
+    def _count_project_tasks(pnode: ProjectNode) -> int:
+        count = len(pnode.ungrouped_tasks)
+        for gnode in pnode.groups:
+            count += WorkspaceTree._count_group_tasks(gnode)
+        return count
+
     def load(self, model: WorkspaceModel) -> None:
         self.clear()
+        total = len(model.all_tasks)
         self.root.set_label(
-            f"{self.ICON_WORKSPACE} {escape_markup(model.workspace.name)}"
+            f"{self.ICON_WORKSPACE} ({total}) {escape_markup(model.workspace.name)}"
         )
         for pnode in model.projects:
+            pcount = self._count_project_tasks(pnode)
             proj_branch = self.root.add(
-                f"{self.ICON_PROJECT} {escape_markup(pnode.project.name)}",
+                f"{self.ICON_PROJECT} ({pcount}) {escape_markup(pnode.project.name)}",
                 data=pnode.project,
             )
             for gnode in pnode.groups:
@@ -62,8 +78,9 @@ class WorkspaceTree(Tree[Project | Group | Task]):
         self.root.set_label(message)
 
     def _add_group_node(self, parent: TreeNode, group_node: GroupNode) -> None:
+        gcount = self._count_group_tasks(group_node)
         branch = parent.add(
-            f"{self.ICON_GROUP} {escape_markup(group_node.group.title)}",
+            f"{self.ICON_GROUP} ({gcount}) {escape_markup(group_node.group.title)}",
             data=group_node.group,
         )
         for child in group_node.children:
