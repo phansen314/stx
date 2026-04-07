@@ -2,6 +2,12 @@ Screen {
     layout: vertical;
 }
 
+Header {
+    background: $background;
+    color: white;
+    text-style: bold;
+}
+
 #main-panels {
     height: 1fr;
 }
@@ -13,6 +19,12 @@ Screen {
 
 #workspaces-tree {
     background: $background;
+}
+
+#workspaces-tree:focus {
+    background: $background;
+    background-tint: transparent;
+    tint: transparent;
 }
 
 #kanban-panel {

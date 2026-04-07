@@ -23,7 +23,7 @@ class ActivePanel(StrEnum):
 
 class StickyNotesApp(App):
     CSS_PATH = "sticky_notes.tcss"
-    TITLE = "Sticky Notes"
+    TITLE = "\U0001f4cc Sticky Notes \U0001f4cc"
 
     conn: sqlite3.Connection
     config: TuiConfig
