@@ -102,7 +102,9 @@ class KanbanBoard(Horizontal):
             if task.id not in current_cards:
                 await scrollable.mount(TaskCard(task, classes="task-card"))
             else:
-                current_cards[task.id].task_data = task
+                card = current_cards[task.id]
+                card.task_data = task
+                card.update(f"{task.id:d}: {escape_markup(task.title)}")
 
     def _update_col_title(self, col, count: int) -> None:
         status_id = int(col.id.removeprefix("status-col-"))
