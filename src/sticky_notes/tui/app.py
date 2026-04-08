@@ -12,13 +12,13 @@ from textual.containers import Vertical, Horizontal
 from textual.message import Message
 from textual.widgets import Header, Footer
 
-from sticky_notes.active_workspace import get_active_workspace_id
+from sticky_notes.active_workspace import get_active_workspace_id, set_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
-from sticky_notes.service import get_group_detail, get_project_detail, get_task_detail, get_workspace, update_group, update_project, update_task, update_workspace
+from sticky_notes.service import get_group_detail, get_project_detail, get_task_detail, get_workspace, list_workspaces, update_group, update_project, update_task, update_workspace
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupEditModal, ProjectEditModal, TaskEditModal, WorkspaceEditModal
+from sticky_notes.tui.screens import GroupEditModal, ProjectEditModal, TaskEditModal, WorkspaceEditModal, WorkspaceSwitchModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -46,6 +46,7 @@ class StickyNotesApp(App):
         Binding("alt+left", "status_left", show=False),
         Binding("alt+l", "status_right", "Status ▶", show=False),
         Binding("alt+right", "status_right", show=False),
+        Binding("s", "switch_workspace", "Switch", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
 
@@ -252,6 +253,34 @@ class StickyNotesApp(App):
             self.notify(str(e), severity="error")
             return
         self.request_refresh()
+
+    def action_switch_workspace(self) -> None:
+        workspaces = list_workspaces(self.conn)
+        if not workspaces or self._workspace_id is None:
+            return
+        self.push_screen(
+            WorkspaceSwitchModal(workspaces, self._workspace_id),
+            callback=self._on_workspace_switch,
+        )
+
+    async def _on_workspace_switch(self, workspace_id: int | None) -> None:
+        if workspace_id is None or workspace_id == self._workspace_id:
+            return
+        set_active_workspace_id(self.db_path, workspace_id)
+        self._workspace_id = workspace_id
+        try:
+            model = load_workspace_model(self.conn, workspace_id)
+        except LookupError:
+            self.notify("Workspace not found", severity="error")
+            return
+        model = replace(model, statuses=self._order_statuses(model.statuses))
+        self._model = model
+        self._kanban_last_focused = None
+        tree = self.query_one(WorkspaceTree)
+        kanban = self.query_one(KanbanBoard)
+        tree.load(model)
+        await kanban.load(model)
+        tree.focus()
 
     def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:
         order = self.config.status_order
