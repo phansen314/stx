@@ -167,6 +167,21 @@ def _render_tasks_section(
     return lines
 
 
+def _render_descriptions_section(
+    tasks: tuple,
+) -> list[str]:
+    described = [(t.id, t.title, t.description) for t in tasks if t.description]
+    if not described:
+        return []
+    lines = ["### Descriptions", ""]
+    for tid, title, desc in described:
+        lines.append(f"#### {format_task_num(tid)}: {_md_escape(title)}")
+        lines.append("")
+        lines.append(desc)
+        lines.append("")
+    return lines
+
+
 def _render_deps_section(
     workspace_deps: list[tuple[int, int]],
 ) -> list[str]:
@@ -285,6 +300,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_tags_section(tags, task_tag_map)
         lines += _render_groups_section(conn, projects)
         lines += _render_tasks_section(statuses, tasks_by_status, proj_map, tag_map, task_tag_map)
+        lines += _render_descriptions_section(tasks)
 
         workspace_deps = [
             (tid, did)

@@ -285,6 +285,37 @@ class TestExportMdEscaping:
         assert r"use \`cmd\` here" in md
 
 
+class TestExportDescriptions:
+    def test_descriptions_section(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "B")
+            col = insert_status(conn, bid, "Col")
+            insert_task(conn, bid, "Fix bug", col, description="Crashes on startup")
+        md = export_markdown(conn)
+        assert "### Descriptions" in md
+        assert "#### task-0001: Fix bug" in md
+        assert "Crashes on startup" in md
+
+    def test_no_descriptions_section_when_none(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "B")
+            col = insert_status(conn, bid, "Col")
+            insert_task(conn, bid, "Task", col)
+        md = export_markdown(conn)
+        assert "### Descriptions" not in md
+
+    def test_only_described_tasks_appear(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "B")
+            col = insert_status(conn, bid, "Col")
+            insert_task(conn, bid, "Has desc", col, description="Details here")
+            insert_task(conn, bid, "No desc", col)
+        md = export_markdown(conn)
+        assert "#### task-0001: Has desc" in md
+        assert "Details here" in md
+        assert "task-0002" not in md.split("### Descriptions")[1].split("###")[0]
+
+
 class TestExportFullJson:
     def test_schema_version(self, conn: sqlite3.Connection) -> None:
         result = export_full_json(conn)
