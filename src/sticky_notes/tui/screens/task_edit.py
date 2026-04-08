@@ -111,6 +111,13 @@ class TaskEditModal(BaseEditModal):
                         classes="form-field",
                     )
 
+            if self.detail.blocked_by:
+                names = ", ".join(f"{t.id}: {t.title}" for t in self.detail.blocked_by)
+                yield Static(f"Blocked by: {names}", classes="form-label dep-info")
+            if self.detail.blocks:
+                names = ", ".join(f"{t.id}: {t.title}" for t in self.detail.blocks)
+                yield Static(f"Blocks: {names}", classes="form-label dep-info")
+
             yield Static("", id="modal-error", classes="modal-error")
             with Horizontal(classes="modal-buttons"):
                 yield Button("Save", variant="primary", id="modal-save")

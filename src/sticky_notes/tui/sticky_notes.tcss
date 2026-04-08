@@ -130,6 +130,11 @@ BaseEditModal {
     margin: 0 1;
 }
 
+.dep-info {
+    color: $text-muted;
+    margin-top: 1;
+}
+
 /* ---- Entity-specific overrides ---- */
 
 MarkdownEditor {
