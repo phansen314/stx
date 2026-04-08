@@ -88,6 +88,18 @@ def insert_task_dependency(
     )
 
 
+def insert_group_dependency(
+    conn: sqlite3.Connection,
+    group_id: int,
+    depends_on_id: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
+        "VALUES (?, ?, (SELECT p.workspace_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?))",
+        (group_id, depends_on_id, group_id),
+    )
+
+
 def insert_group(
     conn: sqlite3.Connection,
     project_id: int,

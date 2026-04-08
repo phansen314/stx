@@ -10,6 +10,7 @@ from sticky_notes.tui.model import (
 )
 from tests.helpers import (
     insert_group,
+    insert_group_dependency,
     insert_project,
     insert_status,
     insert_task,
@@ -244,3 +245,30 @@ class TestDependencyOrdering:
         todo_tasks = [t for t in model.all_tasks if t.status_id == todo]
         ids = [t.id for t in todo_tasks]
         assert ids == [t_todo1, t_todo2]
+
+    def test_groups_sorted_by_dependency(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        # Insert in reverse dependency order
+        g2 = insert_group(conn, p_id, "dependent-group")
+        g1 = insert_group(conn, p_id, "prerequisite-group")
+        insert_group_dependency(conn, g2, g1)
+
+        model = load_workspace_model(conn, ws_id)
+        group_ids = [g.group.id for g in model.projects[0].groups]
+        assert group_ids.index(g1) < group_ids.index(g2)
+
+    def test_nested_groups_sorted_by_dependency(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        parent = insert_group(conn, p_id, "parent")
+        c2 = insert_group(conn, p_id, "child-dependent", parent_id=parent)
+        c1 = insert_group(conn, p_id, "child-prereq", parent_id=parent)
+        insert_group_dependency(conn, c2, c1)
+
+        model = load_workspace_model(conn, ws_id)
+        children = model.projects[0].groups[0].children
+        child_ids = [c.group.id for c in children]
+        assert child_ids.index(c1) < child_ids.index(c2)
