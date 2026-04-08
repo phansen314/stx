@@ -13,6 +13,7 @@ from tests.helpers import (
     insert_project,
     insert_status,
     insert_task,
+    insert_task_dependency,
     insert_workspace,
 )
 
@@ -162,3 +163,84 @@ class TestTreeStructure:
         assert pnode.ungrouped_tasks[0].id == ungrouped
         assert len(model.unassigned_tasks) == 1
         assert model.unassigned_tasks[0].id == unassigned
+
+
+class TestDependencyOrdering:
+    def test_blocked_by_map_loaded(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        t1 = insert_task(conn, ws_id, "first", s_id)
+        t2 = insert_task(conn, ws_id, "second", s_id)
+        insert_task_dependency(conn, t2, t1)  # t2 depends on t1
+
+        model = load_workspace_model(conn, ws_id)
+        assert t1 in model.blocked_by_map.get(t2, ())
+        assert t2 not in model.blocked_by_map.get(t1, ())
+
+    def test_all_tasks_sorted_by_dependency(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        # Insert in reverse dependency order
+        t3 = insert_task(conn, ws_id, "third", s_id)
+        t2 = insert_task(conn, ws_id, "second", s_id)
+        t1 = insert_task(conn, ws_id, "first", s_id)
+        insert_task_dependency(conn, t2, t1)  # t2 depends on t1
+        insert_task_dependency(conn, t3, t2)  # t3 depends on t2
+
+        model = load_workspace_model(conn, ws_id)
+        ids = [t.id for t in model.all_tasks]
+        assert ids.index(t1) < ids.index(t2) < ids.index(t3)
+
+    def test_unrelated_tasks_keep_original_order(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        t1 = insert_task(conn, ws_id, "A", s_id)
+        t2 = insert_task(conn, ws_id, "B", s_id)
+        t3 = insert_task(conn, ws_id, "C", s_id)
+
+        model = load_workspace_model(conn, ws_id)
+        ids = [t.id for t in model.all_tasks]
+        assert ids == [t1, t2, t3]
+
+    def test_ungrouped_project_tasks_sorted(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        t2 = insert_task(conn, ws_id, "dependent", s_id, project_id=p_id)
+        t1 = insert_task(conn, ws_id, "prerequisite", s_id, project_id=p_id)
+        insert_task_dependency(conn, t2, t1)
+
+        model = load_workspace_model(conn, ws_id)
+        ungrouped_ids = [t.id for t in model.projects[0].ungrouped_tasks]
+        assert ungrouped_ids.index(t1) < ungrouped_ids.index(t2)
+
+    def test_group_tasks_sorted(self, conn):
+        ws_id = insert_workspace(conn)
+        s_id = insert_status(conn, ws_id)
+        p_id = insert_project(conn, ws_id)
+        g_id = insert_group(conn, p_id)
+        t2 = insert_task(conn, ws_id, "dependent", s_id, project_id=p_id)
+        t1 = insert_task(conn, ws_id, "prerequisite", s_id, project_id=p_id)
+        conn.execute("UPDATE tasks SET group_id = ? WHERE id IN (?, ?)", (g_id, t1, t2))
+        insert_task_dependency(conn, t2, t1)
+
+        model = load_workspace_model(conn, ws_id)
+        group_ids = [t.id for t in model.projects[0].groups[0].tasks]
+        assert group_ids.index(t1) < group_ids.index(t2)
+
+    def test_cross_column_deps_dont_affect_within_column_order(self, conn):
+        """If A (todo) depends on B (done), A's position in todo is unaffected."""
+        ws_id = insert_workspace(conn)
+        todo = insert_status(conn, ws_id, "todo")
+        done = insert_status(conn, ws_id, "done")
+        t_done = insert_task(conn, ws_id, "done task", done)
+        t_todo1 = insert_task(conn, ws_id, "first todo", todo)
+        t_todo2 = insert_task(conn, ws_id, "second todo", todo)
+        insert_task_dependency(conn, t_todo2, t_done)  # cross-column dep
+
+        model = load_workspace_model(conn, ws_id)
+        # Within the todo column subset, t_todo1 and t_todo2 have no
+        # within-column dependency, so original order preserved
+        todo_tasks = [t for t in model.all_tasks if t.status_id == todo]
+        ids = [t.id for t in todo_tasks]
+        assert ids == [t_todo1, t_todo2]

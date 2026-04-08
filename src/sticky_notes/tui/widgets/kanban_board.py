@@ -106,6 +106,11 @@ class KanbanBoard(Horizontal):
                 card.task_data = task
                 card.update(f"{task.id:d}: {escape_markup(task.title)}")
 
+        # Enforce ordering (dependency-aware sort from model)
+        card_map = {c.task_data.id: c for c in scrollable.query(TaskCard)}
+        for i, task in enumerate(expected):
+            scrollable.move_child(card_map[task.id], before=i)
+
     def _update_col_title(self, col, count: int) -> None:
         status_id = int(col.id.removeprefix("status-col-"))
         name = escape_markup(self._status_names[status_id])
