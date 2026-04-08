@@ -33,13 +33,13 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 
 ## Task Commands
 
-### `todo task create <title> -c <column> [flags]`
+### `todo task create <title> -S <status> [flags]`
 
-`-c/--column` is **required** — there is no default column.
+`-S/--status` is **required** — there is no default status.
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--column` | `-c` | **required** | Target column name |
+| `--status` | `-S` | **required** | Target status name |
 | `--desc` | `-d` | — | Description |
 | `--project` | `-p` | — | Project name |
 | `--priority` | `-P` | `1` | Priority 1–5 (convention: 1=lowest; range only is enforced) |
@@ -47,9 +47,9 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | `--tag` | `-t` | — | Tag name (repeatable) |
 
 ```sh
-todo task create "Write README" -c "To Do"
-todo task create "Deploy to prod" -c Backlog --project "Q2 launch" -P 3 --due 2026-05-01
-todo task create "Add tests" -c "To Do" --tag backend --tag ci
+todo task create "Write README" -S "To Do"
+todo task create "Deploy to prod" -S Backlog --project "Q2 launch" -P 3 --due 2026-05-01
+todo task create "Add tests" -S "To Do" --tag backend --tag ci
 ```
 
 > **JSON and tags:** The `task create` JSON response returns the raw `Task` object which has no `tags` field. Tags attached via `--tag` are not reflected in the response. To see attached tags, follow up with `todo task show <task_num>` which returns a `TaskDetail` with a `tags` array.
@@ -62,7 +62,7 @@ todo task create "Add tests" -c "To Do" --tag backend --tag ci
 |---|---|---|---|
 | `--all` | `-a` | off | Include archived tasks |
 | `--archived` | — | off | Show ONLY archived tasks |
-| `--column` | `-c` | — | Filter by column name |
+| `--status` | `-S` | — | Filter by status name |
 | `--project` | `-p` | — | Filter by project name |
 | `--priority` | `-P` | — | Filter by priority (1–5) |
 | `--search` | `-s` | — | Title substring search |
@@ -71,7 +71,7 @@ todo task create "Add tests" -c "To Do" --tag backend --tag ci
 
 ```sh
 todo task ls
-todo task ls --project "Q2 launch" --column "In Progress"
+todo task ls --project "Q2 launch" --status "In Progress"
 todo task ls --search auth --priority 3
 todo task ls --tag backend --all
 ```
@@ -111,24 +111,24 @@ todo task edit task-0003 --tag urgent --untag backend
 
 ---
 
-### `todo task mv <task_num> <column> [position] [flags]`
+### `todo task mv <task_num> <status> [position] [flags]`
 
 **Within-workspace only.** Use `todo task transfer` for cross-workspace moves.
 
 | Arg/Flag | Description |
 |---|---|
-| `column` (positional) | Target column name |
-| `position` (optional positional) | Integer position within column (default: `0` = top) |
+| `status` (positional) | Target status name |
+| `position` (optional positional) | Integer position within status (default: `0` = top) |
 | `--project` / `-p` | Also change the task's project |
 | `--by-title` | Resolve task by title |
 
 ```sh
 todo task mv task-0001 "In Progress"
-todo task mv task-0001 Done 2          # position 2 within Done column
+todo task mv task-0001 Done 2          # position 2 within Done status
 todo task mv task-0001 Backlog --project "Next sprint"
 ```
 
-**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> Done` (requires a column literally named "Done").
+**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> Done` (requires a status literally named "Done").
 
 ---
 
@@ -167,15 +167,15 @@ todo --json context
 | Flag | Short | Required | Description |
 |---|---|---|---|
 | `--workspace` | — | **yes** | Target workspace name |
-| `--column` | `-c` | **yes** | Status on target workspace |
+| `--status` | `-S` | **yes** | Status on target workspace |
 | `--project` | `-p` | no | Project on target workspace |
 | `--dry-run` | — | no | Preview without executing; validates blocking deps |
 | `--by-title` | — | no | Resolve source task by title |
 
 ```sh
-todo task transfer task-0001 --workspace ops --column Backlog
-todo task transfer task-0001 --workspace ops --column Backlog --project infra
-todo task transfer task-0001 --workspace ops --column Backlog --dry-run
+todo task transfer task-0001 --workspace ops --status Backlog
+todo task transfer task-0001 --workspace ops --status Backlog --project infra
+todo task transfer task-0001 --workspace ops --status Backlog --dry-run
 ```
 
 > **Workspace flag disambiguation:** The global `-w/--workspace` selects the **source** workspace (or falls back to the active workspace). The transfer subcommand's own `--workspace` selects the **target** workspace. Both may appear on the same command line.
@@ -187,14 +187,14 @@ todo task transfer task-0001 --workspace ops --column Backlog --dry-run
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `workspace create` | `name` | `--columns "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--columns` takes a single comma-separated string (e.g. `--columns "To Do,In Progress,Done"`). Quote the whole value. |
+| `workspace create` | `name` | `--statuses "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--statuses` takes a single comma-separated string (e.g. `--statuses "To Do,In Progress,Done"`). Quote the whole value. |
 | `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
 | `workspace use` | `name` | — | Switch active workspace |
 | `workspace rename` | `[old] new` | — | 1 arg = rename active workspace; 2 args = rename named workspace |
 | `workspace rm` | `[name]` | — | Archive workspace (default: active); clears active pointer if removing active |
 
 ```sh
-todo workspace create work --columns "To Do,In Progress,Done"
+todo workspace create work --statuses "To Do,In Progress,Done"
 todo workspace use personal
 todo workspace ls
 todo workspace rename "work" "work-q2"
@@ -202,19 +202,19 @@ todo workspace rename "work" "work-q2"
 
 ---
 
-## `todo col` Subcommands
+## `todo status` Subcommands
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `col create` | `name` | `--pos INT` | Create column at position (default: top of workspace). Lower = leftmost. Positions are **not renumbered** on insert — equal-position columns tie-break by insertion order |
-| `col ls` | — | — | List columns on active workspace |
-| `col rename` | `old new` | — | Rename a column |
-| `col rm` | `name` | `--reassign-to COL`, `--force` | Archive column; either reassign its tasks to another column, or `--force` to archive all tasks |
+| `status create` | `name` | — | Create a status on the active workspace |
+| `status ls` | — | — | List statuses on active workspace |
+| `status rename` | `old new` | — | Rename a status |
+| `status rm` | `name` | `--reassign-to STATUS`, `--force` | Archive status; either reassign its tasks to another status, or `--force` to archive all tasks |
 
 ```sh
-todo col create "Blocked" --pos 2
-todo col rm "Old Column" --reassign-to "Backlog"
-todo col rm "Old Column" --force
+todo status create "Blocked"
+todo status rm "Old Status" --reassign-to "Backlog"
+todo status rm "Old Status" --force
 ```
 
 ---
@@ -244,6 +244,22 @@ Semantics: `todo dep create <task> <depends-on>` means **task is blocked by depe
 ```sh
 todo dep create task-0003 task-0001   # task-0003 is blocked by task-0001
 todo dep rm task-0003 task-0001
+```
+
+---
+
+## `todo group-dep` Subcommands
+
+Semantics: `todo group-dep create <group> <depends-on>` means **group is blocked by depends-on**. Groups are resolved by title within the active workspace's projects.
+
+| Command | Args | Flags | Description |
+|---|---|---|---|
+| `group-dep create` | `group_title depends_on_title` | — | Add group dependency |
+| `group-dep rm` | `group_title depends_on_title` | — | Remove group dependency |
+
+```sh
+todo group-dep create "Sprint 2" "Sprint 1"
+todo group-dep rm "Sprint 2" "Sprint 1"
 ```
 
 ---
@@ -296,10 +312,11 @@ todo group mv "Backend" --parent '' --project "API rewrite"  # promote to top-le
 
 ## `todo export`
 
-Exports the **entire database** as Markdown with Mermaid dependency graphs (all workspaces, all tasks).
+Exports the **entire database**. Default format is JSON; pass `--md` for Markdown with Mermaid dependency graphs.
 
 | Flag | Short | Description |
 |---|---|---|
+| `--md` | — | Export as Markdown instead of JSON |
 | `--output` | `-o` | Write to file instead of stdout (creates parent dirs) |
 
 With `--json`:
@@ -328,6 +345,17 @@ JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_workspace"
 
 ---
 
+## `todo backup <dest> [--overwrite]`
+
+Atomic binary DB snapshot using SQLite's backup API. Safe to run before migrations.
+
+```sh
+todo backup /tmp/sticky-notes-backup.db
+todo backup /tmp/sticky-notes-backup.db --overwrite
+```
+
+---
+
 ## `todo tui [--db PATH]`
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
@@ -348,25 +376,28 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 |---|---|
 | `task create`, `task edit`, `task rm`, `task mv` | full Task object |
 | `workspace create/rename/rm` | full Workspace object |
-| `col create/rename/rm` | full Column object |
+| `status create/rename/rm` | full Status object |
 | `project create/rm` | full Project object |
 | `tag create/rm` | full Tag object |
 | `dep create/rm` | `{"task_id": N, "depends_on_id": N}` |
+| `group-dep create/rm` | `{"group_id": N, "depends_on_id": N}` |
 | `group assign` | `{"task": {...}, "group_id": N}` — `group_id` is duplicated: it appears here AND inside `task.group_id` (always equal after assign) |
 | `group unassign` | full Task object |
 | `task transfer` (live) | `{"task": {...}, "source_task_id": N}` |
-| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_column_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
-| `task ls` | `{"workspace": {...}, "columns": [{"column": {...}, "tasks": [...]}]}` |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
+| `task ls` | `{"workspace": {...}, "statuses": [{"status": {...}, "tasks": [...]}]}` |
 | `workspace ls` | array of Workspace objects with `"active": bool` field |
-| `col ls` | array of Column objects |
+| `status ls` | array of Status objects |
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
 | `group ls` | array of GroupRef objects |
-| `task show` | full TaskDetail (with `column`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`) |
+| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`) |
 | `project show` | ProjectDetail with `tasks` array |
 | `group show` | GroupDetail with `tasks` and `children` arrays |
 | `task log` | array of TaskHistory objects |
-| `context` | `{"view": {"workspace": {...}, "columns": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
+| `context` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
+| `backup` | `{"source": "...", "dest": "...", "bytes": N}` |
+| `info` | `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...], "reset_command": "..."}` |
 
-> **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "columns": [...]}` directly at the top level. `context` wraps the same workspace+columns shape inside a `"view"` key — they are **not** interchangeable payloads.
+> **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "statuses": [...]}` directly at the top level. `context` wraps the same workspace+statuses shape inside a `"view"` key — they are **not** interchangeable payloads.

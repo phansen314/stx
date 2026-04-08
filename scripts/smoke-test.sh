@@ -99,33 +99,33 @@ run_expect_fail "Duplicate workspace name" \
     $CMD workspace create Office
 
 # ════════════════════════════════════════════════════════════════════
-#  COLUMN
+#  STATUS
 # ════════════════════════════════════════════════════════════════════
-section "Column commands"
+section "Status commands"
 
-run "Add column 'Backlog'" \
-    $CMD col add Backlog
+run "Add status 'Backlog'" \
+    $CMD status create Backlog
 
-run "Add column 'In Progress'" \
-    $CMD col add "In Progress"
+run "Add status 'In Progress'" \
+    $CMD status create "In Progress"
 
-run "Add column 'Done'" \
-    $CMD col add Done
+run "Add status 'Done'" \
+    $CMD status create Done
 
-run "List columns" \
-    $CMD col ls
+run "List statuses" \
+    $CMD status ls
 
 run "Rename 'Backlog' to 'Todo'" \
-    $CMD col rename Backlog Todo
+    $CMD status rename Backlog Todo
 
-run "List columns (verify rename)" \
-    $CMD col ls
+run "List statuses (verify rename)" \
+    $CMD status ls
 
-run "Archive column 'Todo'" \
-    $CMD col archive Todo
+run "Archive status 'Todo'" \
+    $CMD status rm Todo
 
-run "List columns (after archive)" \
-    $CMD col ls
+run "List statuses (after archive)" \
+    $CMD status ls
 
 # ════════════════════════════════════════════════════════════════════
 #  PROJECT
@@ -145,93 +145,127 @@ run "Show project 'Backend'" \
     $CMD project show Backend
 
 run "Archive project 'Frontend'" \
-    $CMD project archive Frontend
+    $CMD project rm Frontend
 
 run "List projects (after archive)" \
     $CMD project ls
 
 # ════════════════════════════════════════════════════════════════════
-#  TASK SHORTCUTS: add, ls, show, edit, mv, done, rm, log
+#  TASK
 # ════════════════════════════════════════════════════════════════════
-section "Task: add"
+section "Task: create"
 
-run "Add task 'Set up CI'" \
-    $CMD add "Set up CI" --desc "GitHub Actions pipeline" --project Backend --priority 2
+run "Create task 'Set up CI'" \
+    $CMD task create "Set up CI" -S "In Progress" --desc "GitHub Actions pipeline" --project Backend --priority 2
 
-run "Add task 'Write docs'" \
-    $CMD add "Write docs"
+run "Create task 'Write docs'" \
+    $CMD task create "Write docs" -S "In Progress"
 
-run "Add task 'Fix login bug' with due date" \
-    $CMD add "Fix login bug" --due 2026-04-01 --priority 3
+run "Create task 'Fix login bug' with due date" \
+    $CMD task create "Fix login bug" -S "In Progress" --due 2026-04-01 --priority 3
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: ls"
 
 run "List tasks" \
-    $CMD ls
+    $CMD task ls
 
 run "List tasks --all (includes archived)" \
-    $CMD ls --all
+    $CMD task ls --all
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: show"
 
 run "Show task 1" \
-    $CMD show 1
+    $CMD task show task-0001
 
-run "Show task with task- prefix" \
-    $CMD show task-0002
+run "Show task 2" \
+    $CMD task show task-0002
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: edit"
 
 run "Edit task title" \
-    $CMD edit 2 --title "Write documentation"
+    $CMD task edit task-0002 --title "Write documentation"
 
 run "Edit task description and priority" \
-    $CMD edit 1 --desc "CI with GitHub Actions + linting" --priority 1
+    $CMD task edit task-0001 --desc "CI with GitHub Actions + linting" --priority 1
 
 run "Edit task due date" \
-    $CMD edit 2 --due 2026-05-01
+    $CMD task edit task-0002 --due 2026-05-01
 
 run "Show task 2 (verify edits)" \
-    $CMD show 2
+    $CMD task show task-0002
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: mv"
 
-run "Move task 1 to 'In Progress'" \
-    $CMD mv 1 "In Progress"
+run "Move task 1 to 'Done'" \
+    $CMD task mv task-0001 Done
 
 run "List tasks (verify move)" \
-    $CMD ls
-
-# ────────────────────────────────────────────────────────────────────
-section "Task: done"
-
-run "Mark task 1 done" \
-    $CMD done 1
-
-run "List tasks (verify done)" \
-    $CMD ls
+    $CMD task ls
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: rm"
 
 run "Archive task 2" \
-    $CMD rm 2
+    $CMD task rm task-0002
 
 run "List tasks (task 2 hidden)" \
-    $CMD ls
+    $CMD task ls
 
 run "List tasks --all (task 2 visible)" \
-    $CMD ls --all
+    $CMD task ls --all
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: log"
 
 run "Show change log for task 1" \
-    $CMD log 1
+    $CMD task log task-0001
+
+# ════════════════════════════════════════════════════════════════════
+#  TAGS
+# ════════════════════════════════════════════════════════════════════
+section "Tag commands"
+
+run "Create tag 'urgent'" \
+    $CMD tag create urgent
+
+run "List tags" \
+    $CMD tag ls
+
+run "Tag task 3" \
+    $CMD task edit task-0003 --tag urgent
+
+run "Show task 3 (verify tag)" \
+    $CMD task show task-0003
+
+run "Archive tag 'urgent'" \
+    $CMD tag rm urgent --unassign
+
+# ════════════════════════════════════════════════════════════════════
+#  GROUPS
+# ════════════════════════════════════════════════════════════════════
+section "Group commands"
+
+run "Create group 'Sprint 1'" \
+    $CMD group create "Sprint 1" --project Backend
+
+run "List groups" \
+    $CMD group ls --project Backend
+
+run "Assign task 1 to group" \
+    $CMD group assign task-0001 "Sprint 1" --project Backend
+
+run "Show group 'Sprint 1'" \
+    $CMD group show "Sprint 1" --project Backend
+
+run "Unassign task 1 from group" \
+    $CMD group unassign task-0001
+
+run "Archive group 'Sprint 1'" \
+    $CMD group rm "Sprint 1" --project Backend
 
 # ════════════════════════════════════════════════════════════════════
 #  DEPENDENCIES
@@ -239,28 +273,54 @@ run "Show change log for task 1" \
 section "Dependency commands"
 
 run "Add dep: task 3 depends on task 1" \
-    $CMD dep add 3 1
+    $CMD dep create task-0003 task-0001
 
 run "Show task 3 (verify dep)" \
-    $CMD show 3
+    $CMD task show task-0003
 
 # ════════════════════════════════════════════════════════════════════
-#  MARKDOWN EXPORT (run while dep exists so Mermaid diagram has content)
+#  EXPORT (run while dep exists so Mermaid diagram has content)
 # ════════════════════════════════════════════════════════════════════
-section "Markdown Export"
+section "Export"
 
-EXPORT_PATH="/tmp/sticky-notes-export.md"
+EXPORT_PATH="$TMPDIR/export.md"
 
 run "Export database to markdown" \
-    $CMD export -o "$EXPORT_PATH"
+    $CMD export --md -o "$EXPORT_PATH"
 
 echo -e "  Export written to: ${BOLD}${EXPORT_PATH}${RESET}"
 
 run "Remove dep: task 3 no longer depends on task 1" \
-    $CMD dep rm 3 1
+    $CMD dep rm task-0003 task-0001
 
 run "Show task 3 (dep removed)" \
-    $CMD show 3
+    $CMD task show task-0003
+
+# ════════════════════════════════════════════════════════════════════
+#  CONTEXT
+# ════════════════════════════════════════════════════════════════════
+section "Context"
+
+run "Workspace context snapshot" \
+    $CMD context
+
+# ════════════════════════════════════════════════════════════════════
+#  INFO
+# ════════════════════════════════════════════════════════════════════
+section "Info"
+
+run "Show file locations" \
+    $CMD info
+
+# ════════════════════════════════════════════════════════════════════
+#  BACKUP
+# ════════════════════════════════════════════════════════════════════
+section "Backup"
+
+BACKUP_PATH="$TMPDIR/backup.db"
+
+run "Backup database" \
+    $CMD backup "$BACKUP_PATH"
 
 # ════════════════════════════════════════════════════════════════════
 #  ERROR PATHS
@@ -268,15 +328,15 @@ run "Show task 3 (dep removed)" \
 section "Error paths"
 
 run_expect_fail "Show missing task" \
-    $CMD show 9999
+    $CMD task show task-9999
 
 run_expect_fail "Move missing task" \
-    $CMD mv 9999 "In Progress"
+    $CMD task mv task-9999 "In Progress"
 
 # Test no active workspace error: use a separate DB with no workspace set
 NO_WORKSPACE_DB="$TMPDIR/no-workspace.db"
 run_expect_fail "No active workspace" \
-    todo --db "$NO_WORKSPACE_DB" ls
+    todo --db "$NO_WORKSPACE_DB" task ls
 
 # ════════════════════════════════════════════════════════════════════
 #  SUMMARY

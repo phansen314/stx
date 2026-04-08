@@ -21,10 +21,10 @@ TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Con
 pip install -e .
 
 # Create a workspace with seed statuses
-todo workspace create work --columns "To Do","In Progress","Done"
+todo workspace create work --statuses "To Do","In Progress","Done"
 
 # Add and manage tasks
-todo task create "Write README" -c "To Do"
+todo task create "Write README" -S "To Do"
 todo task ls
 todo task mv task-0001 "In Progress"
 todo task mv task-0001 "Done"
@@ -45,11 +45,11 @@ Entry point: `todo`
 
 | Command | Description |
 |---------|-------------|
-| `todo task create <title> -c <col>` | Create a task in the named column (required) |
+| `todo task create <title> -S <status>` | Create a task in the named status (required) |
 | `todo task ls` | List tasks on the active workspace |
 | `todo task show <task>` | Show task detail with history and dependencies |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo task mv <task> <column> [pos]` | Move task to a status (within-workspace only) |
+| `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
 | `todo task rm <task>` | Archive a task |
 | `todo task log <task>` | Show task change history |
 
@@ -63,23 +63,28 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 |------|-------------|
 | `--all` / `-a` | Include archived tasks |
 | `--archived` | Show only archived tasks |
-| `--column` / `-c` | Filter by status name |
+| `--status` / `-S` | Filter by status name |
 | `--project` / `-p` | Filter by project name |
 | `--priority` / `-P` | Filter by priority (1-5) |
 | `--search` / `-s` | Search by title substring |
+| `--group` / `-g` | Filter by group title |
+| `--tag` / `-t` | Filter by tag name |
 
 ### Management Commands
 
 | Command | Description |
 |---------|-------------|
-| `todo workspace ...` | `create [--columns a,b,c]`, `ls`, `use`, `rename`, `rm` |
-| `todo col ...` | `create`, `ls`, `rename`, `rm [--reassign-to COL\|--force]` |
+| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `rm` |
+| `todo status ...` | `create`, `ls`, `rename`, `rm [--reassign-to STATUS\|--force]` |
 | `todo project ...` | `create`, `ls`, `show`, `rm` |
 | `todo dep ...` | `create`, `rm` |
+| `todo group-dep ...` | `create`, `rm` (group-level dependencies) |
 | `todo tag ...` | `create`, `ls`, `rm [--unassign]` |
 | `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `rm`, `mv`, `assign`, `unassign` |
 | `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
-| `todo export` | Export database to Markdown with Mermaid dependency graphs |
+| `todo export` | Export database as JSON (default) or Markdown (`--md`) |
+| `todo info` | Show sticky-notes file locations |
+| `todo backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |
 
 ### Cross-Workspace Transfer
 
@@ -87,13 +92,13 @@ Tasks can be transferred between workspaces. The transfer creates a copy on the 
 
 ```sh
 # Transfer task to another workspace
-todo task transfer task-0001 --workspace ops --column Backlog
+todo task transfer task-0001 --workspace ops --status Backlog
 
 # Transfer with project assignment on the target workspace
-todo task transfer task-0001 --workspace ops --column Backlog --project infra
+todo task transfer task-0001 --workspace ops --status Backlog --project infra
 
 # Preview before transferring (checks for blocking dependencies)
-todo task transfer task-0001 --workspace ops --column Backlog --dry-run
+todo task transfer task-0001 --workspace ops --status Backlog --dry-run
 ```
 
 ## TUI
@@ -106,11 +111,24 @@ For development with live reload and the Textual dev console:
 textual run --dev sticky_notes.tui.app:StickyNotesApp
 ```
 
-The TUI is being rewritten with an MVC architecture. Current state:
+- **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right). Diff-based kanban sync with coalescing refresh.
+- **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing.
+- **Create modals**: Press `Alt+N` to create new tasks, projects, or groups via a resource type selector.
+- **Workspace switching**: Press `s` to switch between workspaces.
+- **Config**: `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds)
 
-- **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right)
-- **Model**: Loads all non-archived data for the active workspace and organizes into a project → group → task tree
-- **Config**: Stored at `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, auto_refresh)
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `alt+w` | Focus workspace tree |
+| `alt+b` | Focus kanban board |
+| `r` | Refresh |
+| `e` | Edit selected entity |
+| `alt+n` | Create new (task/group/project) |
+| `s` | Switch workspace |
+| `alt+j` / `alt+l` | Move task left/right across statuses |
+| `ctrl+q` | Quit |
 
 ## Claude Code Plugin
 
@@ -156,7 +174,7 @@ pip install git+https://github.com/phansen314/sticky-notes.git
 If you prefer not to install the plugin, seed a workspace and paste the workflow snippet into your `~/.claude/CLAUDE.md`:
 
 ```sh
-todo workspace create claude --columns Backlog,"In Progress",Done
+todo workspace create claude --statuses Backlog,"In Progress",Done
 ```
 
 ```markdown
@@ -167,7 +185,7 @@ All work lives on the **"claude" workspace** which has three statuses: Backlog, 
 
 1. Switch to the claude workspace: `todo workspace use claude`
 2. Create a project for the plan: `todo project create "<plan name>"`
-3. Create one task per plan step: `todo task create "<step>" -c Backlog --project "<plan>" -P N`
+3. Create one task per plan step: `todo task create "<step>" -S Backlog --project "<plan>" -P N`
 4. Add dependencies where ordering matters: `todo dep create task-NNNN task-MMMM`
 5. Move tasks to "In Progress" when starting: `todo task mv task-NNNN "In Progress"`
 6. Mark tasks done when complete: `todo task mv task-NNNN Done`

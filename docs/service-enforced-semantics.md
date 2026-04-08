@@ -61,7 +61,7 @@ or mutation purposes. These rules exist only in the service layer.
 
 Active entities cannot point to archived parents:
 
-- **A task cannot be moved to an archived column.**
+- **A task cannot be moved to an archived status.**
 - **A task cannot be assigned to an archived project.**
 - **A task cannot be assigned to an archived group.**
 

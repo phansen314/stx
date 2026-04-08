@@ -23,6 +23,7 @@ src/sticky_notes/
   cli.py             # argparse CLI — thin controllers: parse args, delegate to service, hand payloads to presenters
   presenters.py      # pure functions: structured types → text. No DB access.
   formatting.py      # shared formatting primitives: format_task_num, format_priority, parse_date, format_timestamp
+  active_workspace.py# read/write active workspace ID to disk
   service.py         # business logic, transaction boundaries
   repository.py      # raw SQL queries, one function per operation
   connection.py      # SQLite connection factory, schema init, migration runner
@@ -31,29 +32,49 @@ src/sticky_notes/
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
-  migrations/        # numbered SQL migration files (001_*.sql, 002_*.sql, ...)
+  migrations/        # numbered SQL migration files (001_*.sql ... 006_*.sql)
   tui/
-    app.py           # StickyNotesApp — main Textual app shell (two-panel layout: workspaces + kanban)
-    model.py         # WorkspaceModel — MVC model: loads workspace hierarchy via service, builds tree
+    app.py           # StickyNotesApp — main Textual app, two-panel layout, keybindings, modal dispatch
+    model.py         # WorkspaceModel — loads workspace hierarchy via service, builds tree
     config.py        # TuiConfig dataclass, TOML load/save
     markup.py        # escape_markup helper for Textual rendering
     sticky_notes.tcss# global stylesheet
-    screens/         # (being rebuilt — currently empty)
-    widgets/         # (being rebuilt — currently empty)
+    screens/
+      __init__.py      # re-exports all modals
+      base_edit.py     # BaseEditModal, ModalScroll — shared form scaffolding
+      task_edit.py     # TaskEditModal
+      task_create.py   # TaskCreateModal
+      project_edit.py  # ProjectEditModal
+      project_create.py# ProjectCreateModal
+      group_edit.py    # GroupEditModal
+      group_create.py  # GroupCreateModal
+      workspace_edit.py    # WorkspaceEditModal
+      workspace_switch.py  # WorkspaceSwitchModal
+      new_resource.py  # NewResourceModal — Alt+N resource type selector
+    widgets/
+      __init__.py        # re-exports widgets
+      workspace_tree.py  # WorkspaceTree — left-panel tree widget
+      kanban_board.py    # KanbanBoard — right-panel kanban with diff-based sync
+      task_card.py       # TaskCard — focusable card widget
+      markdown_editor.py # MarkdownEditor — edit/preview toggle for description fields
 
 tests/
-  conftest.py        # fixtures (fresh DB, seeded workspace/statuses/tasks)
-  helpers.py         # raw SQL insert helpers for test setup
-  seed.py            # seed_workspace() for TUI test fixtures and manual testing
-  test_cli.py        # CLI integration tests
+  conftest.py            # fixtures (fresh DB, seeded workspace/statuses/tasks)
+  helpers.py             # raw SQL insert helpers + ModalTestApp harness
+  seed.py                # seed_workspace() for TUI test fixtures and manual testing
+  test_cli.py            # CLI integration tests
   test_connection.py
   test_export.py
   test_mappers.py
-  test_presenters.py # pure-function tests for text rendering (DB-free)
+  test_presenters.py     # pure-function tests for text rendering (DB-free)
   test_repository.py
   test_service.py
-  test_tui.py        # TUI tests: tree population, no-workspace handling, grouped/nested tree rendering
-  test_tui_model.py  # WorkspaceModel tests: tree building, archived filtering, unassigned tasks
+  test_tui.py            # TUI tests: tree population, no-workspace handling, grouped/nested tree rendering
+  test_tui_model.py      # WorkspaceModel tests: tree building, archived filtering, unassigned tasks
+  test_task_edit_modal.py    # task edit modal tests
+  test_edit_modals.py        # project, group, workspace edit modal tests
+  test_create_modals.py      # create modal + resource selector tests
+  test_markdown_editor.py    # markdown editor widget tests
 ```
 
 ## CLI
@@ -64,20 +85,32 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 
 **Command structure:**
 - Task subcommands: `todo task create|ls|show|edit|mv|transfer|rm|log`
-- Other subcommand groups: `workspace`, `status`, `project`, `dep`, `group`, `tag`, `export`
+- Other subcommand groups: `workspace`, `status`, `project`, `dep`, `group-dep`, `group`, `tag`
+- Standalone commands: `context`, `export`, `info`, `backup`
 
 ## TUI
 
 Entry point: `todo tui` (or `todo tui --db path/to/db`).
 
-**Status:** Being rewritten from scratch with MVC architecture. Screens and widgets are not yet rebuilt.
+**Architecture:**
+- **Model** (`tui/model.py`): `WorkspaceModel` loads all non-archived data for the active workspace via existing service functions, then organizes it into a tree: `WorkspaceModel` → `ProjectNode` → `GroupNode` (recursive). Tasks without a project live in `unassigned_tasks`. Groups nest recursively via `parent_id`. Dependency-aware topological ordering for both tree and kanban.
+- **View / Controller** (`tui/app.py`): `StickyNotesApp` — two-panel layout. Left: `#workspaces-panel` (25% width) with `WorkspaceTree`. Right: `#kanban-panel` with `KanbanBoard` — one scrollable column per status with `TaskCard` widgets. Diff-based kanban sync with coalescing refresh (duplicates merge in the message queue). `app.py` acts as both view and controller — dispatches keybindings, pushes modals, calls service layer on dismiss.
+- **Screens**: `BaseEditModal` provides shared form scaffolding: save/cancel buttons, error display, field navigation (`ctrl+n`/`ctrl+b`), date parsing (`_parse_date_field`), change diffing (`_diff_and_dismiss`). Edit modals diff form values against the original entity and dismiss with changes only. Create modals dismiss with the full form data dict. `_dismiss_callback` in `app.py` wraps the common null-check → try/except → notify → refresh pattern for all modal callbacks.
+- **Widgets**: `WorkspaceTree` (tree with emoji prefixes: workspace, project, group, task — node `data` carries the model object), `KanbanBoard` (diff-based card sync, status-move via alt+j/alt+l), `TaskCard` (focusable, renders task summary), `MarkdownEditor` (edit/preview toggle for description fields).
 
-**Architecture (MVC):**
-- **Model** (`tui/model.py`): `WorkspaceModel` loads all non-archived data for the active workspace via existing service functions, then organizes it into a tree: `WorkspaceModel` → `ProjectNode` → `GroupNode` (recursive). Tasks without a project live in `unassigned_tasks`. Groups nest recursively via `parent_id`.
-- **View** (`tui/app.py`): `StickyNotesApp` — two-panel layout. Left: `#workspaces-panel` (25% width) with a `Tree` widget populated from `WorkspaceModel` on mount (projects → groups → tasks, ungrouped/unassigned leaves last). Right: `#kanban-panel` with `#kanban-columns` — one scrollable `Vertical` per status, each showing a title with task count and task card labels. `sticky_notes.tcss` controls layout. Tree nodes use emoji prefixes (📦 workspace, 🗂️ project, 📁 group, 📝 task). Node `data` carries the model object (`Project`, `Group`, or `Task`) for future event handling.
-- **Controller**: not yet implemented.
+**Keybindings:**
+| Key | Action |
+|-----|--------|
+| `alt+w` | Focus workspace tree |
+| `alt+b` | Focus kanban board |
+| `r` | Refresh |
+| `e` | Edit selected entity |
+| `alt+n` | Create new (task/group/project selector) |
+| `s` | Switch workspace |
+| `alt+j` / `alt+l` | Move task left/right across statuses |
+| `ctrl+q` | Quit |
 
-**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order. Loaded via `TuiConfig` dataclass in `tui/config.py`.
+**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds. Loaded via `TuiConfig` dataclass in `tui/config.py`.
 
 ## Key Design Conventions
 
@@ -98,6 +131,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - **Error translation** — `_friendly_errors()` context manager in the service layer catches `IntegrityError` and translates to `ValueError` with human-readable messages. `_UNIQUE_MESSAGES` dict maps constraint patterns to messages.
 - **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (status/project exists, on correct workspace, not archived) before hitting the DB.
 - **Migrations** — numbered SQL files in `src/sticky_notes/migrations/` (e.g., `004_column_to_status.sql`). `_run_migrations()` discovers files by version prefix, wraps each in FK-off + transaction + FK-revalidate. SQL files contain only DDL/DML — no PRAGMAs, no transaction control. `SCHEMA_VERSION` is explicit; a test asserts it matches the highest migration file number. Fresh databases skip migrations entirely (`init_db` runs `schema.sql` and stamps `SCHEMA_VERSION`). When recreating tables with FK deps (e.g. `tasks`), cascade-recreate dependent tables (`task_dependencies`, `task_tags`, `task_history`); use `CASE` in INSERT to transform field values rather than UPDATE before recreate (avoids violating the old CHECK constraint). Note: `task_history` must be recreated whenever `tasks` is renamed, because SQLite automatically redirects its FK reference to the renamed table.
+- **BaseEditModal pattern** — shared TUI modal base class providing save/cancel buttons, error display, `ctrl+n`/`ctrl+b` field navigation, `_do_save` (subclass hook), `_diff_and_dismiss` (edit modals), and `_parse_date_field` (date input validation). `_dismiss_callback` on `StickyNotesApp` wraps the null-check → try/except ValueError → notify → refresh pattern used by all modal callbacks.
 - **Export** — `export.py` renders the full database to Markdown with Mermaid dependency graphs.
 - **DB path** — `~/.local/share/sticky-notes/sticky-notes.db` (XDG-compliant).
 - **WAL journal mode** — enables concurrent reads from TUI and CLI.
