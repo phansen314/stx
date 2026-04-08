@@ -74,6 +74,20 @@ Header {
     border: round green;
 }
 
+/* ---- Resource selector modal ---- */
+
+NewResourceModal {
+    align: center middle;
+}
+
+.selector-modal {
+    width: 50;
+    max-height: 12;
+    padding: 1 2;
+    border: round green;
+    background: $background;
+}
+
 /* ---- Shared edit modal styles ---- */
 
 BaseEditModal {

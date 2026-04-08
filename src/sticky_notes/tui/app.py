@@ -15,10 +15,10 @@ from textual.widgets import Header, Footer
 from sticky_notes.active_workspace import get_active_workspace_id, set_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
-from sticky_notes.service import get_group_detail, get_project_detail, get_task_detail, get_workspace, list_workspaces, update_group, update_project, update_task, update_workspace
+from sticky_notes.service import create_group, create_project, create_task, get_group_detail, get_project_detail, get_task_detail, get_workspace, list_workspaces, update_group, update_project, update_task, update_workspace
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupEditModal, ProjectEditModal, TaskEditModal, WorkspaceEditModal, WorkspaceSwitchModal
+from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal, WorkspaceSwitchModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -46,6 +46,7 @@ class StickyNotesApp(App):
         Binding("alt+left", "status_left", show=False),
         Binding("alt+l", "status_right", "Status ▶", show=False),
         Binding("alt+right", "status_right", show=False),
+        Binding("alt+n", "new", "New", show=True),
         Binding("s", "switch_workspace", "Switch", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
@@ -281,6 +282,70 @@ class StickyNotesApp(App):
         tree.load(model)
         await kanban.load(model)
         tree.focus()
+
+    def action_new(self) -> None:
+        if self._model is None:
+            return
+        self.push_screen(NewResourceModal(), callback=self._on_new_resource)
+
+    def _on_new_resource(self, resource_type: str | None) -> None:
+        if resource_type == "task":
+            self._create_task()
+        elif resource_type == "project":
+            self._create_project()
+        elif resource_type == "group":
+            self._create_group()
+
+    def _create_task(self) -> None:
+        statuses = self._model.statuses
+        projects = tuple(p.project for p in self._model.projects)
+        self.push_screen(
+            TaskCreateModal(statuses, projects),
+            callback=self._on_task_create_dismiss,
+        )
+
+    def _on_task_create_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        try:
+            create_task(self.conn, self._workspace_id, **result)
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.request_refresh()
+
+    def _create_project(self) -> None:
+        self.push_screen(
+            ProjectCreateModal(),
+            callback=self._on_project_create_dismiss,
+        )
+
+    def _on_project_create_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        try:
+            create_project(self.conn, self._workspace_id, **result)
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.request_refresh()
+
+    def _create_group(self) -> None:
+        projects = tuple(p.project for p in self._model.projects)
+        self.push_screen(
+            GroupCreateModal(projects),
+            callback=self._on_group_create_dismiss,
+        )
+
+    def _on_group_create_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        try:
+            create_group(self.conn, **result)
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.request_refresh()
 
     def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:
         order = self.config.status_order
