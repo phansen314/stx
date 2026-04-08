@@ -6,8 +6,9 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
+from sticky_notes.formatting import parse_date
 from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
@@ -53,6 +54,16 @@ class BaseEditModal(ModalScreen[dict | None]):
     ) -> None:
         changes = {k: v for k, v in form_values.items() if v != getattr(original, k)}
         self.dismiss({entity_key: entity_id, "changes": changes} if changes else None)
+
+    def _parse_date_field(self, field_id: str, label: str) -> int | None | str:
+        """Return parsed timestamp, None for empty, or error string."""
+        raw = self.query_one(f"#{field_id}", Input).value.strip()
+        if not raw:
+            return None
+        try:
+            return parse_date(raw)
+        except ValueError:
+            return f"Invalid date format in {label}"
 
     def action_editor_mode(self) -> None:
         try:

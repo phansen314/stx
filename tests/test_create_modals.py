@@ -1,8 +1,6 @@
 """Tests for create modals: NewResourceModal, TaskCreateModal, ProjectCreateModal, GroupCreateModal."""
 from __future__ import annotations
 
-import pytest
-
 from textual.widgets import Input, Select, Static, TextArea
 
 from sticky_notes.models import Project, Status
@@ -60,6 +58,24 @@ class TestNewResourceModal:
         async with app.run_test() as pilot:
             await pilot.press("escape")
             assert app.result is None
+
+    async def test_task_button_click(self):
+        app = ModalTestApp(NewResourceModal())
+        async with app.run_test() as pilot:
+            await pilot.click("#new-task")
+            assert app.result == "task"
+
+    async def test_group_button_click(self):
+        app = ModalTestApp(NewResourceModal())
+        async with app.run_test() as pilot:
+            await pilot.click("#new-group")
+            assert app.result == "group"
+
+    async def test_project_button_click(self):
+        app = ModalTestApp(NewResourceModal())
+        async with app.run_test() as pilot:
+            await pilot.click("#new-project")
+            assert app.result == "project"
 
 
 # ---- TaskCreateModal tests ----

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
@@ -177,6 +178,16 @@ class StickyNotesApp(App):
         elif self._kanban_last_focused is not None:
             self._edit_task(self._kanban_last_focused.task_data)
 
+    def _dismiss_callback(self, result: dict | None, save: Callable[[], None]) -> None:
+        if result is None:
+            return
+        try:
+            save()
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.request_refresh()
+
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
         statuses = self._model.statuses
@@ -187,14 +198,7 @@ class StickyNotesApp(App):
         )
 
     def _on_task_edit_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            update_task(self.conn, result["task_id"], result["changes"], source="tui")
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: update_task(self.conn, result["task_id"], result["changes"], source="tui"))
 
     def _edit_project(self, project: Project) -> None:
         detail = get_project_detail(self.conn, project.id)
@@ -204,14 +208,7 @@ class StickyNotesApp(App):
         )
 
     def _on_project_edit_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            update_project(self.conn, result["project_id"], result["changes"])
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: update_project(self.conn, result["project_id"], result["changes"]))
 
     def _edit_group(self, group: Group) -> None:
         detail = get_group_detail(self.conn, group.id)
@@ -221,14 +218,7 @@ class StickyNotesApp(App):
         )
 
     def _on_group_edit_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            update_group(self.conn, result["group_id"], result["changes"])
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: update_group(self.conn, result["group_id"], result["changes"]))
 
     def _edit_workspace(self, workspace: Workspace) -> None:
         fresh = get_workspace(self.conn, workspace.id)
@@ -238,14 +228,7 @@ class StickyNotesApp(App):
         )
 
     def _on_workspace_edit_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            update_workspace(self.conn, result["workspace_id"], result["changes"])
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: update_workspace(self.conn, result["workspace_id"], result["changes"]))
 
     async def on_kanban_board_task_status_move(self, event: KanbanBoard.TaskStatusMove) -> None:
         try:
@@ -289,15 +272,20 @@ class StickyNotesApp(App):
         self.push_screen(NewResourceModal(), callback=self._on_new_resource)
 
     def _on_new_resource(self, resource_type: str | None) -> None:
-        if resource_type == "task":
-            self._create_task()
-        elif resource_type == "project":
-            self._create_project()
-        elif resource_type == "group":
-            self._create_group()
+        dispatch = {
+            "task": self._create_task,
+            "group": self._create_group,
+            "project": self._create_project,
+        }
+        action = dispatch.get(resource_type)
+        if action is not None:
+            action()
 
     def _create_task(self) -> None:
         statuses = self._model.statuses
+        if not statuses:
+            self.notify("No statuses — create one first", severity="warning")
+            return
         projects = tuple(p.project for p in self._model.projects)
         self.push_screen(
             TaskCreateModal(statuses, projects),
@@ -305,14 +293,7 @@ class StickyNotesApp(App):
         )
 
     def _on_task_create_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            create_task(self.conn, self._workspace_id, **result)
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: create_task(self.conn, self._workspace_id, **result))
 
     def _create_project(self) -> None:
         self.push_screen(
@@ -321,31 +302,20 @@ class StickyNotesApp(App):
         )
 
     def _on_project_create_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            create_project(self.conn, self._workspace_id, **result)
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: create_project(self.conn, self._workspace_id, **result))
 
     def _create_group(self) -> None:
         projects = tuple(p.project for p in self._model.projects)
+        if not projects:
+            self.notify("No projects — create one first", severity="warning")
+            return
         self.push_screen(
             GroupCreateModal(projects),
             callback=self._on_group_create_dismiss,
         )
 
     def _on_group_create_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        try:
-            create_group(self.conn, **result)
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
+        self._dismiss_callback(result, lambda: create_group(self.conn, **result))
 
     def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:
         order = self.config.status_order

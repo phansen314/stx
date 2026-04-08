@@ -5,7 +5,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Input, Select, Static
 
-from sticky_notes.formatting import format_timestamp, parse_date
+from sticky_notes.formatting import format_timestamp
 from sticky_notes.models import Project, Status
 from sticky_notes.service_models import TaskDetail
 from sticky_notes.tui.screens.base_edit import BaseEditModal, ModalScroll
@@ -127,16 +127,6 @@ class TaskEditModal(BaseEditModal):
     def on_mount(self) -> None:
         self.query_one("#task-edit-title", Input).focus()
 
-    def _parse_date_field(self, field_id: str) -> int | None | str:
-        """Return parsed timestamp, None for empty, or error string."""
-        raw = self.query_one(f"#{field_id}", Input).value.strip()
-        if not raw:
-            return None
-        try:
-            return parse_date(raw)
-        except ValueError:
-            return f"Invalid date format in {field_id.replace('task-edit-', '')}"
-
     def _do_save(self) -> None:
         title = self.query_one("#task-edit-title", Input).value.strip()
         if not title:
@@ -152,15 +142,15 @@ class TaskEditModal(BaseEditModal):
         project_val = self.query_one("#task-edit-project", Select).value
         project_id = project_val if isinstance(project_val, int) else None
 
-        due_date = self._parse_date_field("task-edit-due")
+        due_date = self._parse_date_field("task-edit-due", "due")
         if isinstance(due_date, str):
             self._show_error(due_date)
             return
-        start_date = self._parse_date_field("task-edit-start")
+        start_date = self._parse_date_field("task-edit-start", "start")
         if isinstance(start_date, str):
             self._show_error(start_date)
             return
-        finish_date = self._parse_date_field("task-edit-finish")
+        finish_date = self._parse_date_field("task-edit-finish", "finish")
         if isinstance(finish_date, str):
             self._show_error(finish_date)
             return

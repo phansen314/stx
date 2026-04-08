@@ -5,7 +5,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Input, Select, Static
 
-from sticky_notes.formatting import parse_date
 from sticky_notes.models import Project, Status
 from sticky_notes.tui.screens.base_edit import BaseEditModal, ModalScroll
 from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
@@ -109,15 +108,6 @@ class TaskCreateModal(BaseEditModal):
     def on_mount(self) -> None:
         self.query_one("#task-create-title", Input).focus()
 
-    def _parse_date_field(self, field_id: str) -> int | None | str:
-        raw = self.query_one(f"#{field_id}", Input).value.strip()
-        if not raw:
-            return None
-        try:
-            return parse_date(raw)
-        except ValueError:
-            return f"Invalid date format in {field_id.replace('task-create-', '')}"
-
     def _do_save(self) -> None:
         title = self.query_one("#task-create-title", Input).value.strip()
         if not title:
@@ -137,15 +127,15 @@ class TaskCreateModal(BaseEditModal):
         project_val = self.query_one("#task-create-project", Select).value
         project_id = project_val if isinstance(project_val, int) else None
 
-        due_date = self._parse_date_field("task-create-due")
+        due_date = self._parse_date_field("task-create-due", "due")
         if isinstance(due_date, str):
             self._show_error(due_date)
             return
-        start_date = self._parse_date_field("task-create-start")
+        start_date = self._parse_date_field("task-create-start", "start")
         if isinstance(start_date, str):
             self._show_error(start_date)
             return
-        finish_date = self._parse_date_field("task-create-finish")
+        finish_date = self._parse_date_field("task-create-finish", "finish")
         if isinstance(finish_date, str):
             self._show_error(finish_date)
             return
