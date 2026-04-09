@@ -16,6 +16,7 @@ from . import presenters, service
 from .export import export_full_json, export_markdown
 from .formatting import format_group_num, format_task_num, parse_date
 from .models import Workspace
+from .service_models import ArchivePreview
 
 
 # ---- Result type ----
@@ -101,6 +102,14 @@ def _json_err(message: str, code: str) -> None:
 
 def _text_err(message: str, code: str) -> None:
     print(f"[{code}] error: {message}", file=sys.stderr)
+
+
+def _confirm_archive(preview: ArchivePreview, *, json_mode: bool) -> bool:
+    if json_mode:
+        return True
+    print(presenters.format_archive_preview(preview), file=sys.stderr)
+    answer = input("proceed? [y/N] ")
+    return answer.strip().lower() in ("y", "yes")
 
 
 # ---- Command handlers ----
@@ -217,10 +226,17 @@ def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     )
 
 
-def cmd_task_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_task_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
-    archived = service.update_task(conn, task_id, {"archived": True}, source="cli")
+    if args.dry_run:
+        preview = service.preview_archive_task(conn, task_id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    if not args.force:
+        preview = service.preview_archive_task(conn, task_id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
+    archived = service.archive_task(conn, task_id, source="cli")
     return Ok(data=archived, text=f"archived {format_task_num(task_id)}")
 
 
@@ -268,15 +284,22 @@ def cmd_workspace_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_
     return Ok(data=updated, text=f"renamed workspace '{old_name}' -> '{new_name}'")
 
 
-def cmd_workspace_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_workspace_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     if args.name:
         workspace = service.get_workspace_by_name(conn, args.name)
     else:
         workspace = _resolve_workspace(conn, args, db_path)
-    updated = service.update_workspace(conn, workspace.id, {"archived": True})
+    if args.dry_run:
+        preview = service.preview_archive_workspace(conn, workspace.id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    if not args.force:
+        preview = service.preview_archive_workspace(conn, workspace.id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
+    archived = service.cascade_archive_workspace(conn, workspace.id, source="cli")
     if get_active_workspace_id(db_path) == workspace.id:
         clear_active_workspace_id(db_path)
-    return Ok(data=updated, text=f"archived workspace '{workspace.name}'")
+    return Ok(data=archived, text=f"archived workspace '{workspace.name}' and all descendants")
 
 
 # ---- Status subcommands ----
@@ -301,9 +324,19 @@ def cmd_status_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     return Ok(data=updated, text=f"renamed status '{args.old_name}' -> '{args.new_name}'")
 
 
-def cmd_status_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_status_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     col = service.get_status_by_name(conn, workspace.id, args.name)
+    if args.dry_run:
+        preview = service.preview_archive_status(conn, col.id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    # Confirm when --force or --reassign-to will cause side-effects on tasks.
+    # Without either flag, the service layer blocks on active tasks, so no
+    # confirmation is needed (the operation would fail anyway).
+    if args.force or args.reassign_to:
+        preview = service.preview_archive_status(conn, col.id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
     reassign_to_id = None
     if args.reassign_to:
         reassign_col = service.get_status_by_name(conn, workspace.id, args.reassign_to)
@@ -338,11 +371,18 @@ def cmd_project_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path
     return Ok(data=detail, text=presenters.format_project_detail(detail))
 
 
-def cmd_project_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_project_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     proj = service.get_project_by_name(conn, workspace.id, args.name)
-    updated = service.update_project(conn, proj.id, {"archived": True})
-    return Ok(data=updated, text=f"archived project '{proj.name}'")
+    if args.dry_run:
+        preview = service.preview_archive_project(conn, proj.id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    if not args.force:
+        preview = service.preview_archive_project(conn, proj.id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
+    archived = service.cascade_archive_project(conn, proj.id, source="cli")
+    return Ok(data=archived, text=f"archived project '{proj.name}' and all descendants")
 
 
 # ---- Dependency subcommands ----
@@ -360,15 +400,15 @@ def cmd_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
     )
 
 
-def cmd_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_dep_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     by_title = args.by_title
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=by_title)
     depends_on_id = _resolve_task(conn, workspace, args.depends_on_num, by_title=by_title)
-    service.remove_dependency(conn, task_id, depends_on_id)
+    service.archive_dependency(conn, task_id, depends_on_id)
     return Ok(
         data={"task_id": task_id, "depends_on_id": depends_on_id},
-        text=f"removed dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}",
+        text=f"archived dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}",
     )
 
 
@@ -386,14 +426,14 @@ def cmd_group_dep_create(conn: sqlite3.Connection, args: argparse.Namespace, db_
     )
 
 
-def cmd_group_dep_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_group_dep_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     grp = service.resolve_group(conn, workspace.id, args.group_title, project_name=args.project)
     dep = service.resolve_group(conn, workspace.id, args.depends_on_title, project_name=args.project)
-    service.remove_group_dependency(conn, grp.id, dep.id)
+    service.archive_group_dependency(conn, grp.id, dep.id)
     return Ok(
         data={"group_id": grp.id, "depends_on_id": dep.id},
-        text=f"removed dependency '{grp.title}' -> '{dep.title}'",
+        text=f"archived dependency '{grp.title}' -> '{dep.title}'",
     )
 
 
@@ -463,11 +503,18 @@ def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path
     return Ok(data=updated, text=f"renamed group '{args.title}' -> '{args.new_title}'")
 
 
-def cmd_group_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_group_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
-    archived = service.archive_group(conn, grp.id, source="cli")
-    return Ok(data=archived, text=f"archived group '{grp.title}'")
+    if args.dry_run:
+        preview = service.preview_archive_group(conn, grp.id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    if not args.force:
+        preview = service.preview_archive_group(conn, grp.id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
+    archived = service.cascade_archive_group(conn, grp.id, source="cli")
+    return Ok(data=archived, text=f"archived group '{grp.title}' and all descendants")
 
 
 def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -519,9 +566,16 @@ def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path
     return Ok(data=tags, text=presenters.format_tag_list(tags))
 
 
-def cmd_tag_rm(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+def cmd_tag_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     tag = service.get_tag_by_name(conn, workspace.id, args.name)
+    if args.dry_run:
+        preview = service.preview_archive_tag(conn, tag.id)
+        return Ok(data=preview, text=presenters.format_archive_preview(preview))
+    if not args.force:
+        preview = service.preview_archive_tag(conn, tag.id)
+        if not _confirm_archive(preview, json_mode=args.json):
+            return Ok(data=None, text="aborted")
     archived = service.archive_tag(conn, tag.id, unassign=args.unassign)
     return Ok(data=archived, text=f"archived tag '{tag.name}'")
 
@@ -637,36 +691,36 @@ HANDLERS: dict[str, CommandHandler] = {
     "task_edit": cmd_task_edit,
     "task_mv": cmd_task_mv,
     "task_transfer": cmd_task_transfer,
-    "task_rm": cmd_task_rm,
+    "task_archive": cmd_task_archive,
     "task_log": cmd_task_log,
     "workspace_create": cmd_workspace_create,
     "workspace_ls": cmd_workspace_ls,
     "workspace_use": cmd_workspace_use,
     "workspace_rename": cmd_workspace_rename,
-    "workspace_rm": cmd_workspace_rm,
+    "workspace_archive": cmd_workspace_archive,
     "status_create": cmd_status_create,
     "status_ls": cmd_status_ls,
     "status_rename": cmd_status_rename,
-    "status_rm": cmd_status_rm,
+    "status_archive": cmd_status_archive,
     "project_create": cmd_project_create,
     "project_ls": cmd_project_ls,
     "project_show": cmd_project_show,
-    "project_rm": cmd_project_rm,
+    "project_archive": cmd_project_archive,
     "dep_create": cmd_dep_create,
-    "dep_rm": cmd_dep_rm,
+    "dep_archive": cmd_dep_archive,
     "group_dep_create": cmd_group_dep_create,
-    "group_dep_rm": cmd_group_dep_rm,
+    "group_dep_archive": cmd_group_dep_archive,
     "group_create": cmd_group_create,
     "group_ls": cmd_group_ls,
     "group_show": cmd_group_show,
     "group_rename": cmd_group_rename,
-    "group_rm": cmd_group_rm,
+    "group_archive": cmd_group_archive,
     "group_mv": cmd_group_mv,
     "group_assign": cmd_group_assign,
     "group_unassign": cmd_group_unassign,
     "tag_create": cmd_tag_create,
     "tag_ls": cmd_tag_ls,
-    "tag_rm": cmd_tag_rm,
+    "tag_archive": cmd_tag_archive,
     "context": cmd_context,
     "export": cmd_export,
     "backup": cmd_backup,
@@ -742,13 +796,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_transfer.add_argument("--workspace", dest="target_workspace", required=True, help="target workspace name")
     p_transfer.add_argument("--status", "-S", required=True, help="status on target workspace")
     p_transfer.add_argument("--project", "-p", default=None, help="project on target workspace")
-    p_transfer.add_argument("--dry-run", action="store_true", default=False, help="preview without executing")
+    p_transfer.add_argument("--dry-run", action="store_true", help="preview without executing")
     p_transfer.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
-    p_rm = task_sub.add_parser("rm", help="archive a task")
-    p_rm.set_defaults(command="task_rm")
-    p_rm.add_argument("task_num")
-    p_rm.add_argument("--by-title", action="store_true", help="resolve task by title string")
+    p_tarch = task_sub.add_parser("archive", help="archive a task (with confirmation)")
+    p_tarch.set_defaults(command="task_archive")
+    p_tarch.add_argument("task_num")
+    p_tarch.add_argument("--by-title", action="store_true", help="resolve task by title string")
+    p_tarch.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    p_tarch.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     p_log = task_sub.add_parser("log", help="show task change log")
     p_log.set_defaults(command="task_log")
@@ -778,9 +834,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_wr.add_argument("old_or_new_name", help="new name (if active workspace) or old name")
     p_wr.add_argument("new_name", nargs="?", default=None, help="new name (when old name provided)")
 
-    p_wa = workspace_sub.add_parser("rm", help="archive a workspace")
-    p_wa.set_defaults(command="workspace_rm")
-    p_wa.add_argument("name", nargs="?", default=None, help="workspace name (defaults to active)")
+    p_warc = workspace_sub.add_parser("archive", help="cascade-archive workspace and all descendants")
+    p_warc.set_defaults(command="workspace_archive")
+    p_warc.add_argument("name", nargs="?", default=None, help="workspace name (defaults to active)")
+    p_warc.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    p_warc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     # ---- Status subcommands ----
 
@@ -799,11 +857,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_cr.add_argument("old_name")
     p_cr.add_argument("new_name")
 
-    p_carch = status_sub.add_parser("rm", help="archive a status")
-    p_carch.set_defaults(command="status_rm")
+    p_carch = status_sub.add_parser("archive", help="archive a status")
+    p_carch.set_defaults(command="status_archive")
     p_carch.add_argument("name")
     p_carch.add_argument("--reassign-to", default=None, metavar="STATUS", help="move tasks to this status")
     p_carch.add_argument("--force", action="store_true", help="archive tasks instead of blocking")
+    p_carch.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     # ---- Project subcommands ----
 
@@ -822,9 +881,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_ps.set_defaults(command="project_show")
     p_ps.add_argument("name")
 
-    p_pa = proj_sub.add_parser("rm", help="archive a project")
-    p_pa.set_defaults(command="project_rm")
-    p_pa.add_argument("name")
+    p_parc = proj_sub.add_parser("archive", help="cascade-archive project and all groups/tasks")
+    p_parc.set_defaults(command="project_archive")
+    p_parc.add_argument("name")
+    p_parc.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    p_parc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     # ---- Dependency subcommands ----
 
@@ -837,8 +898,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_da.add_argument("depends_on_num")
     p_da.add_argument("--by-title", action="store_true", help="resolve tasks by title string")
 
-    p_dr = dep_sub.add_parser("rm", help="remove a dependency")
-    p_dr.set_defaults(command="dep_rm")
+    p_dr = dep_sub.add_parser("archive", help="archive a dependency")
+    p_dr.set_defaults(command="dep_archive")
     p_dr.add_argument("task_num")
     p_dr.add_argument("depends_on_num")
     p_dr.add_argument("--by-title", action="store_true", help="resolve tasks by title string")
@@ -854,8 +915,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_gda.add_argument("depends_on_title")
     p_gda.add_argument("--project", "-p", default=None, help="disambiguate by project name")
 
-    p_gdr = gdep_sub.add_parser("rm", help="remove a group dependency")
-    p_gdr.set_defaults(command="group_dep_rm")
+    p_gdr = gdep_sub.add_parser("archive", help="archive a group dependency")
+    p_gdr.set_defaults(command="group_dep_archive")
     p_gdr.add_argument("group_title")
     p_gdr.add_argument("depends_on_title")
     p_gdr.add_argument("--project", "-p", default=None, help="disambiguate by project name")
@@ -888,10 +949,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_grn.add_argument("new_title")
     p_grn.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
-    p_ga = grp_sub.add_parser("rm", help="archive a group")
-    p_ga.set_defaults(command="group_rm")
-    p_ga.add_argument("title")
-    p_ga.add_argument("--project", "-p", default=None, help="disambiguate by project")
+    p_garc = grp_sub.add_parser("archive", help="cascade-archive group and all descendant groups/tasks")
+    p_garc.set_defaults(command="group_archive")
+    p_garc.add_argument("title")
+    p_garc.add_argument("--project", "-p", default=None, help="disambiguate by project")
+    p_garc.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    p_garc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     p_gmv = grp_sub.add_parser("mv", help="reparent a group")
     p_gmv.set_defaults(command="group_mv")
@@ -924,10 +987,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_tl.set_defaults(command="tag_ls")
     p_tl.add_argument("--all", "-a", action="store_true", help="include archived")
 
-    p_tr = tag_sub.add_parser("rm", help="archive a tag")
-    p_tr.set_defaults(command="tag_rm")
+    p_tr = tag_sub.add_parser("archive", help="archive a tag")
+    p_tr.set_defaults(command="tag_archive")
     p_tr.add_argument("name")
     p_tr.add_argument("--unassign", action="store_true", help="also remove tag from all tasks")
+    p_tr.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    p_tr.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     # ---- Context ----
 

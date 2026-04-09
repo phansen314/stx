@@ -65,13 +65,15 @@ Active entities cannot point to archived parents:
 - **A task cannot be assigned to an archived project.**
 - **A task cannot be assigned to an archived group.**
 
-### Archiving parents with active children is forbidden
+### Cascade archive
 
-- **A status cannot be archived while it has active tasks.** Move or archive the
-  tasks first.
-- **A project cannot be archived while it has active tasks or groups.** Archive
-  children first.
-- **A workspace cannot be archived while it has active statuses, projects, or tasks.**
+Archiving a parent entity cascades to all its active descendants:
+
+- **Archiving a group** cascade-archives all descendant groups and tasks in the subtree.
+- **Archiving a project** cascade-archives all groups and tasks in the project.
+- **Archiving a workspace** cascade-archives all tasks, groups, projects, and statuses.
+- **Archiving a status** either reassigns active tasks to another status, force-archives
+  them, or blocks if neither option is specified.
 
 ### Mutations on archived entities are allowed
 
@@ -105,9 +107,6 @@ original. The following are NOT carried over:
   it never fails with "tag not found."
 - **Assigning a task to a group auto-sets the task's project** if the task has no
   project. If the task already has a different project, the assignment is rejected.
-- **Archiving a group cascades:** active tasks are unassigned from the group,
-  child groups are reparented to the archived group's parent (or promoted to
-  top-level), and history is recorded for each unassigned task.
 
 ## Audit Trail (service-only logic, DB-enforced schema)
 

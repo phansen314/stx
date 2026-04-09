@@ -132,9 +132,9 @@ todo task mv task-0001 Backlog --project "Next sprint"
 
 ---
 
-### `todo task rm <task_num> [--by-title]`
+### `todo task archive <task_num> [--by-title] [--force] [--dry-run]`
 
-Soft-archives the task (`archived=true`). Not a hard delete. Tasks remain queryable with `--all` or `--archived`.
+Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Tasks remain queryable with `--all` or `--archived`.
 
 ---
 
@@ -162,7 +162,7 @@ todo --json context
 **Behavior:**
 1. Creates a copy of the task on the target workspace in the specified status
 2. Archives the original task
-3. **Fails** if the task has any dependencies (incoming or outgoing) — remove them first with `todo dep rm`
+3. **Fails** if the task has any dependencies (incoming or outgoing) — archive them first with `todo dep archive`
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
@@ -191,13 +191,15 @@ todo task transfer task-0001 --workspace ops --status Backlog --dry-run
 | `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
 | `workspace use` | `name` | — | Switch active workspace |
 | `workspace rename` | `[old] new` | — | 1 arg = rename active workspace; 2 args = rename named workspace |
-| `workspace rm` | `[name]` | — | Archive workspace (default: active); clears active pointer if removing active |
+| `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (projects, groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
 
 ```sh
 todo workspace create work --statuses "To Do,In Progress,Done"
 todo workspace use personal
 todo workspace ls
 todo workspace rename "work" "work-q2"
+todo workspace archive work --dry-run
+todo workspace archive work --force
 ```
 
 ---
@@ -209,12 +211,12 @@ todo workspace rename "work" "work-q2"
 | `status create` | `name` | — | Create a status on the active workspace |
 | `status ls` | — | — | List statuses on active workspace |
 | `status rename` | `old new` | — | Rename a status |
-| `status rm` | `name` | `--reassign-to STATUS`, `--force` | Archive status; either reassign its tasks to another status, or `--force` to archive all tasks |
+| `status archive` | `name` | `--reassign-to STATUS`, `--force` | Archive status; either reassign its tasks to another status, or `--force` to archive all tasks |
 
 ```sh
 todo status create "Blocked"
-todo status rm "Old Status" --reassign-to "Backlog"
-todo status rm "Old Status" --force
+todo status archive "Old Status" --reassign-to "Backlog"
+todo status archive "Old Status" --force
 ```
 
 ---
@@ -226,7 +228,7 @@ todo status rm "Old Status" --force
 | `project create` | `name` | `--desc` / `-d` | Create project |
 | `project ls` | — | — | List projects |
 | `project show` | `name` | — | Show project detail |
-| `project rm` | `name` | — | Archive project |
+| `project archive` | `name` | `--force`, `--dry-run` | Cascade-archive project and all groups/tasks. Prompts y/N unless `--force`. |
 
 > **No `project rename`.** To rename: create a new project, reassign tasks via `todo task edit --project "new name"`, then archive the old one.
 
@@ -239,11 +241,11 @@ Semantics: `todo dep create <task> <depends-on>` means **task is blocked by depe
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `dep create` | `task_num depends_on_num` | `--by-title` | Add dependency |
-| `dep rm` | `task_num depends_on_num` | `--by-title` | Remove dependency |
+| `dep archive` | `task_num depends_on_num` | `--by-title` | Archive dependency (soft-delete) |
 
 ```sh
 todo dep create task-0003 task-0001   # task-0003 is blocked by task-0001
-todo dep rm task-0003 task-0001
+todo dep archive task-0003 task-0001
 ```
 
 ---
@@ -255,11 +257,11 @@ Semantics: `todo group-dep create <group> <depends-on>` means **group is blocked
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `group-dep create` | `group_title depends_on_title` | — | Add group dependency |
-| `group-dep rm` | `group_title depends_on_title` | — | Remove group dependency |
+| `group-dep archive` | `group_title depends_on_title` | — | Archive group dependency (soft-delete) |
 
 ```sh
 todo group-dep create "Sprint 2" "Sprint 1"
-todo group-dep rm "Sprint 2" "Sprint 1"
+todo group-dep archive "Sprint 2" "Sprint 1"
 ```
 
 ---
@@ -272,14 +274,14 @@ Tags are workspace-scoped. Many-to-many with tasks. `todo task create`/`todo tas
 |---|---|---|---|
 | `tag create` | `name` | — | Create a tag (workspace-scoped) |
 | `tag ls` | — | `--all` / `-a` | List tags (include archived with `-a`) |
-| `tag rm` | `name` | `--unassign` | Archive tag; `--unassign` strips it from all tasks first |
+| `tag archive` | `name` | `--unassign`, `--force`, `--dry-run` | Archive tag; `--unassign` strips it from all tasks first. Prompts y/N unless `--force`. |
 
 > **No `tag rename`.** To rename: create new tag, reassign via `todo task edit --tag new --untag old`, archive old.
 
 ```sh
 todo tag create backend
 todo tag ls
-todo tag rm backend --unassign
+todo tag archive backend --unassign
 ```
 
 ---
@@ -294,7 +296,7 @@ Groups are project-scoped hierarchical collections of tasks. All group commands 
 | `group ls` | — | `--project/-p`, `--all/-a`, `--tree` | List (flat or tree view) |
 | `group show` | `title` | `--project/-p` | Show detail with ancestry |
 | `group rename` | `title new_title` | `--project/-p` | Rename |
-| `group rm` | `title` | `--project/-p` | Archive |
+| `group archive` | `title` | `--project/-p`, `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
 | `group mv` | `title` | `--parent` (**required**), `--project/-p` | Reparent; `--parent ''` promotes to top-level |
 | `group assign` | `task group_title` | `--project/-p`, `--by-title` | Assign task to group |
 | `group unassign` | `task` | `--by-title` | Unassign task from its group |
@@ -366,7 +368,7 @@ Launches the Textual TUI interface. No JSON output. Useful for interactive explo
 
 Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
-`task show` · `task edit` · `task mv` · `task transfer` · `task rm` · `task log` · `dep create` · `dep rm` · `group assign` · `group unassign`
+`task show` · `task edit` · `task mv` · `task transfer` · `task archive` · `task log` · `dep create` · `dep archive` · `group assign` · `group unassign`
 
 ---
 
@@ -374,13 +376,13 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
 | Command | `data` shape |
 |---|---|
-| `task create`, `task edit`, `task rm`, `task mv` | full Task object |
-| `workspace create/rename/rm` | full Workspace object |
-| `status create/rename/rm` | full Status object |
-| `project create/rm` | full Project object |
-| `tag create/rm` | full Tag object |
-| `dep create/rm` | `{"task_id": N, "depends_on_id": N}` |
-| `group-dep create/rm` | `{"group_id": N, "depends_on_id": N}` |
+| `task create`, `task edit`, `task archive`, `task mv` | full Task object |
+| `workspace create/rename/archive` | full Workspace object |
+| `status create/rename/archive` | full Status object |
+| `project create/archive` | full Project object |
+| `tag create/archive` | full Tag object |
+| `dep create/archive` | `{"task_id": N, "depends_on_id": N}` |
+| `group-dep create/archive` | `{"group_id": N, "depends_on_id": N}` |
 | `group assign` | `{"task": {...}, "group_id": N}` — `group_id` is duplicated: it appears here AND inside `task.group_id` (always equal after assign) |
 | `group unassign` | full Task object |
 | `task transfer` (live) | `{"task": {...}, "source_task_id": N}` |

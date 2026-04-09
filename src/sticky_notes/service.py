@@ -34,6 +34,7 @@ from .models import (
     Workspace,
 )
 from .service_models import (
+    ArchivePreview,
     GroupDetail,
     GroupRef,
     GroupTreeNode,
@@ -223,19 +224,19 @@ def update_workspace(
             if active_cols:
                 raise ValueError(
                     f"workspace has {len(active_cols)} active status(es); "
-                    "archive or remove them first"
+                    "use 'workspace archive' to cascade"
                 )
             active_projs = repo.list_projects(conn, workspace_id)
             if active_projs:
                 raise ValueError(
                     f"workspace has {len(active_projs)} active project(s); "
-                    "archive or remove them first"
+                    "use 'workspace archive' to cascade"
                 )
             active_tasks = repo.list_tasks(conn, workspace_id)
             if active_tasks:
                 raise ValueError(
                     f"workspace has {len(active_tasks)} active task(s); "
-                    "archive or remove them first"
+                    "use 'workspace archive' to cascade"
                 )
         return repo.update_workspace(conn, workspace_id, changes)
 
@@ -379,13 +380,13 @@ def update_project(
             if active_tasks:
                 raise ValueError(
                     f"project has {len(active_tasks)} active task(s); "
-                    "move or archive them first"
+                    "use 'project archive' to cascade"
                 )
             active_groups = repo.list_groups(conn, project_id)
             if active_groups:
                 raise ValueError(
                     f"project has {len(active_groups)} active group(s); "
-                    "archive them first"
+                    "use 'project archive' to cascade"
                 )
         return repo.update_project(conn, project_id, changes)
 
@@ -780,7 +781,7 @@ def add_dependency(
         repo.add_dependency(conn, task_id, depends_on_id)
 
 
-def remove_dependency(
+def archive_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
@@ -791,7 +792,7 @@ def remove_dependency(
             raise LookupError(
                 f"task {task_id} does not depend on task {depends_on_id}"
             )
-        repo.remove_dependency(conn, task_id, depends_on_id)
+        repo.archive_dependency(conn, task_id, depends_on_id)
 
 
 def list_all_dependencies(
@@ -837,7 +838,7 @@ def add_group_dependency(
         repo.add_group_dependency(conn, group_id, depends_on_id)
 
 
-def remove_group_dependency(
+def archive_group_dependency(
     conn: sqlite3.Connection,
     group_id: int,
     depends_on_id: int,
@@ -848,7 +849,7 @@ def remove_group_dependency(
             raise LookupError(
                 f"group {group_id} does not depend on group {depends_on_id}"
             )
-        repo.remove_group_dependency(conn, group_id, depends_on_id)
+        repo.archive_group_dependency(conn, group_id, depends_on_id)
 
 
 def list_all_group_dependencies(
@@ -1051,29 +1052,6 @@ def update_group(
         return repo.update_group(conn, group_id, changes)
 
 
-def archive_group(conn: sqlite3.Connection, group_id: int, *, source: str) -> Group:
-    with transaction(conn), _friendly_errors():
-        group = get_group(conn, group_id)
-        task_ids = repo.list_task_ids_by_group(conn, group_id)
-        # Bulk history recording: we know all tasks in this group share the same
-        # old group_id value.  Writing history entries directly avoids fetching
-        # each Task object individually just to read old.group_id via _record_changes().
-        for tid in task_ids:
-            repo.insert_task_history(
-                conn,
-                NewTaskHistory(
-                    task_id=tid,
-                    field=TaskField.GROUP_ID,
-                    old_value=str(group_id),
-                    new_value=None,
-                    source=source,
-                ),
-            )
-        repo.unassign_tasks_from_group(conn, group_id)
-        repo.reparent_children(conn, group_id, group.parent_id)
-        return repo.update_group(conn, group_id, {"archived": True})
-
-
 # ---- Task-group assignment ----
 
 
@@ -1232,3 +1210,161 @@ def untag_task(
         if tag.id not in existing:
             raise LookupError(f"task {task_id} is not tagged {tag_name!r}")
         repo.remove_tag_from_task(conn, task_id, tag.id)
+
+
+# ---- Archive (preview + cascade) ----
+
+
+def preview_archive_task(conn: sqlite3.Connection, task_id: int) -> ArchivePreview:
+    task = get_task(conn, task_id)
+    return ArchivePreview(
+        entity_type="task",
+        entity_name=task.title,
+        already_archived=task.archived,
+        task_count=0,
+        group_count=0,
+        project_count=0,
+        status_count=0,
+    )
+
+
+def preview_archive_group(conn: sqlite3.Connection, group_id: int) -> ArchivePreview:
+    group = get_group(conn, group_id)
+    return ArchivePreview(
+        entity_type="group",
+        entity_name=group.title,
+        already_archived=group.archived,
+        task_count=repo.count_active_tasks_in_group_subtree(conn, group_id),
+        group_count=repo.count_active_descendant_groups(conn, group_id),
+        project_count=0,
+        status_count=0,
+    )
+
+
+def preview_archive_project(conn: sqlite3.Connection, project_id: int) -> ArchivePreview:
+    project = get_project(conn, project_id)
+    return ArchivePreview(
+        entity_type="project",
+        entity_name=project.name,
+        already_archived=project.archived,
+        task_count=repo.count_active_tasks_in_project(conn, project_id),
+        group_count=repo.count_active_groups_in_project(conn, project_id),
+        project_count=0,
+        status_count=0,
+    )
+
+
+def preview_archive_workspace(conn: sqlite3.Connection, workspace_id: int) -> ArchivePreview:
+    workspace = get_workspace(conn, workspace_id)
+    return ArchivePreview(
+        entity_type="workspace",
+        entity_name=workspace.name,
+        already_archived=workspace.archived,
+        task_count=repo.count_active_tasks_in_workspace(conn, workspace_id),
+        group_count=repo.count_active_groups_in_workspace(conn, workspace_id),
+        project_count=repo.count_active_projects_in_workspace(conn, workspace_id),
+        status_count=repo.count_active_statuses_in_workspace(conn, workspace_id),
+    )
+
+
+def preview_archive_status(conn: sqlite3.Connection, status_id: int) -> ArchivePreview:
+    status = get_status(conn, status_id)
+    return ArchivePreview(
+        entity_type="status",
+        entity_name=status.name,
+        already_archived=status.archived,
+        task_count=repo.count_active_tasks_by_status(conn, status_id),
+        group_count=0,
+        project_count=0,
+        status_count=0,
+    )
+
+
+def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview:
+    tag = get_tag(conn, tag_id)
+    return ArchivePreview(
+        entity_type="tag",
+        entity_name=tag.name,
+        already_archived=tag.archived,
+        task_count=repo.count_active_tasks_by_tag(conn, tag_id),
+        group_count=0,
+        project_count=0,
+        status_count=0,
+    )
+
+
+def archive_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    *,
+    source: str,
+) -> Task:
+    with transaction(conn), _friendly_errors():
+        old = get_task(conn, task_id)
+        updated = repo.update_task(conn, task_id, {"archived": True})
+        _record_changes(conn, task_id, old, {"archived": True}, source)
+        return updated
+
+
+def _record_archive_history(
+    conn: sqlite3.Connection,
+    task_ids: tuple[int, ...],
+    source: str,
+) -> None:
+    # Values must match str(bool) used by _record_changes for single-task archive.
+    # If Task.archived ever changes from bool, update both paths together.
+    for tid in task_ids:
+        repo.insert_task_history(
+            conn,
+            NewTaskHistory(
+                task_id=tid,
+                field=TaskField.ARCHIVED,
+                old_value="False",
+                new_value="True",
+                source=source,
+            ),
+        )
+
+
+def cascade_archive_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+    *,
+    source: str,
+) -> Group:
+    with transaction(conn), _friendly_errors():
+        task_ids = repo.list_active_task_ids_in_group_subtree(conn, group_id)
+        repo.archive_tasks_in_group_subtree(conn, group_id)
+        _record_archive_history(conn, task_ids, source)
+        repo.archive_descendant_groups(conn, group_id)
+        return repo.update_group(conn, group_id, {"archived": True})
+
+
+def cascade_archive_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    source: str,
+) -> Project:
+    with transaction(conn), _friendly_errors():
+        task_ids = repo.list_active_task_ids_in_project(conn, project_id)
+        repo.archive_tasks_in_project(conn, project_id)
+        _record_archive_history(conn, task_ids, source)
+        repo.archive_groups_in_project(conn, project_id)
+        return repo.update_project(conn, project_id, {"archived": True})
+
+
+def cascade_archive_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    *,
+    source: str,
+) -> Workspace:
+    with transaction(conn), _friendly_errors():
+        task_ids = repo.list_active_task_ids_in_workspace(conn, workspace_id)
+        repo.archive_tasks_in_workspace(conn, workspace_id)
+        _record_archive_history(conn, task_ids, source)
+        repo.archive_groups_in_workspace(conn, workspace_id)
+        repo.archive_projects_in_workspace(conn, workspace_id)
+        repo.archive_statuses_in_workspace(conn, workspace_id)
+        return repo.update_workspace(conn, workspace_id, {"archived": True})

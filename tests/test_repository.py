@@ -79,8 +79,8 @@ from sticky_notes.repository import (
     list_tasks_filtered,
     list_ungrouped_task_ids,
     list_group_blocked_by_ids,
-    remove_dependency,
-    remove_group_dependency,
+    archive_dependency,
+    archive_group_dependency,
     remove_tag_from_task,
     reparent_children,
     set_task_group_id,
@@ -551,15 +551,22 @@ class TestTaskDependencyRepository:
         add_dependency(conn, t1.id, t2.id)
         assert list_blocks_ids(conn, t2.id) == (t1.id,)
 
-    def test_remove_dependency(self, conn: sqlite3.Connection) -> None:
+    def test_archive_dependency(self, conn: sqlite3.Connection) -> None:
         t1, t2, _ = self._setup(conn)
         add_dependency(conn, t1.id, t2.id)
-        remove_dependency(conn, t1.id, t2.id)
+        archive_dependency(conn, t1.id, t2.id)
         assert list_blocked_by_ids(conn, t1.id) == ()
+        # Row still exists in DB with archived=1
+        row = conn.execute(
+            "SELECT archived FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?",
+            (t1.id, t2.id),
+        ).fetchone()
+        assert row is not None
+        assert row["archived"] == 1
 
-    def test_remove_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
+    def test_archive_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
         t1, t2, _ = self._setup(conn)
-        remove_dependency(conn, t1.id, t2.id)  # no-op, no error
+        archive_dependency(conn, t1.id, t2.id)  # no-op, no error
 
     def test_list_blocked_by_tasks(self, conn: sqlite3.Connection) -> None:
         t1, t2, _ = self._setup(conn)
@@ -576,11 +583,11 @@ class TestTaskDependencyRepository:
         assert len(tasks) == 1
         assert tasks[0].id == t1.id
 
-    def test_duplicate_dependency_raises(self, conn: sqlite3.Connection) -> None:
+    def test_duplicate_dependency_is_idempotent(self, conn: sqlite3.Connection) -> None:
         t1, t2, _ = self._setup(conn)
         add_dependency(conn, t1.id, t2.id)
-        with pytest.raises(sqlite3.IntegrityError):
-            add_dependency(conn, t1.id, t2.id)
+        add_dependency(conn, t1.id, t2.id)  # upsert — no error
+        assert list_blocked_by_ids(conn, t1.id) == (t2.id,)
 
     def test_self_dependency_raises(self, conn: sqlite3.Connection) -> None:
         t1, _, _ = self._setup(conn)
@@ -597,6 +604,19 @@ class TestTaskDependencyRepository:
     def test_list_all_dependencies_empty(self, conn: sqlite3.Connection) -> None:
         self._setup(conn)
         assert list_all_dependencies(conn) == ()
+
+    def test_list_all_excludes_archived(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup(conn)
+        add_dependency(conn, t2.id, t1.id)
+        archive_dependency(conn, t2.id, t1.id)
+        assert list_all_dependencies(conn) == ()
+
+    def test_readd_after_archive(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup(conn)
+        add_dependency(conn, t2.id, t1.id)
+        archive_dependency(conn, t2.id, t1.id)
+        add_dependency(conn, t2.id, t1.id)  # re-create — should not crash
+        assert list_blocked_by_ids(conn, t2.id) == (t1.id,)
 
     def test_batch_dependency_ids(self, conn: sqlite3.Connection) -> None:
         t1, t2, t3 = self._setup(conn)
@@ -658,21 +678,28 @@ class TestGroupDependencyRepository:
         ids = list_group_blocked_by_ids(conn, g1)
         assert set(ids) == {g2, g3}
 
-    def test_remove_group_dependency(self, conn: sqlite3.Connection) -> None:
+    def test_archive_group_dependency(self, conn: sqlite3.Connection) -> None:
         g1, g2, _ = self._setup(conn)
         add_group_dependency(conn, g1, g2)
-        remove_group_dependency(conn, g1, g2)
+        archive_group_dependency(conn, g1, g2)
         assert list_group_blocked_by_ids(conn, g1) == ()
+        # Row still exists in DB with archived=1
+        row = conn.execute(
+            "SELECT archived FROM group_dependencies WHERE group_id = ? AND depends_on_id = ?",
+            (g1, g2),
+        ).fetchone()
+        assert row is not None
+        assert row["archived"] == 1
 
-    def test_remove_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
+    def test_archive_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
         g1, g2, _ = self._setup(conn)
-        remove_group_dependency(conn, g1, g2)  # no-op, no error
+        archive_group_dependency(conn, g1, g2)  # no-op, no error
 
-    def test_duplicate_raises(self, conn: sqlite3.Connection) -> None:
+    def test_duplicate_is_idempotent(self, conn: sqlite3.Connection) -> None:
         g1, g2, _ = self._setup(conn)
         add_group_dependency(conn, g1, g2)
-        with pytest.raises(sqlite3.IntegrityError):
-            add_group_dependency(conn, g1, g2)
+        add_group_dependency(conn, g1, g2)  # upsert — no error
+        assert list_group_blocked_by_ids(conn, g1) == (g2,)
 
     def test_self_dependency_raises(self, conn: sqlite3.Connection) -> None:
         g1, _, _ = self._setup(conn)
@@ -689,6 +716,19 @@ class TestGroupDependencyRepository:
     def test_list_all_group_dependencies_empty(self, conn: sqlite3.Connection) -> None:
         self._setup(conn)
         assert list_all_group_dependencies(conn) == ()
+
+    def test_list_all_group_deps_excludes_archived(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _ = self._setup(conn)
+        add_group_dependency(conn, g1, g2)
+        archive_group_dependency(conn, g1, g2)
+        assert list_all_group_dependencies(conn) == ()
+
+    def test_readd_group_dep_after_archive(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _ = self._setup(conn)
+        add_group_dependency(conn, g1, g2)
+        archive_group_dependency(conn, g1, g2)
+        add_group_dependency(conn, g1, g2)  # re-create — should not crash
+        assert list_group_blocked_by_ids(conn, g1) == (g2,)
 
     def test_get_reachable_group_dep_ids_linear(self, conn: sqlite3.Connection) -> None:
         g1, g2, g3 = self._setup(conn)

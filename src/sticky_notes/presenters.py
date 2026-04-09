@@ -7,6 +7,7 @@ from __future__ import annotations
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
 from .models import Project, Status, Tag, Task, TaskHistory, Workspace
 from .service_models import (
+    ArchivePreview,
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
@@ -255,4 +256,23 @@ def format_move_preview(
             lines.append("  move would FAIL")
     else:
         lines.append("  no dependencies \u2014 transfer OK")
+    return "\n".join(lines)
+
+
+def format_archive_preview(preview: ArchivePreview) -> str:
+    if preview.already_archived:
+        return f"{preview.entity_type} '{preview.entity_name}' is already archived; nothing to do"
+    total = preview.task_count + preview.group_count + preview.project_count + preview.status_count
+    lines = [f"dry-run: would archive {preview.entity_type} '{preview.entity_name}'"]
+    if total == 0:
+        return lines[0]
+    if preview.project_count:
+        lines.append(f"  projects: {preview.project_count}")
+    if preview.group_count:
+        group_label = "descendant groups" if preview.entity_type == "group" else "groups"
+        lines.append(f"  {group_label}: {preview.group_count}")
+    if preview.status_count:
+        lines.append(f"  statuses: {preview.status_count}")
+    if preview.task_count:
+        lines.append(f"  tasks: {preview.task_count}")
     return "\n".join(lines)

@@ -12,6 +12,7 @@ from sticky_notes.models import (
     TaskHistory,
 )
 from sticky_notes.service_models import (
+    ArchivePreview,
     WorkspaceContext,
     WorkspaceListStatus,
     WorkspaceListView,
@@ -499,3 +500,41 @@ class TestFormatMovePreview:
         out = presenters.format_move_preview(p, "other", "Backlog")
         assert "task is archived" in out
         assert "move would FAIL" in out
+
+
+class TestFormatArchivePreview:
+    def test_already_archived(self):
+        p = ArchivePreview(
+            entity_type="task", entity_name="t", already_archived=True,
+            task_count=0, group_count=0, project_count=0, status_count=0,
+        )
+        assert "already archived" in presenters.format_archive_preview(p)
+
+    def test_no_cascade_targets(self):
+        p = ArchivePreview(
+            entity_type="task", entity_name="t", already_archived=False,
+            task_count=0, group_count=0, project_count=0, status_count=0,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "dry-run" in out
+        assert "tasks:" not in out
+
+    def test_with_descendants(self):
+        p = ArchivePreview(
+            entity_type="group", entity_name="g", already_archived=False,
+            task_count=3, group_count=1, project_count=0, status_count=0,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "descendant groups: 1" in out
+        assert "tasks: 3" in out
+
+    def test_workspace_full(self):
+        p = ArchivePreview(
+            entity_type="workspace", entity_name="w", already_archived=False,
+            task_count=5, group_count=2, project_count=1, status_count=3,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "projects: 1" in out
+        assert "groups: 2" in out
+        assert "statuses: 3" in out
+        assert "tasks: 5" in out

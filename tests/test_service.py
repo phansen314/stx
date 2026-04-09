@@ -163,16 +163,10 @@ class TestWorkspaceService:
         updated = service.update_workspace(conn, workspace.id, {"name": "new"})
         assert updated.name == "new"
 
-    def test_archive_workspace_with_active_statuses_blocked(self, conn: sqlite3.Connection) -> None:
+    def test_update_archive_with_active_children_blocked(self, conn: sqlite3.Connection) -> None:
         workspace = service.create_workspace(conn, "work")
         service.create_status(conn, workspace.id, "todo")
         with pytest.raises(ValueError, match="active status"):
-            service.update_workspace(conn, workspace.id, {"archived": True})
-
-    def test_archive_workspace_with_active_projects_blocked(self, conn: sqlite3.Connection) -> None:
-        workspace = service.create_workspace(conn, "work")
-        service.create_project(conn, workspace.id, "proj")
-        with pytest.raises(ValueError, match="active project"):
             service.update_workspace(conn, workspace.id, {"archived": True})
 
     def test_archive_empty_workspace_allowed(self, conn: sqlite3.Connection) -> None:
@@ -289,19 +283,12 @@ class TestProjectService:
         updated = service.update_project(conn, proj.id, {"name": "new"})
         assert updated.name == "new"
 
-    def test_archive_project_with_active_tasks_blocked(self, conn: sqlite3.Connection) -> None:
+    def test_update_archive_with_active_children_blocked(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         proj = service.create_project(conn, bid, "alpha")
         insert_task(conn, bid, "task", cid, project_id=proj.id)
         with pytest.raises(ValueError, match="active task"):
-            service.update_project(conn, proj.id, {"archived": True})
-
-    def test_archive_project_with_active_groups_blocked(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        proj = service.create_project(conn, bid, "alpha")
-        insert_group(conn, proj.id, "g1")
-        with pytest.raises(ValueError, match="active group"):
             service.update_project(conn, proj.id, {"archived": True})
 
     def test_archive_empty_project_allowed(self, conn: sqlite3.Connection) -> None:
@@ -680,7 +667,7 @@ class TestTaskService:
         cid = insert_status(conn, bid)
         pid = insert_project(conn, bid)
         gid = insert_group(conn, pid, "g1")
-        service.archive_group(conn, gid, source="test")
+        service.cascade_archive_group(conn, gid, source="test")
         tid = insert_task(conn, bid, "t", cid)
         with pytest.raises(ValueError, match="archived"):
             service.assign_task_to_group(conn, tid, gid, source="test")
@@ -705,7 +692,7 @@ class TestDependencyService:
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
         service.add_dependency(conn, t2, t1)
-        service.remove_dependency(conn, t2, t1)
+        service.archive_dependency(conn, t2, t1)
         detail = service.get_task_detail(conn, t2)
         assert detail.blocked_by == ()
 
@@ -786,10 +773,10 @@ class TestGroupDependencyService:
         deps = service.list_all_group_dependencies(conn)
         assert (g1, g2) in deps
 
-    def test_remove(self, conn: sqlite3.Connection) -> None:
+    def test_archive(self, conn: sqlite3.Connection) -> None:
         _, g1, g2, _ = self._setup(conn)
         service.add_group_dependency(conn, g1, g2)
-        service.remove_group_dependency(conn, g1, g2)
+        service.archive_group_dependency(conn, g1, g2)
         assert service.list_all_group_dependencies(conn) == ()
 
     def test_add_self_ref_raises(self, conn: sqlite3.Connection) -> None:
@@ -1241,7 +1228,7 @@ class TestGroupService:
         _, _, pid = self._setup(conn)
         service.create_group(conn, pid, "live")
         arch = service.create_group(conn, pid, "arch")
-        service.archive_group(conn, arch.id, source="test")
+        service.cascade_archive_group(conn, arch.id, source="test")
         tree_default = service.build_group_tree(conn, pid)
         assert len(tree_default.roots) == 1
         tree_all = service.build_group_tree(conn, pid, include_archived=True)
@@ -1267,27 +1254,28 @@ class TestGroupService:
         with pytest.raises(ValueError, match="cycle"):
             service.update_group(conn, g.id, {"parent_id": g.id})
 
-    def test_archive_orphans_tasks(self, conn: sqlite3.Connection) -> None:
+    def test_cascade_archive_archives_tasks(self, conn: sqlite3.Connection) -> None:
         bid, cid, pid = self._setup(conn)
         grp = service.create_group(conn, pid, "g")
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, grp.id, source="test")
-        service.archive_group(conn, grp.id, source="test")
-        assert service.get_task(conn, tid).group_id is None
+        service.cascade_archive_group(conn, grp.id, source="test")
+        assert service.get_task(conn, tid).archived is True
 
-    def test_archive_reparents_children(self, conn: sqlite3.Connection) -> None:
+    def test_cascade_archive_archives_descendants(self, conn: sqlite3.Connection) -> None:
         _, _, pid = self._setup(conn)
         parent = service.create_group(conn, pid, "parent")
         mid = service.create_group(conn, pid, "mid", parent_id=parent.id)
         child = service.create_group(conn, pid, "child", parent_id=mid.id)
-        service.archive_group(conn, mid.id, source="test")
-        refreshed_child = service.get_group(conn, child.id)
-        assert refreshed_child.parent_id == parent.id
+        service.cascade_archive_group(conn, parent.id, source="test")
+        assert service.get_group(conn, parent.id).archived is True
+        assert service.get_group(conn, mid.id).archived is True
+        assert service.get_group(conn, child.id).archived is True
 
-    def test_archive_group_is_archived(self, conn: sqlite3.Connection) -> None:
+    def test_cascade_archive_group_is_archived(self, conn: sqlite3.Connection) -> None:
         _, _, pid = self._setup(conn)
         grp = service.create_group(conn, pid, "g")
-        service.archive_group(conn, grp.id, source="test")
+        service.cascade_archive_group(conn, grp.id, source="test")
         assert service.get_group(conn, grp.id).archived is True
 
     def test_get_group_detail(self, conn: sqlite3.Connection) -> None:
@@ -1312,7 +1300,7 @@ class TestGroupService:
         assert detail.parent is not None
         assert detail.parent.id == parent.id
 
-    def test_archive_group_integrity_error_becomes_value_error(
+    def test_cascade_archive_group_integrity_error_becomes_value_error(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from sticky_notes import repository as repo_mod
@@ -1324,7 +1312,7 @@ class TestGroupService:
             )
         monkeypatch.setattr(repo_mod, "update_group", raise_integrity)
         with pytest.raises(ValueError):
-            service.archive_group(conn, grp.id, source="test")
+            service.cascade_archive_group(conn, grp.id, source="test")
 
 
 class TestTaskGroupAssignment:
@@ -1460,23 +1448,6 @@ class TestTaskGroupHistory:
         group_entries = [h for h in history if h.field.value == "group_id"]
         # The second call is a no-op (group_id already matches); _record_changes skips it.
         assert len(group_entries) == 1
-
-    def test_archive_group_records_history(self, conn: sqlite3.Connection) -> None:
-        bid, cid, pid = self._setup(conn)
-        grp = service.create_group(conn, pid, "g")
-        t1 = insert_task(conn, bid, "t1", cid, project_id=pid)
-        t2 = insert_task(conn, bid, "t2", cid, project_id=pid)
-        service.assign_task_to_group(conn, t1, grp.id, source="test")
-        service.assign_task_to_group(conn, t2, grp.id, source="test")
-        service.archive_group(conn, grp.id, source="test")
-        for tid in (t1, t2):
-            history = service.list_task_history(conn, tid)
-            group_entries = [h for h in history if h.field.value == "group_id"]
-            archive_entry = [h for h in group_entries if h.new_value is None]
-            assert len(archive_entry) == 1
-            assert archive_entry[0].old_value == str(grp.id)
-            assert archive_entry[0].source == "test"
-
 
 # ---- Tag ----
 
@@ -1877,3 +1848,150 @@ class TestGetWorkspaceContext:
     def test_missing_workspace_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
             service.get_workspace_context(conn, 9999)
+
+
+# ---- Archive preview + cascade ----
+
+
+class TestArchivePreviewAndCascade:
+    def _setup_full(self, conn: sqlite3.Connection) -> tuple[int, int, int, int, int, int]:
+        """Create workspace with 2 statuses, 1 project, 2 groups (parent+child), 2 tasks."""
+        bid = insert_workspace(conn)
+        cid1 = insert_status(conn, bid, "todo")
+        cid2 = insert_status(conn, bid, "done")
+        pid = insert_project(conn, bid, "proj")
+        g1 = insert_group(conn, pid, "parent")
+        g2 = insert_group(conn, pid, "child", parent_id=g1)
+        t1 = insert_task(conn, bid, "t1", cid1, project_id=pid)
+        t2 = insert_task(conn, bid, "t2", cid2, project_id=pid)
+        service.assign_task_to_group(conn, t1, g1, source="test")
+        service.assign_task_to_group(conn, t2, g2, source="test")
+        return bid, pid, g1, g2, t1, t2
+
+    # ---- Preview correctness ----
+
+    def test_preview_archive_task(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        tid = insert_task(conn, bid, "t", cid)
+        preview = service.preview_archive_task(conn, tid)
+        assert preview.entity_type == "task"
+        assert preview.already_archived is False
+        assert preview.task_count == 0
+        assert preview.group_count == 0
+
+    def test_preview_archive_task_already_archived(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        tid = insert_task(conn, bid, "t", cid)
+        service.archive_task(conn, tid, source="test")
+        preview = service.preview_archive_task(conn, tid)
+        assert preview.already_archived is True
+        assert preview.task_count == 0
+
+    def test_preview_archive_group(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        preview = service.preview_archive_group(conn, g1)
+        assert preview.entity_type == "group"
+        assert preview.group_count == 1  # child group
+        assert preview.task_count == 2   # both tasks
+
+    def test_preview_archive_project(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        preview = service.preview_archive_project(conn, pid)
+        assert preview.entity_type == "project"
+        assert preview.group_count == 2
+        assert preview.task_count == 2
+
+    def test_preview_archive_workspace(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        preview = service.preview_archive_workspace(conn, bid)
+        assert preview.entity_type == "workspace"
+        assert preview.project_count == 1
+        assert preview.group_count == 2
+        assert preview.status_count == 2
+        assert preview.task_count == 2
+
+    # ---- Cascade correctness ----
+
+    def test_cascade_archive_group_archives_all(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_group(conn, g1, source="test")
+        assert service.get_group(conn, g1).archived is True
+        assert service.get_group(conn, g2).archived is True
+        assert service.get_task(conn, t1).archived is True
+        assert service.get_task(conn, t2).archived is True
+
+    def test_cascade_archive_project_archives_all(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_project(conn, pid, source="test")
+        assert service.get_project(conn, pid).archived is True
+        assert service.get_group(conn, g1).archived is True
+        assert service.get_group(conn, g2).archived is True
+        assert service.get_task(conn, t1).archived is True
+        assert service.get_task(conn, t2).archived is True
+
+    def test_cascade_archive_workspace_archives_all(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_workspace(conn, bid, source="test")
+        assert service.get_workspace(conn, bid).archived is True
+        assert service.get_project(conn, pid).archived is True
+        assert service.get_group(conn, g1).archived is True
+        assert service.get_task(conn, t1).archived is True
+        # All statuses archived
+        from sticky_notes import repository as repo
+        statuses = repo.list_statuses(conn, bid, include_archived=True)
+        assert all(s.archived for s in statuses)
+
+    # ---- Cascade history recording ----
+
+    def test_cascade_archive_group_records_history(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_group(conn, g1, source="test")
+        for tid in (t1, t2):
+            history = service.list_task_history(conn, tid)
+            archived_entries = [h for h in history if h.field.value == "archived"]
+            assert len(archived_entries) == 1
+            assert archived_entries[0].old_value == "False"
+            assert archived_entries[0].new_value == "True"
+            assert archived_entries[0].source == "test"
+
+    def test_cascade_archive_project_records_history(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_project(conn, pid, source="test")
+        for tid in (t1, t2):
+            history = service.list_task_history(conn, tid)
+            archived_entries = [h for h in history if h.field.value == "archived"]
+            assert len(archived_entries) == 1
+
+    def test_cascade_archive_workspace_records_history(self, conn: sqlite3.Connection) -> None:
+        bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
+        service.cascade_archive_workspace(conn, bid, source="test")
+        for tid in (t1, t2):
+            history = service.list_task_history(conn, tid)
+            archived_entries = [h for h in history if h.field.value == "archived"]
+            assert len(archived_entries) == 1
+
+    # ---- Dep re-creation after archive ----
+
+    def test_readd_dependency_after_archive(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_dependency(conn, t2, t1)
+        service.archive_dependency(conn, t2, t1)
+        service.add_dependency(conn, t2, t1)  # should not crash
+        detail = service.get_task_detail(conn, t2)
+        assert len(detail.blocked_by) == 1
+
+    def test_readd_group_dependency_after_archive(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        pid = insert_project(conn, bid, "p")
+        g1 = insert_group(conn, pid, "g1")
+        g2 = insert_group(conn, pid, "g2")
+        service.add_group_dependency(conn, g1, g2)
+        service.archive_group_dependency(conn, g1, g2)
+        service.add_group_dependency(conn, g1, g2)  # should not crash
+        deps = service.list_all_group_dependencies(conn)
+        assert (g1, g2) in deps

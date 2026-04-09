@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
     task_id INTEGER NOT NULL,
     depends_on_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     PRIMARY KEY (task_id, depends_on_id),
     CHECK (task_id != depends_on_id),
     FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS group_dependencies (
     group_id      INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     depends_on_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     workspace_id  INTEGER NOT NULL REFERENCES workspaces(id),
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     PRIMARY KEY (group_id, depends_on_id),
     CHECK (group_id != depends_on_id)
 );
