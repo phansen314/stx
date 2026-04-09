@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
 
@@ -35,6 +36,7 @@ class GroupRef:
     """Group fields plus edge IDs, for list rendering and tree walking without
     fetching full related objects."""
     id: int
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None
@@ -108,6 +110,7 @@ class ProjectDetail:
 @dataclass(frozen=True)
 class GroupDetail:
     id: int
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None
@@ -133,6 +136,19 @@ class MoveToWorkspacePreview:
     blocking_reason: str | None
     dependency_ids: tuple[int, ...]
     is_archived: bool
+
+
+@dataclass(frozen=True)
+class ArchivePreview:
+    """Dry-run result for an archive command. Counts reflect additional
+    entities beyond the root that *would* be archived."""
+    entity_type: Literal["task", "group", "project", "status", "tag", "workspace"]
+    entity_name: str
+    already_archived: bool
+    task_count: int
+    group_count: int
+    project_count: int
+    status_count: int
 
 
 @dataclass(frozen=True)

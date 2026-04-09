@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sticky-notes"
-version = "0.3.0"
+version = "0.4.0"
 description = "A local todo/kanban app with CLI and TUI interfaces"
 requires-python = ">=3.12"
 dependencies = [

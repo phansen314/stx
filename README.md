@@ -50,7 +50,7 @@ Entry point: `todo`
 | `todo task show <task>` | Show task detail with history and dependencies |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
 | `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
-| `todo task rm <task>` | Archive a task |
+| `todo task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
 | `todo task log <task>` | Show task change history |
 
 Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
@@ -74,13 +74,13 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 
 | Command | Description |
 |---------|-------------|
-| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `rm` |
-| `todo status ...` | `create`, `ls`, `rename`, `rm [--reassign-to STATUS\|--force]` |
-| `todo project ...` | `create`, `ls`, `show`, `rm` |
-| `todo dep ...` | `create`, `rm` |
-| `todo group-dep ...` | `create`, `rm` (group-level dependencies) |
-| `todo tag ...` | `create`, `ls`, `rm [--unassign]` |
-| `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `rm`, `mv`, `assign`, `unassign` |
+| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `archive [--force\|--dry-run]` |
+| `todo status ...` | `create`, `ls`, `rename`, `archive [--reassign-to STATUS\|--force]` |
+| `todo project ...` | `create`, `ls`, `show`, `archive [--force\|--dry-run]` |
+| `todo dep ...` | `create`, `archive` |
+| `todo group-dep ...` | `create`, `archive` (group-level dependencies) |
+| `todo tag ...` | `create`, `ls`, `archive [--unassign\|--force\|--dry-run]` |
+| `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign` |
 | `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
 | `todo export` | Export database as JSON (default) or Markdown (`--md`) |
 | `todo info` | Show sticky-notes file locations |

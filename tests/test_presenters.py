@@ -12,6 +12,7 @@ from sticky_notes.models import (
     TaskHistory,
 )
 from sticky_notes.service_models import (
+    ArchivePreview,
     WorkspaceContext,
     WorkspaceListStatus,
     WorkspaceListView,
@@ -78,7 +79,7 @@ def _history(
     id: int, field: TaskField, old: str | None, new: str | None, source: str = "cli",
 ) -> TaskHistory:
     return TaskHistory(
-        id=id, task_id=1, field=field, old_value=old, new_value=new,
+        id=id, task_id=1, workspace_id=1, field=field, old_value=old, new_value=new,
         source=source, changed_at=0,
     )
 
@@ -233,7 +234,7 @@ class TestFormatTaskDetail:
         d = self._detail(
             project=_project(5, "proj"),
             project_id=5,
-            group=Group(id=3, project_id=5, title="g", parent_id=None, position=0, archived=False, created_at=0),
+            group=Group(id=3, workspace_id=1, project_id=5, title="g", parent_id=None, position=0, archived=False, created_at=0),
             tags=(_tag(1, "bug"), _tag(2, "urgent")),
             description="do the thing",
             due_date=1_000_000,
@@ -312,7 +313,7 @@ class TestFormatWorkspaceContext:
         return WorkspaceContext(view=view, projects=projects, tags=tags, groups=groups)
 
     def _ref(self, id: int, proj_id: int, title: str) -> GroupRef:
-        return GroupRef(id=id, project_id=proj_id, title=title, parent_id=None,
+        return GroupRef(id=id, workspace_id=1, project_id=proj_id, title=title, parent_id=None,
                         position=0, archived=False, created_at=0)
 
     def test_workspace_header(self):
@@ -350,7 +351,7 @@ class TestFormatWorkspaceContext:
 class TestFormatGroupList:
     def _ref(self, id: int, title: str, *, archived: bool = False, task_count: int = 0) -> GroupRef:
         return GroupRef(
-            id=id, project_id=1, title=title, parent_id=None, position=0,
+            id=id, workspace_id=1, project_id=1, title=title, parent_id=None, position=0,
             archived=archived, created_at=0,
             task_ids=tuple(range(task_count)), child_ids=(),
         )
@@ -390,7 +391,7 @@ class TestFormatGroupList:
 class TestFormatGroupTrees:
     def _node(self, id: int, title: str, children=()) -> GroupTreeNode:
         ref = GroupRef(
-            id=id, project_id=1, title=title, parent_id=None, position=0,
+            id=id, workspace_id=1, project_id=1, title=title, parent_id=None, position=0,
             archived=False, created_at=0, task_ids=(), child_ids=(),
         )
         return GroupTreeNode(group=ref, children=children)
@@ -442,7 +443,7 @@ class TestFormatGroupTrees:
 class TestFormatGroupDetail:
     def test_minimal(self):
         d = GroupDetail(
-            id=1, project_id=1, title="G", parent_id=None, position=0,
+            id=1, workspace_id=1, project_id=1, title="G", parent_id=None, position=0,
             archived=False, created_at=0,
             tasks=(), children=(), parent=None,
         )
@@ -453,9 +454,9 @@ class TestFormatGroupDetail:
         assert "Tasks:   0" in out
 
     def test_with_children_and_tasks(self):
-        child = Group(id=2, project_id=1, title="ChildA", parent_id=1, position=0, archived=False, created_at=0)
+        child = Group(id=2, workspace_id=1, project_id=1, title="ChildA", parent_id=1, position=0, archived=False, created_at=0)
         d = GroupDetail(
-            id=1, project_id=1, title="Root", parent_id=None, position=0,
+            id=1, workspace_id=1, project_id=1, title="Root", parent_id=None, position=0,
             archived=False, created_at=0,
             tasks=(_task(10, "work", priority=3, due_date=1_000_000),),
             children=(child,), parent=None,
@@ -499,3 +500,41 @@ class TestFormatMovePreview:
         out = presenters.format_move_preview(p, "other", "Backlog")
         assert "task is archived" in out
         assert "move would FAIL" in out
+
+
+class TestFormatArchivePreview:
+    def test_already_archived(self):
+        p = ArchivePreview(
+            entity_type="task", entity_name="t", already_archived=True,
+            task_count=0, group_count=0, project_count=0, status_count=0,
+        )
+        assert "already archived" in presenters.format_archive_preview(p)
+
+    def test_no_cascade_targets(self):
+        p = ArchivePreview(
+            entity_type="task", entity_name="t", already_archived=False,
+            task_count=0, group_count=0, project_count=0, status_count=0,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "dry-run" in out
+        assert "tasks:" not in out
+
+    def test_with_descendants(self):
+        p = ArchivePreview(
+            entity_type="group", entity_name="g", already_archived=False,
+            task_count=3, group_count=1, project_count=0, status_count=0,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "descendant groups: 1" in out
+        assert "tasks: 3" in out
+
+    def test_workspace_full(self):
+        p = ArchivePreview(
+            entity_type="workspace", entity_name="w", already_archived=False,
+            task_count=5, group_count=2, project_count=1, status_count=3,
+        )
+        out = presenters.format_archive_preview(p)
+        assert "projects: 1" in out
+        assert "groups: 2" in out
+        assert "statuses: 3" in out
+        assert "tasks: 5" in out

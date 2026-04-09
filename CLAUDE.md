@@ -84,7 +84,7 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 **Active workspace:** persisted at `~/.local/share/sticky-notes/active-workspace`. CLI resolves workspace from `--workspace`/`-w` flag, falling back to this file. Set via `todo workspace create` or `todo workspace use`.
 
 **Command structure:**
-- Task subcommands: `todo task create|ls|show|edit|mv|transfer|rm|log`
+- Task subcommands: `todo task create|ls|show|edit|mv|transfer|archive|log`
 - Other subcommand groups: `workspace`, `status`, `project`, `dep`, `group-dep`, `group`, `tag`
 - Standalone commands: `context`, `export`, `info`, `backup`
 

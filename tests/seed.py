@@ -81,6 +81,29 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     }
 
 
+def seed_multi_workspace(
+    conn: sqlite3.Connection, db_path: Path | None = None
+) -> dict:
+    ids1 = seed_workspace(conn, db_path=db_path)
+    ws2 = service.create_workspace(conn, "Personal")
+    backlog = service.create_status(conn, ws2.id, "Backlog")
+    complete = service.create_status(conn, ws2.id, "Complete")
+    home = service.create_project(conn, ws2.id, "Home")
+    t_a = service.create_task(
+        conn, ws2.id, "Buy groceries", backlog.id, project_id=home.id
+    )
+    t_b = service.create_task(conn, ws2.id, "Fix fence", complete.id)
+    return {
+        "ws1": ids1,
+        "ws2": {
+            "workspace_id": ws2.id,
+            "status_ids": {"backlog": backlog.id, "complete": complete.id},
+            "project_id": home.id,
+            "task_ids": {"buy_groceries": t_a.id, "fix_fence": t_b.id},
+        },
+    }
+
+
 if __name__ == "__main__":
     import sys
 

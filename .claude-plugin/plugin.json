@@ -1,6 +1,6 @@
 {
   "name": "sticky-notes",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local kanban/task tracking via the todo CLI",
   "author": {
     "name": "phansen314"

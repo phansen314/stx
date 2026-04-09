@@ -34,6 +34,7 @@ def make_project_detail(**overrides) -> ProjectDetail:
 def make_group_detail(**overrides) -> GroupDetail:
     defaults = dict(
         id=1,
+        workspace_id=1,
         project_id=1,
         title="Sprint 1",
         parent_id=None,

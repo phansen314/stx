@@ -16,6 +16,8 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
     ICON_GROUP = "\U0001f4c1"
     ICON_TASK = "\U0001f4dd"
 
+    _last_workspace_id: int | None = None
+
     class TaskSelected(Message):
         """A task node was selected in the tree."""
 
@@ -37,6 +39,13 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
             self.group = group
             super().__init__()
 
+    class WorkspaceChanged(Message):
+        """The cursor moved to a node in a different workspace."""
+
+        def __init__(self, workspace_id: int) -> None:
+            self.workspace_id = workspace_id
+            super().__init__()
+
     @staticmethod
     def _count_group_tasks(gnode: GroupNode) -> int:
         count = len(gnode.tasks)
@@ -51,16 +60,74 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
             count += WorkspaceTree._count_group_tasks(gnode)
         return count
 
-    def load(self, model: WorkspaceModel) -> None:
+    @staticmethod
+    def _workspace_id_from_data(data: Workspace | Project | Group | Task | None) -> int | None:
+        if isinstance(data, Workspace):
+            return data.id
+        if isinstance(data, (Project, Group, Task)):
+            return data.workspace_id
+        return None
+
+    @staticmethod
+    def _node_key(data: Workspace | Project | Group | Task | None) -> tuple[str, int] | None:
+        if isinstance(data, Workspace):
+            return ("workspace", data.id)
+        if isinstance(data, Project):
+            return ("project", data.id)
+        if isinstance(data, Group):
+            return ("group", data.id)
+        return None
+
+    def _snapshot_expanded(self) -> set[tuple[str, int]]:
+        expanded: set[tuple[str, int]] = set()
+        def _walk(node: TreeNode) -> None:
+            key = self._node_key(node.data)
+            if key is not None and node.is_expanded:
+                expanded.add(key)
+            for child in node.children:
+                _walk(child)
+        _walk(self.root)
+        return expanded
+
+    def _restore_expanded(self, snapshot: set[tuple[str, int]]) -> None:
+        def _walk(node: TreeNode) -> None:
+            key = self._node_key(node.data)
+            if key is not None and key in snapshot:
+                node.expand()
+            for child in node.children:
+                _walk(child)
+        _walk(self.root)
+
+    def load(self, models: dict[int, WorkspaceModel], expand_workspace_id: int | None = None) -> None:
+        snapshot = self._snapshot_expanded() if self.root.children else None
         self.clear()
-        total = len(model.all_tasks)
-        self.root.set_label(
-            f"{self.ICON_WORKSPACE} ({total}) {escape_markup(model.workspace.name)}"
-        )
-        self.root.data = model.workspace
+        self._last_workspace_id = expand_workspace_id
+        self.root.set_label("Workspaces")
+        self.root.data = None
+        for model in models.values():
+            total = len(model.all_tasks)
+            ws_node = self.root.add(
+                f"{self.ICON_WORKSPACE} ({total}) {escape_markup(model.workspace.name)}",
+                data=model.workspace,
+            )
+            self._populate_workspace_node(ws_node, model)
+        self.root.expand()
+        if snapshot is not None:
+            self._restore_expanded(snapshot)
+        if expand_workspace_id is not None:
+            for child in self.root.children:
+                if isinstance(child.data, Workspace) and child.data.id == expand_workspace_id:
+                    child.expand()
+                    if snapshot is None:
+                        for proj in child.children:
+                            if isinstance(getattr(proj, "data", None), Project):
+                                proj.expand()
+                    break
+
+    def _populate_workspace_node(self, ws_node, model: WorkspaceModel) -> None:
         for pnode in model.projects:
             pcount = self._count_project_tasks(pnode)
-            proj_branch = self.root.add(
+            proj_branch = ws_node.add(
                 f"{self.ICON_PROJECT} ({pcount}) {escape_markup(pnode.project.name)}",
                 data=pnode.project,
             )
@@ -69,11 +136,9 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
             for task in pnode.ungrouped_tasks:
                 label = f"{self.ICON_TASK} {task.id:d}: {escape_markup(task.title)}"
                 proj_branch.add_leaf(label, data=task)
-            proj_branch.expand()
         for task in model.unassigned_tasks:
             label = f"{self.ICON_TASK} {task.id:d}: {escape_markup(task.title)}"
-            self.root.add_leaf(label, data=task)
-        self.root.expand()
+            ws_node.add_leaf(label, data=task)
 
     def show_empty(self, message: str) -> None:
         self.root.set_label(message)
@@ -127,6 +192,12 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
 
     def key_l(self, event: events.Key) -> None:
         self.key_right(event)
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        ws_id = self._workspace_id_from_data(event.node.data)
+        if ws_id is not None and ws_id != self._last_workspace_id:
+            self._last_workspace_id = ws_id
+            self.post_message(self.WorkspaceChanged(ws_id))
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         event.stop()

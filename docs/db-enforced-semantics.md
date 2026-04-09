@@ -39,12 +39,13 @@ interface (CLI, TUI) or code path is used.
 ## Groups
 
 - **Groups form a hierarchy.** A group can have a parent group, and the parent must belong to the same project. Enforced by a composite FK: `(parent_id, project_id)` → `groups(id, project_id)`.
-- **A group with children cannot be hard-deleted.** The composite FK is `ON DELETE RESTRICT`. The application archives groups instead; `archive_group` manually reparents children before archiving.
+- **A group with children cannot be hard-deleted.** The composite FK is `ON DELETE RESTRICT`. The application archives groups instead; cascade archive archives all descendant groups and their tasks.
 
 ## Deletion & Archival
 
 - **You cannot delete a workspace that has projects, statuses, or tasks.** Same for projects with groups, statuses with tasks, and groups with child groups — the database blocks it with `ON DELETE RESTRICT`.
-- **Removing a task cascades to its junction data:** tag associations, dependencies, and history records are cleaned up automatically (`ON DELETE CASCADE`).
+- **Deleting a task cascades to its junction data:** tag associations, dependencies, and history records are cleaned up automatically (`ON DELETE CASCADE`).
+- **Dependencies are soft-archived, not deleted.** `task_dependencies` and `group_dependencies` have an `archived` column. Archiving a dependency sets `archived = 1`; all active queries filter on `archived = 0`.
 
 *Note: The convention of never hard-deleting entities (using `archived` instead) is enforced by the application, not the schema. The schema permits direct `DELETE` statements.*
 

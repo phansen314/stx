@@ -2,18 +2,23 @@
 erDiagram
     workspaces ||--o{ projects : ""
     workspaces ||--o{ statuses : ""
-    projects ||--o{ groups : ""
+    workspaces ||--o{ groups : ""
     groups |o--o{ groups : ""
+    projects ||--o{ groups : ""
     statuses ||--o{ tasks : ""
     projects |o--o{ tasks : ""
     workspaces ||--o{ tasks : ""
     groups |o--o{ tasks : ""
     tasks ||--o{ task_dependencies : ""
     tasks ||--o{ task_dependencies : ""
+    groups ||--o{ group_dependencies : ""
+    groups ||--o{ group_dependencies : ""
+    workspaces ||--o{ group_dependencies : ""
     workspaces ||--o{ tags : ""
     tasks ||--o{ task_tags : ""
     tags ||--o{ task_tags : ""
     tasks ||--o{ task_history : ""
+    workspaces ||--o{ task_history : ""
 
     workspaces {
         INTEGER id PK
@@ -41,6 +46,7 @@ erDiagram
 
     groups {
         INTEGER id PK
+        INTEGER workspace_id FK
         INTEGER project_id FK
         INTEGER parent_id FK
         TEXT title
@@ -70,6 +76,14 @@ erDiagram
         INTEGER task_id FK "PK"
         INTEGER depends_on_id FK "PK"
         INTEGER workspace_id FK
+        INTEGER archived
+    }
+
+    group_dependencies {
+        INTEGER group_id FK "PK"
+        INTEGER depends_on_id FK "PK"
+        INTEGER workspace_id FK
+        INTEGER archived
     }
 
     tags {
@@ -89,6 +103,7 @@ erDiagram
     task_history {
         INTEGER id PK
         INTEGER task_id FK
+        INTEGER workspace_id FK
         TEXT field
         TEXT old_value
         TEXT new_value

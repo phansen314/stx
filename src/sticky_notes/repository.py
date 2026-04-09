@@ -400,18 +400,19 @@ def add_dependency(
 ) -> None:
     conn.execute(
         "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
+        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?)) "
+        "ON CONFLICT (task_id, depends_on_id) DO UPDATE SET archived = 0",
         (task_id, depends_on_id, task_id),
     )
 
 
-def remove_dependency(
+def archive_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
 ) -> None:
     conn.execute(
-        "DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?",
+        "UPDATE task_dependencies SET archived = 1 WHERE task_id = ? AND depends_on_id = ? AND archived = 0",
         (task_id, depends_on_id),
     )
 
@@ -421,7 +422,7 @@ def list_blocked_by_ids(
     task_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?",
+        "SELECT depends_on_id FROM task_dependencies WHERE task_id = ? AND archived = 0",
         (task_id,),
     ).fetchall()
     return tuple(r["depends_on_id"] for r in rows)
@@ -432,7 +433,7 @@ def list_blocks_ids(
     task_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?",
+        "SELECT task_id FROM task_dependencies WHERE depends_on_id = ? AND archived = 0",
         (task_id,),
     ).fetchall()
     return tuple(r["task_id"] for r in rows)
@@ -451,7 +452,7 @@ def batch_dependency_ids(
     placeholders = ",".join("?" * len(task_ids))
     rows = conn.execute(
         f"SELECT task_id, depends_on_id FROM task_dependencies "
-        f"WHERE task_id IN ({placeholders}) OR depends_on_id IN ({placeholders})",
+        f"WHERE (task_id IN ({placeholders}) OR depends_on_id IN ({placeholders})) AND archived = 0",
         (*task_ids, *task_ids),
     ).fetchall()
     blocked_by: dict[int, list[int]] = {}
@@ -473,7 +474,7 @@ def list_blocked_by_tasks(
     rows = conn.execute(
         "SELECT t.* FROM tasks t "
         "JOIN task_dependencies d ON t.id = d.depends_on_id "
-        "WHERE d.task_id = ?",
+        "WHERE d.task_id = ? AND d.archived = 0",
         (task_id,),
     ).fetchall()
     return tuple(row_to_task(r) for r in rows)
@@ -486,7 +487,7 @@ def list_blocks_tasks(
     rows = conn.execute(
         "SELECT t.* FROM tasks t "
         "JOIN task_dependencies d ON t.id = d.task_id "
-        "WHERE d.depends_on_id = ?",
+        "WHERE d.depends_on_id = ? AND d.archived = 0",
         (task_id,),
     ).fetchall()
     return tuple(row_to_task(r) for r in rows)
@@ -499,10 +500,10 @@ def get_reachable_task_ids(
     """Return all task IDs reachable from *task_id* by following depends_on edges."""
     rows = conn.execute(
         "WITH RECURSIVE reachable AS ("
-        "  SELECT depends_on_id AS id FROM task_dependencies WHERE task_id = ? "
+        "  SELECT depends_on_id AS id FROM task_dependencies WHERE task_id = ? AND archived = 0 "
         "  UNION "
         "  SELECT td.depends_on_id FROM task_dependencies td "
-        "  JOIN reachable r ON td.task_id = r.id"
+        "  JOIN reachable r ON td.task_id = r.id WHERE td.archived = 0"
         ") SELECT id FROM reachable",
         (task_id,),
     ).fetchall()
@@ -513,7 +514,7 @@ def list_all_dependencies(
     conn: sqlite3.Connection,
 ) -> tuple[tuple[int, int], ...]:
     rows = conn.execute(
-        "SELECT task_id, depends_on_id FROM task_dependencies"
+        "SELECT task_id, depends_on_id FROM task_dependencies WHERE archived = 0"
     ).fetchall()
     return tuple((r["task_id"], r["depends_on_id"]) for r in rows)
 
@@ -523,9 +524,9 @@ def list_all_task_dependencies(
 ) -> tuple[dict, ...]:
     """Return all task_dependencies rows as plain dicts (full FK columns preserved)."""
     rows = conn.execute(
-        "SELECT task_id, depends_on_id, workspace_id FROM task_dependencies"
+        "SELECT task_id, depends_on_id, workspace_id, archived FROM task_dependencies"
     ).fetchall()
-    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "workspace_id": r["workspace_id"]} for r in rows)
+    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "workspace_id": r["workspace_id"], "archived": bool(r["archived"])} for r in rows)
 
 
 def list_all_task_tags(
@@ -547,8 +548,8 @@ def insert_task_history(
 ) -> TaskHistory:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO task_history (task_id, field, old_value, new_value, source) "
-        "VALUES (:task_id, :field, :old_value, :new_value, :source)",
+        "INSERT INTO task_history (task_id, workspace_id, field, old_value, new_value, source) "
+        "VALUES (:task_id, :workspace_id, :field, :old_value, :new_value, :source)",
         d,
     )
     row = conn.execute(
@@ -753,8 +754,8 @@ def list_task_ids_by_project(
 def insert_group(conn: sqlite3.Connection, new: NewGroup) -> Group:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO groups (project_id, title, parent_id, position) "
-        "VALUES (:project_id, :title, :parent_id, :position)",
+        "INSERT INTO groups (workspace_id, project_id, title, parent_id, position) "
+        "VALUES (:workspace_id, :project_id, :title, :parent_id, :position)",
         d,
     )
     row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -889,22 +890,21 @@ def list_groups_by_workspace(
     include_archived: bool = False,
     title: str | None = None,
 ) -> tuple[Group, ...]:
-    """Return all groups for projects on a workspace, ordered by position.
+    """Return all groups on a workspace, ordered by position.
 
     If *title* is given, only groups whose title matches are returned.
     The match is case-insensitive because the groups.title column has
     COLLATE NOCASE in the schema.
     """
-    archive_clause = "" if include_archived else " AND g.archived = 0"
-    title_clause = " AND g.title = ?" if title is not None else ""
+    archive_clause = "" if include_archived else " AND archived = 0"
+    title_clause = " AND title = ?" if title is not None else ""
     params: list[object] = [workspace_id]
     if title is not None:
         params.append(title)
     rows = conn.execute(
-        "SELECT g.* FROM groups g "
-        "JOIN projects p ON g.project_id = p.id "
-        f"WHERE p.workspace_id = ?{archive_clause}{title_clause} "
-        "ORDER BY g.position, g.id",
+        f"SELECT * FROM groups "
+        f"WHERE workspace_id = ?{archive_clause}{title_clause} "
+        "ORDER BY position, id",
         params,
     ).fetchall()
     return tuple(row_to_group(r) for r in rows)
@@ -962,12 +962,12 @@ def get_group_ancestry(
     """Return groups from root to the given group, inclusive."""
     rows = conn.execute(
         "WITH RECURSIVE ancestry AS ("
-        "  SELECT id, project_id, title, parent_id, position, archived, created_at, 0 AS depth "
+        "  SELECT id, workspace_id, project_id, title, parent_id, position, archived, created_at, 0 AS depth "
         "  FROM groups WHERE id = ? "
         "  UNION ALL "
-        "  SELECT g.id, g.project_id, g.title, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
+        "  SELECT g.id, g.workspace_id, g.project_id, g.title, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
         "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
-        ") SELECT id, project_id, title, parent_id, position, archived, created_at "
+        ") SELECT id, workspace_id, project_id, title, parent_id, position, archived, created_at "
         "FROM ancestry ORDER BY depth DESC",
         (group_id,),
     ).fetchall()
@@ -985,6 +985,275 @@ def reparent_children(
     )
 
 
+# ---- Archive count queries (read-only, for dry-run) ----
+
+
+# Intentionally traverses all children including archived ones. This is
+# defensive: if a non-archived child somehow exists under an archived
+# intermediate group (data inconsistency), the CTE still finds it.  The
+# caller's leaf query filters on `archived = 0` as needed.
+_SUBTREE_CTE = (
+    "WITH RECURSIVE subtree AS ("
+    "  SELECT id FROM groups WHERE id = ? "
+    "  UNION ALL "
+    "  SELECT g.id FROM groups g "
+    "  JOIN subtree s ON g.parent_id = s.id"
+    ") "
+)
+
+
+def count_active_tasks_in_group_subtree(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> int:
+    row = conn.execute(
+        _SUBTREE_CTE
+        + "SELECT COUNT(*) AS cnt FROM tasks "
+        "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
+        (group_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_descendant_groups(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> int:
+    row = conn.execute(
+        _SUBTREE_CTE
+        + "SELECT COUNT(*) AS cnt FROM subtree "
+        "JOIN groups g ON subtree.id = g.id "
+        "WHERE g.archived = 0 AND g.id != ?",
+        (group_id, group_id),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_tasks_in_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE project_id = ? AND archived = 0",
+        (project_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_groups_in_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM groups WHERE project_id = ? AND archived = 0",
+        (project_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_tasks_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_projects_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM projects WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_groups_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM groups "
+        "WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_statuses_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM statuses WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_tasks_by_status(
+    conn: sqlite3.Connection,
+    status_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE status_id = ? AND archived = 0",
+        (status_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def count_active_tasks_by_tag(
+    conn: sqlite3.Connection,
+    tag_id: int,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM task_tags tt "
+        "JOIN tasks t ON tt.task_id = t.id "
+        "WHERE tt.tag_id = ? AND t.archived = 0",
+        (tag_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+# ---- Active task-ID lists (for history recording before bulk archive) ----
+
+
+def list_active_task_ids_in_group_subtree(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        _SUBTREE_CTE
+        + "SELECT id FROM tasks "
+        "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
+        (group_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
+def list_active_task_ids_in_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT id FROM tasks WHERE project_id = ? AND archived = 0",
+        (project_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
+def list_active_task_ids_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> tuple[int, ...]:
+    rows = conn.execute(
+        "SELECT id FROM tasks WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    ).fetchall()
+    return tuple(r["id"] for r in rows)
+
+
+# ---- Bulk-archive mutations ----
+
+
+def archive_tasks_in_group_subtree(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> int:
+    cur = conn.execute(
+        _SUBTREE_CTE
+        + "UPDATE tasks SET archived = 1 "
+        "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
+        (group_id,),
+    )
+    return cur.rowcount
+
+
+def archive_descendant_groups(
+    conn: sqlite3.Connection,
+    group_id: int,
+) -> int:
+    cur = conn.execute(
+        _SUBTREE_CTE
+        + "UPDATE groups SET archived = 1 "
+        "WHERE id IN (SELECT id FROM subtree) AND id != ? AND archived = 0",
+        (group_id, group_id),
+    )
+    return cur.rowcount
+
+
+def archive_tasks_in_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE tasks SET archived = 1 WHERE project_id = ? AND archived = 0",
+        (project_id,),
+    )
+    return cur.rowcount
+
+
+def archive_groups_in_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE groups SET archived = 1 WHERE project_id = ? AND archived = 0",
+        (project_id,),
+    )
+    return cur.rowcount
+
+
+def archive_tasks_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE tasks SET archived = 1 WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    )
+    return cur.rowcount
+
+
+def archive_projects_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE projects SET archived = 1 WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    )
+    return cur.rowcount
+
+
+def archive_groups_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE groups SET archived = 1 "
+        "WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    )
+    return cur.rowcount
+
+
+def archive_statuses_in_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    cur = conn.execute(
+        "UPDATE statuses SET archived = 1 WHERE workspace_id = ? AND archived = 0",
+        (workspace_id,),
+    )
+    return cur.rowcount
+
+
 # ---- Group dependency functions ----
 
 
@@ -995,18 +1264,19 @@ def add_group_dependency(
 ) -> None:
     conn.execute(
         "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT p.workspace_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?))",
+        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?)) "
+        "ON CONFLICT (group_id, depends_on_id) DO UPDATE SET archived = 0",
         (group_id, depends_on_id, group_id),
     )
 
 
-def remove_group_dependency(
+def archive_group_dependency(
     conn: sqlite3.Connection,
     group_id: int,
     depends_on_id: int,
 ) -> None:
     conn.execute(
-        "DELETE FROM group_dependencies WHERE group_id = ? AND depends_on_id = ?",
+        "UPDATE group_dependencies SET archived = 1 WHERE group_id = ? AND depends_on_id = ? AND archived = 0",
         (group_id, depends_on_id),
     )
 
@@ -1016,7 +1286,7 @@ def list_group_blocked_by_ids(
     group_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        "SELECT depends_on_id FROM group_dependencies WHERE group_id = ?",
+        "SELECT depends_on_id FROM group_dependencies WHERE group_id = ? AND archived = 0",
         (group_id,),
     ).fetchall()
     return tuple(r["depends_on_id"] for r in rows)
@@ -1026,7 +1296,7 @@ def list_all_group_dependencies(
     conn: sqlite3.Connection,
 ) -> tuple[tuple[int, int], ...]:
     rows = conn.execute(
-        "SELECT group_id, depends_on_id FROM group_dependencies"
+        "SELECT group_id, depends_on_id FROM group_dependencies WHERE archived = 0"
     ).fetchall()
     return tuple((r["group_id"], r["depends_on_id"]) for r in rows)
 
@@ -1038,10 +1308,10 @@ def get_reachable_group_dep_ids(
     """Return all group IDs reachable from *group_id* by following depends_on edges."""
     rows = conn.execute(
         "WITH RECURSIVE reachable AS ("
-        "  SELECT depends_on_id AS id FROM group_dependencies WHERE group_id = ? "
+        "  SELECT depends_on_id AS id FROM group_dependencies WHERE group_id = ? AND archived = 0 "
         "  UNION "
         "  SELECT gd.depends_on_id FROM group_dependencies gd "
-        "  JOIN reachable r ON gd.group_id = r.id"
+        "  JOIN reachable r ON gd.group_id = r.id WHERE gd.archived = 0"
         ") SELECT id FROM reachable",
         (group_id,),
     ).fetchall()
