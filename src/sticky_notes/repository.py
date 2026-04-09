@@ -548,8 +548,8 @@ def insert_task_history(
 ) -> TaskHistory:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO task_history (task_id, field, old_value, new_value, source) "
-        "VALUES (:task_id, :field, :old_value, :new_value, :source)",
+        "INSERT INTO task_history (task_id, workspace_id, field, old_value, new_value, source) "
+        "VALUES (:task_id, :workspace_id, :field, :old_value, :new_value, :source)",
         d,
     )
     row = conn.execute(
@@ -754,8 +754,8 @@ def list_task_ids_by_project(
 def insert_group(conn: sqlite3.Connection, new: NewGroup) -> Group:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO groups (project_id, title, parent_id, position) "
-        "VALUES (:project_id, :title, :parent_id, :position)",
+        "INSERT INTO groups (workspace_id, project_id, title, parent_id, position) "
+        "VALUES (:workspace_id, :project_id, :title, :parent_id, :position)",
         d,
     )
     row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -890,22 +890,21 @@ def list_groups_by_workspace(
     include_archived: bool = False,
     title: str | None = None,
 ) -> tuple[Group, ...]:
-    """Return all groups for projects on a workspace, ordered by position.
+    """Return all groups on a workspace, ordered by position.
 
     If *title* is given, only groups whose title matches are returned.
     The match is case-insensitive because the groups.title column has
     COLLATE NOCASE in the schema.
     """
-    archive_clause = "" if include_archived else " AND g.archived = 0"
-    title_clause = " AND g.title = ?" if title is not None else ""
+    archive_clause = "" if include_archived else " AND archived = 0"
+    title_clause = " AND title = ?" if title is not None else ""
     params: list[object] = [workspace_id]
     if title is not None:
         params.append(title)
     rows = conn.execute(
-        "SELECT g.* FROM groups g "
-        "JOIN projects p ON g.project_id = p.id "
-        f"WHERE p.workspace_id = ?{archive_clause}{title_clause} "
-        "ORDER BY g.position, g.id",
+        f"SELECT * FROM groups "
+        f"WHERE workspace_id = ?{archive_clause}{title_clause} "
+        "ORDER BY position, id",
         params,
     ).fetchall()
     return tuple(row_to_group(r) for r in rows)
@@ -963,12 +962,12 @@ def get_group_ancestry(
     """Return groups from root to the given group, inclusive."""
     rows = conn.execute(
         "WITH RECURSIVE ancestry AS ("
-        "  SELECT id, project_id, title, parent_id, position, archived, created_at, 0 AS depth "
+        "  SELECT id, workspace_id, project_id, title, parent_id, position, archived, created_at, 0 AS depth "
         "  FROM groups WHERE id = ? "
         "  UNION ALL "
-        "  SELECT g.id, g.project_id, g.title, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
+        "  SELECT g.id, g.workspace_id, g.project_id, g.title, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
         "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
-        ") SELECT id, project_id, title, parent_id, position, archived, created_at "
+        ") SELECT id, workspace_id, project_id, title, parent_id, position, archived, created_at "
         "FROM ancestry ORDER BY depth DESC",
         (group_id,),
     ).fetchall()
@@ -1079,9 +1078,8 @@ def count_active_groups_in_workspace(
     workspace_id: int,
 ) -> int:
     row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM groups g "
-        "JOIN projects p ON g.project_id = p.id "
-        "WHERE p.workspace_id = ? AND g.archived = 0",
+        "SELECT COUNT(*) AS cnt FROM groups "
+        "WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     ).fetchone()
     return row["cnt"]
@@ -1239,8 +1237,7 @@ def archive_groups_in_workspace(
 ) -> int:
     cur = conn.execute(
         "UPDATE groups SET archived = 1 "
-        "WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?) "
-        "AND archived = 0",
+        "WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     )
     return cur.rowcount
@@ -1267,7 +1264,7 @@ def add_group_dependency(
 ) -> None:
     conn.execute(
         "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT p.workspace_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?)) "
+        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?)) "
         "ON CONFLICT (group_id, depends_on_id) DO UPDATE SET archived = 0",
         (group_id, depends_on_id, group_id),
     )

@@ -175,6 +175,7 @@ def _record_changes(
             conn,
             NewTaskHistory(
                 task_id=task_id,
+                workspace_id=old.workspace_id,
                 field=TaskField(key),
                 old_value=str(old_val) if old_val is not None else None,
                 new_value=str(new_val) if new_val is not None else None,
@@ -888,6 +889,7 @@ def create_group(
     position: int = 0,
 ) -> Group:
     with transaction(conn), _friendly_errors():
+        project = get_project(conn, project_id)
         if parent_id is not None:
             parent = repo.get_group(conn, parent_id)
             if parent is None:
@@ -900,6 +902,7 @@ def create_group(
         return repo.insert_group(
             conn,
             NewGroup(
+                workspace_id=project.workspace_id,
                 project_id=project_id,
                 title=title,
                 parent_id=parent_id,
@@ -1309,6 +1312,7 @@ def archive_task(
 def _record_archive_history(
     conn: sqlite3.Connection,
     task_ids: tuple[int, ...],
+    workspace_id: int,
     source: str,
 ) -> None:
     # Values must match str(bool) used by _record_changes for single-task archive.
@@ -1318,6 +1322,7 @@ def _record_archive_history(
             conn,
             NewTaskHistory(
                 task_id=tid,
+                workspace_id=workspace_id,
                 field=TaskField.ARCHIVED,
                 old_value="False",
                 new_value="True",
@@ -1333,9 +1338,10 @@ def cascade_archive_group(
     source: str,
 ) -> Group:
     with transaction(conn), _friendly_errors():
+        group = get_group(conn, group_id)
         task_ids = repo.list_active_task_ids_in_group_subtree(conn, group_id)
         repo.archive_tasks_in_group_subtree(conn, group_id)
-        _record_archive_history(conn, task_ids, source)
+        _record_archive_history(conn, task_ids, group.workspace_id, source)
         repo.archive_descendant_groups(conn, group_id)
         return repo.update_group(conn, group_id, {"archived": True})
 
@@ -1347,9 +1353,10 @@ def cascade_archive_project(
     source: str,
 ) -> Project:
     with transaction(conn), _friendly_errors():
+        project = get_project(conn, project_id)
         task_ids = repo.list_active_task_ids_in_project(conn, project_id)
         repo.archive_tasks_in_project(conn, project_id)
-        _record_archive_history(conn, task_ids, source)
+        _record_archive_history(conn, task_ids, project.workspace_id, source)
         repo.archive_groups_in_project(conn, project_id)
         return repo.update_project(conn, project_id, {"archived": True})
 
@@ -1363,7 +1370,7 @@ def cascade_archive_workspace(
     with transaction(conn), _friendly_errors():
         task_ids = repo.list_active_task_ids_in_workspace(conn, workspace_id)
         repo.archive_tasks_in_workspace(conn, workspace_id)
-        _record_archive_history(conn, task_ids, source)
+        _record_archive_history(conn, task_ids, workspace_id, source)
         repo.archive_groups_in_workspace(conn, workspace_id)
         repo.archive_projects_in_workspace(conn, workspace_id)
         repo.archive_statuses_in_workspace(conn, workspace_id)

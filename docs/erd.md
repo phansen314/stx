@@ -2,6 +2,7 @@
 erDiagram
     workspaces ||--o{ projects : ""
     workspaces ||--o{ statuses : ""
+    workspaces ||--o{ groups : ""
     groups |o--o{ groups : ""
     projects ||--o{ groups : ""
     statuses ||--o{ tasks : ""
@@ -17,6 +18,7 @@ erDiagram
     tasks ||--o{ task_tags : ""
     tags ||--o{ task_tags : ""
     tasks ||--o{ task_history : ""
+    workspaces ||--o{ task_history : ""
 
     workspaces {
         INTEGER id PK
@@ -44,6 +46,7 @@ erDiagram
 
     groups {
         INTEGER id PK
+        INTEGER workspace_id FK
         INTEGER project_id FK
         INTEGER parent_id FK
         TEXT title
@@ -100,6 +103,7 @@ erDiagram
     task_history {
         INTEGER id PK
         INTEGER task_id FK
+        INTEGER workspace_id FK
         TEXT field
         TEXT old_value
         TEXT new_value

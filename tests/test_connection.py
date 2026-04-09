@@ -375,8 +375,8 @@ class TestMigrations:
         assert row["field"] == "title"
         # Verify new CHECK allows group_id
         conn.execute(
-            "INSERT INTO task_history (task_id, field, new_value, source) "
-            "VALUES (1, 'group_id', '5', 'test')"
+            "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+            "VALUES (1, 1, 'group_id', '5', 'test')"
         )
         conn.close()
 
@@ -497,7 +497,7 @@ class TestMigrations:
         ).fetchone() is not None
         # Verify composite FK (group_id, project_id) enforces group-project match
         conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (2, 1, 'p2')")
-        conn.execute("INSERT INTO groups (id, project_id, title) VALUES (2, 2, 'g2')")
+        conn.execute("INSERT INTO groups (id, workspace_id, project_id, title) VALUES (2, 1, 2, 'g2')")
         with pytest.raises(sqlite3.IntegrityError):
             # Task in project 1 cannot be assigned to group in project 2
             conn.execute(
@@ -608,7 +608,7 @@ class TestMigrations:
         # After migration 006: boards→workspaces, board_id→workspace_id
         conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'b')")
         conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (1, 1, 'p')")
-        conn.execute("INSERT INTO groups (id, project_id, title) VALUES (1, 1, 'g')")
+        conn.execute("INSERT INTO groups (id, workspace_id, project_id, title) VALUES (1, 1, 1, 'g')")
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -645,9 +645,9 @@ class TestTaskHistoryFieldConstraint:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_history (task_id, field, new_value, source) "
-                    "VALUES (?, 'bogus_field', 'v', 'test')",
-                    (task_id,),
+                    "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+                    "VALUES (?, ?, 'bogus_field', 'v', 'test')",
+                    (task_id, workspace_id),
                 )
 
     def test_accepts_valid_field_value(
@@ -659,9 +659,9 @@ class TestTaskHistoryFieldConstraint:
             task_id = insert_task(conn, workspace_id, "t", col_id)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_history (task_id, field, new_value, source) "
-                "VALUES (?, 'title', 'new_title', 'test')",
-                (task_id,),
+                "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+                "VALUES (?, ?, 'title', 'new_title', 'test')",
+                (task_id, workspace_id),
             )
         row = conn.execute("SELECT field FROM task_history").fetchone()
         assert row["field"] == "title"

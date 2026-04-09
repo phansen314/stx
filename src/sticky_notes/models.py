@@ -67,6 +67,7 @@ class NewTask:
 
 @dataclass(frozen=True)
 class NewGroup:
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None = None
@@ -76,6 +77,7 @@ class NewGroup:
 @dataclass(frozen=True)
 class NewTaskHistory:
     task_id: int
+    workspace_id: int
     field: TaskField
     new_value: str | None
     source: str
@@ -148,6 +150,7 @@ class Task:
 @dataclass(frozen=True)
 class Group:
     id: int
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None
@@ -167,6 +170,7 @@ class GroupDependency:
 class TaskHistory:
     id: int
     task_id: int
+    workspace_id: int
     field: TaskField
     old_value: str | None
     new_value: str | None

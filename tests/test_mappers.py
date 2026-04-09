@@ -209,6 +209,7 @@ class TestRowToTaskHistory:
         fake_row = {
             "id": 1,
             "task_id": 1,
+            "workspace_id": 1,
             "field": "nonexistent_field",
             "old_value": None,
             "new_value": "v",
@@ -262,7 +263,7 @@ def _status() -> Status:
 
 
 def _group() -> Group:
-    return Group(id=1, project_id=1, title="g", parent_id=None, position=0, archived=False, created_at=0)
+    return Group(id=1, workspace_id=1, project_id=1, title="g", parent_id=None, position=0, archived=False, created_at=0)
 
 
 class TestTaskToListItem:
@@ -361,7 +362,7 @@ class TestGroupToRef:
 class TestGroupToDetail:
     def test_creates_detail(self) -> None:
         group = _group()
-        child = Group(id=2, project_id=1, title="child", parent_id=1, position=0, archived=False, created_at=0)
+        child = Group(id=2, workspace_id=1, project_id=1, title="child", parent_id=1, position=0, archived=False, created_at=0)
         detail = group_to_detail(group, tasks=(), children=(child,), parent=None)
         assert isinstance(detail, GroupDetail)
         assert detail.title == "g"
@@ -402,7 +403,7 @@ class TestPreInsertDefaults:
         assert task.finish_date is None
 
     def test_new_task_history_defaults(self) -> None:
-        hist = NewTaskHistory(task_id=1, field=TaskField.TITLE, new_value="v", source="tui")
+        hist = NewTaskHistory(task_id=1, workspace_id=1, field=TaskField.TITLE, new_value="v", source="tui")
         assert hist.old_value is None
 
 

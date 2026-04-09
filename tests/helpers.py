@@ -96,7 +96,7 @@ def insert_group_dependency(
 ) -> None:
     conn.execute(
         "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT p.workspace_id FROM groups g JOIN projects p ON g.project_id = p.id WHERE g.id = ?))",
+        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?))",
         (group_id, depends_on_id, group_id),
     )
 
@@ -109,8 +109,9 @@ def insert_group(
     position: int = 0,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO groups (project_id, title, parent_id, position) VALUES (?, ?, ?, ?)",
-        (project_id, title, parent_id, position),
+        "INSERT INTO groups (workspace_id, project_id, title, parent_id, position) "
+        "VALUES ((SELECT workspace_id FROM projects WHERE id = ?), ?, ?, ?, ?)",
+        (project_id, project_id, title, parent_id, position),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -148,8 +149,8 @@ def insert_task_history(
     source: str = "tui",
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO task_history (task_id, field, old_value, new_value, source) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (task_id, field, old_value, new_value, source),
+        "INSERT INTO task_history (task_id, workspace_id, field, old_value, new_value, source) "
+        "VALUES (?, (SELECT workspace_id FROM tasks WHERE id = ?), ?, ?, ?, ?)",
+        (task_id, task_id, field, old_value, new_value, source),
     )
     return cur.lastrowid  # type: ignore[return-value]

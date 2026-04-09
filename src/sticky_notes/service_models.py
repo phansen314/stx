@@ -36,6 +36,7 @@ class GroupRef:
     """Group fields plus edge IDs, for list rendering and tree walking without
     fetching full related objects."""
     id: int
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None
@@ -109,6 +110,7 @@ class ProjectDetail:
 @dataclass(frozen=True)
 class GroupDetail:
     id: int
+    workspace_id: int
     project_id: int
     title: str
     parent_id: int | None

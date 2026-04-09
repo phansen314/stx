@@ -25,13 +25,14 @@ CREATE TABLE IF NOT EXISTS statuses (
 );
 
 CREATE TABLE IF NOT EXISTS groups (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-    parent_id  INTEGER,
-    title      TEXT NOT NULL COLLATE NOCASE,
-    position   INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
-    archived   INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+    project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    parent_id    INTEGER,
+    title        TEXT NOT NULL COLLATE NOCASE,
+    position     INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+    archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     UNIQUE (id, project_id),
     FOREIGN KEY (parent_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT
 );
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS task_tags (
 CREATE TABLE IF NOT EXISTS task_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
     field TEXT NOT NULL CHECK (field IN (__TASK_FIELD_VALUES__)),
     old_value TEXT,
     new_value TEXT,

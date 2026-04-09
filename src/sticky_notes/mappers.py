@@ -80,6 +80,7 @@ def row_to_task(row: Row) -> Task:
 def row_to_group(row: Row) -> Group:
     return Group(
         id=row["id"],
+        workspace_id=row["workspace_id"],
         project_id=row["project_id"],
         title=row["title"],
         parent_id=row["parent_id"],
@@ -103,6 +104,7 @@ def row_to_task_history(row: Row) -> TaskHistory:
     return TaskHistory(
         id=row["id"],
         task_id=row["task_id"],
+        workspace_id=row["workspace_id"],
         field=TaskField(row["field"]),
         old_value=row["old_value"],
         new_value=row["new_value"],
