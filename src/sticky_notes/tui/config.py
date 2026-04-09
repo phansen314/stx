@@ -17,7 +17,7 @@ class TuiConfig:
     confirm_archive: bool = True
     default_priority: int = 1
     auto_refresh_seconds: int = 30
-    status_order: list[int] = field(default_factory=list)
+    status_order: dict[int, list[int]] = field(default_factory=dict)
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TuiConfig:
@@ -28,7 +28,13 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TuiConfig:
         data = tomllib.load(f)
     for field in fields(TuiConfig):
         if field.name in data:
-            setattr(config, field.name, data[field.name])
+            raw = data[field.name]
+            if field.name == "status_order":
+                if isinstance(raw, dict):
+                    setattr(config, field.name, {int(k): v for k, v in raw.items()})
+                # Ignore legacy flat list format — no workspace association
+            else:
+                setattr(config, field.name, raw)
     return config
 
 
@@ -43,6 +49,11 @@ def save_config(config: TuiConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
             lines.append(f"{field.name} = {value}")
         elif isinstance(value, str):
             lines.append(f'{field.name} = "{value}"')
+        elif isinstance(value, dict):
+            lines.append(f"\n[{field.name}]")
+            for k, v in value.items():
+                items = ", ".join(str(i) for i in v)
+                lines.append(f"{k} = [{items}]")
         elif isinstance(value, list):
             items = ", ".join(str(v) for v in value)
             lines.append(f"{field.name} = [{items}]")

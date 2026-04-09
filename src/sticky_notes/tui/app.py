@@ -13,13 +13,13 @@ from textual.containers import Vertical, Horizontal
 from textual.message import Message
 from textual.widgets import Header, Footer
 
-from sticky_notes.active_workspace import get_active_workspace_id, set_active_workspace_id
+from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
 from sticky_notes.service import create_group, create_project, create_task, get_group_detail, get_project_detail, get_task_detail, get_workspace, list_workspaces, update_group, update_project, update_task, update_workspace
 from sticky_notes.tui.config import TuiConfig, load_config
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal, WorkspaceSwitchModal
+from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -48,7 +48,6 @@ class StickyNotesApp(App):
         Binding("]", "status_right", "Status ▶", show=False),
         Binding("shift+right", "status_right", show=False),
         Binding("n", "new", "New", show=True),
-        Binding("s", "switch_workspace", "Switch", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
 
@@ -56,15 +55,22 @@ class StickyNotesApp(App):
     config: TuiConfig
     active_panel: ActivePanel = ActivePanel.TREE
     _kanban_last_focused: TaskCard | None = None
-    _workspace_id: int | None = None
-    _model: WorkspaceModel | None = None
+    _active_workspace_id: int | None = None
+    _models: dict[int, WorkspaceModel]
 
-    def __init__(self, db_path: Path | None = None):
+    @property
+    def _active_model(self) -> WorkspaceModel | None:
+        if self._active_workspace_id is None:
+            return None
+        return self._models.get(self._active_workspace_id)
+
+    def __init__(self, db_path: Path | None = None, config: TuiConfig | None = None):
         super().__init__()
         self.db_path = db_path or DEFAULT_DB_PATH
         self.conn = get_connection(self.db_path)
         init_db(self.conn)
-        self.config = load_config()
+        self.config = config or load_config()
+        self._models = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -79,19 +85,27 @@ class StickyNotesApp(App):
     async def on_mount(self) -> None:
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
-        self._workspace_id = get_active_workspace_id(self.db_path)
-        if self._workspace_id is None:
-            tree.show_empty("No active workspace")
+        workspaces = list_workspaces(self.conn)
+        if not workspaces:
+            tree.show_empty("No workspaces")
             return
-        try:
-            model = load_workspace_model(self.conn, self._workspace_id)
-        except LookupError:
-            tree.show_empty("Workspace not found")
+        for ws in workspaces:
+            try:
+                model = load_workspace_model(self.conn, ws.id)
+            except LookupError:
+                continue
+            model = replace(model, statuses=self._order_statuses(model.statuses, ws.id))
+            self._models[ws.id] = model
+        if not self._models:
+            tree.show_empty("No workspaces")
             return
-        model = replace(model, statuses=self._order_statuses(model.statuses))
-        self._model = model
-        tree.load(model)
-        await kanban.load(model)
+        # Use active-workspace file as initial-focus hint
+        hint_id = get_active_workspace_id(self.db_path)
+        if hint_id not in self._models:
+            hint_id = workspaces[0].id
+        self._active_workspace_id = hint_id
+        tree.load(self._models, expand_workspace_id=hint_id)
+        await kanban.load(self._models[hint_id])
         tree.focus()
         self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
 
@@ -102,21 +116,21 @@ class StickyNotesApp(App):
         self.request_refresh()
 
     async def on__refresh_requested(self, event: _RefreshRequested) -> None:
-        if self._workspace_id is None:
+        if self._active_workspace_id is None:
             return
         try:
-            model = load_workspace_model(self.conn, self._workspace_id)
+            model = load_workspace_model(self.conn, self._active_workspace_id)
         except LookupError:
             return
-        model = replace(model, statuses=self._order_statuses(model.statuses))
+        model = replace(model, statuses=self._order_statuses(model.statuses, self._active_workspace_id))
+        self._models[self._active_workspace_id] = model
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
         # Remember focused task id before reload
         prev_task_id: int | None = None
         if self._kanban_last_focused is not None:
             prev_task_id = self._kanban_last_focused.task_data.id
-        self._model = model
-        tree.load(model)
+        tree.load(self._models, expand_workspace_id=self._active_workspace_id)
         await kanban.sync(model)
         # Restore focus
         if self.active_panel == ActivePanel.KANBAN and prev_task_id is not None:
@@ -160,8 +174,25 @@ class StickyNotesApp(App):
             if cards:
                 self.set_focus(cards.first())
 
+    async def on_workspace_tree_workspace_changed(self, event: WorkspaceTree.WorkspaceChanged) -> None:
+        ws_id = event.workspace_id
+        if ws_id == self._active_workspace_id:
+            return
+        self._active_workspace_id = ws_id
+        try:
+            model = load_workspace_model(self.conn, ws_id)
+        except LookupError:
+            return
+        model = replace(model, statuses=self._order_statuses(model.statuses, ws_id))
+        self._models[ws_id] = model
+        tree = self.query_one(WorkspaceTree)
+        kanban = self.query_one(KanbanBoard)
+        tree.load(self._models, expand_workspace_id=ws_id)
+        await kanban.load(model)
+        self._kanban_last_focused = None
+
     def action_edit(self) -> None:
-        if self._model is None:
+        if self._active_model is None:
             return
         if self.active_panel == ActivePanel.TREE:
             tree = self.query_one(WorkspaceTree)
@@ -190,8 +221,9 @@ class StickyNotesApp(App):
 
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
-        statuses = self._model.statuses
-        projects = tuple(p.project for p in self._model.projects)
+        model = self._models[task.workspace_id]
+        statuses = model.statuses
+        projects = tuple(p.project for p in model.projects)
         self.push_screen(
             TaskEditModal(detail, statuses, projects),
             callback=self._on_task_edit_dismiss,
@@ -238,36 +270,8 @@ class StickyNotesApp(App):
             return
         self.request_refresh()
 
-    def action_switch_workspace(self) -> None:
-        workspaces = list_workspaces(self.conn)
-        if not workspaces or self._workspace_id is None:
-            return
-        self.push_screen(
-            WorkspaceSwitchModal(workspaces, self._workspace_id),
-            callback=self._on_workspace_switch,
-        )
-
-    async def _on_workspace_switch(self, workspace_id: int | None) -> None:
-        if workspace_id is None or workspace_id == self._workspace_id:
-            return
-        set_active_workspace_id(self.db_path, workspace_id)
-        self._workspace_id = workspace_id
-        try:
-            model = load_workspace_model(self.conn, workspace_id)
-        except LookupError:
-            self.notify("Workspace not found", severity="error")
-            return
-        model = replace(model, statuses=self._order_statuses(model.statuses))
-        self._model = model
-        self._kanban_last_focused = None
-        tree = self.query_one(WorkspaceTree)
-        kanban = self.query_one(KanbanBoard)
-        tree.load(model)
-        await kanban.load(model)
-        tree.focus()
-
     def action_new(self) -> None:
-        if self._model is None:
+        if self._active_model is None:
             return
         self.push_screen(NewResourceModal(), callback=self._on_new_resource)
 
@@ -282,18 +286,18 @@ class StickyNotesApp(App):
             action()
 
     def _create_task(self) -> None:
-        statuses = self._model.statuses
+        statuses = self._active_model.statuses
         if not statuses:
             self.notify("No statuses — create one first", severity="warning")
             return
-        projects = tuple(p.project for p in self._model.projects)
+        projects = tuple(p.project for p in self._active_model.projects)
         self.push_screen(
             TaskCreateModal(statuses, projects),
             callback=self._on_task_create_dismiss,
         )
 
     def _on_task_create_dismiss(self, result: dict | None) -> None:
-        self._dismiss_callback(result, lambda: create_task(self.conn, self._workspace_id, **result))
+        self._dismiss_callback(result, lambda: create_task(self.conn, self._active_workspace_id, **result))
 
     def _create_project(self) -> None:
         self.push_screen(
@@ -302,10 +306,10 @@ class StickyNotesApp(App):
         )
 
     def _on_project_create_dismiss(self, result: dict | None) -> None:
-        self._dismiss_callback(result, lambda: create_project(self.conn, self._workspace_id, **result))
+        self._dismiss_callback(result, lambda: create_project(self.conn, self._active_workspace_id, **result))
 
     def _create_group(self) -> None:
-        projects = tuple(p.project for p in self._model.projects)
+        projects = tuple(p.project for p in self._active_model.projects)
         if not projects:
             self.notify("No projects — create one first", severity="warning")
             return
@@ -317,8 +321,8 @@ class StickyNotesApp(App):
     def _on_group_create_dismiss(self, result: dict | None) -> None:
         self._dismiss_callback(result, lambda: create_group(self.conn, **result))
 
-    def _order_statuses(self, statuses: tuple[Status, ...]) -> tuple[Status, ...]:
-        order = self.config.status_order
+    def _order_statuses(self, statuses: tuple[Status, ...], workspace_id: int) -> tuple[Status, ...]:
+        order = self.config.status_order.get(workspace_id, [])
         if not order:
             return statuses
         order_map = {sid: i for i, sid in enumerate(order)}

@@ -8,7 +8,7 @@ import pytest
 
 from sticky_notes import service
 from sticky_notes.connection import get_connection, init_db
-from tests.seed import seed_workspace
+from tests.seed import seed_multi_workspace, seed_workspace
 
 
 @pytest.fixture
@@ -32,6 +32,16 @@ def seeded_tui_db(tmp_path: Path) -> tuple[Path, dict]:
     c = get_connection(db_path)
     init_db(c)
     ids = seed_workspace(c, db_path=db_path)
+    c.close()
+    return db_path, ids
+
+
+@pytest.fixture
+def multi_workspace_tui_db(tmp_path: Path) -> tuple[Path, dict]:
+    db_path = tmp_path / "tui-multi.db"
+    c = get_connection(db_path)
+    init_db(c)
+    ids = seed_multi_workspace(c, db_path=db_path)
     c.close()
     return db_path, ids
 

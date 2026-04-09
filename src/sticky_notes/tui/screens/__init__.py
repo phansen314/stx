@@ -7,4 +7,3 @@ from .project_edit import ProjectEditModal
 from .task_create import TaskCreateModal
 from .task_edit import TaskEditModal
 from .workspace_edit import WorkspaceEditModal
-from .workspace_switch import WorkspaceSwitchModal
