@@ -296,7 +296,7 @@ todo task transfer task-0001 --workspace ops --status Backlog --dry-run
 | `workspace create` | `name` | `--statuses "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--statuses` takes a single comma-separated string (e.g. `--statuses "To Do,In Progress,Done"`). Quote the whole value. |
 | `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
 | `workspace use` | `name` | — | Switch active workspace |
-| `workspace rename` | `[old] new` | — | 1 arg = rename active workspace; 2 args = rename named workspace |
+| `workspace rename` | `old new` | — | Rename workspace from `old` to `new` |
 | `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (projects, groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
 
 ```sh

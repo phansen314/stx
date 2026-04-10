@@ -282,15 +282,9 @@ def cmd_workspace_use(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
 
 
 def cmd_workspace_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    if args.new_name is not None:
-        workspace = service.get_workspace_by_name(conn, args.old_or_new_name)
-        new_name = args.new_name
-    else:
-        workspace = _resolve_workspace(conn, args, db_path)
-        new_name = args.old_or_new_name
-    old_name = workspace.name
-    updated = service.update_workspace(conn, workspace.id, {"name": new_name})
-    return Ok(data=updated, text=f"renamed workspace '{old_name}' -> '{new_name}'")
+    workspace = service.get_workspace_by_name(conn, args.old_name)
+    updated = service.update_workspace(conn, workspace.id, {"name": args.new_name})
+    return Ok(data=updated, text=f"renamed workspace '{args.old_name}' -> '{args.new_name}'")
 
 
 def cmd_workspace_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -1064,8 +1058,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_wr = workspace_sub.add_parser("rename", help="rename a workspace")
     p_wr.set_defaults(command="workspace_rename")
-    p_wr.add_argument("old_or_new_name", help="new name (if active workspace) or old name")
-    p_wr.add_argument("new_name", nargs="?", default=None, help="new name (when old name provided)")
+    p_wr.add_argument("old_name", help="existing workspace name")
+    p_wr.add_argument("new_name", help="new workspace name")
 
     p_warc = workspace_sub.add_parser("archive", help="cascade-archive workspace and all descendants")
     p_warc.set_defaults(command="workspace_archive")

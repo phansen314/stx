@@ -141,7 +141,7 @@ class TestWorkspaceCommands:
 
     def test_rename(self, cli):
         cli("workspace", "create", "dev")
-        out, _ = cli("workspace", "rename", "staging")
+        out, _ = cli("workspace", "rename", "dev", "staging")
         assert "renamed workspace 'dev' -> 'staging'" in out
 
     def test_archive(self, cli):
