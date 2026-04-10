@@ -4,11 +4,29 @@ import pytest
 
 from textual.widgets import Input, Select, Static, TextArea
 
-from sticky_notes.models import Project, Status
+from sticky_notes.models import Group, Project, Status
 from sticky_notes.service_models import TaskDetail
+from sticky_notes.tui.model import GroupNode, ProjectNode
 from sticky_notes.tui.screens.task_edit import TaskEditModal
 
 from helpers import ModalTestApp
+
+
+def _group(id: int, project_id: int, title: str) -> Group:
+    return Group(
+        id=id, workspace_id=1, project_id=project_id, title=title, description=None,
+        parent_id=None, position=0, archived=False, created_at=0,
+    )
+
+
+def _project_node(
+    project_id: int, name: str, groups: tuple[GroupNode, ...] = (),
+) -> ProjectNode:
+    project = Project(
+        id=project_id, workspace_id=1, name=name, description=None,
+        archived=False, created_at=0,
+    )
+    return ProjectNode(project=project, groups=groups, ungrouped_tasks=())
 
 
 def make_detail(**overrides) -> TaskDetail:
@@ -49,10 +67,19 @@ PROJECTS = (
     Project(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0),
 )
 
+PROJECT_NODES = tuple(
+    ProjectNode(project=p, groups=(), ungrouped_tasks=())
+    for p in PROJECTS
+)
 
-def _make_app(**detail_overrides) -> ModalTestApp:
+
+def _make_app(
+    *,
+    project_nodes: tuple[ProjectNode, ...] = PROJECT_NODES,
+    **detail_overrides,
+) -> ModalTestApp:
     detail = make_detail(**detail_overrides)
-    modal = TaskEditModal(detail, STATUSES, PROJECTS)
+    modal = TaskEditModal(detail, STATUSES, project_nodes)
     return ModalTestApp(modal)
 
 
@@ -186,4 +213,113 @@ class TestSaveFieldChanges:
             assert app.result == {
                 "task_id": 1,
                 "changes": {"title": "Changed", "priority": 4},
+            }
+
+
+class TestGroupSelector:
+    def _nodes_with_groups(self) -> tuple[ProjectNode, ...]:
+        frontend_groups = (
+            GroupNode(group=_group(10, 1, "Login"), tasks=(), children=()),
+            GroupNode(group=_group(11, 1, "Signup"), tasks=(), children=()),
+        )
+        backend_groups = (
+            GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),
+        )
+        return (
+            _project_node(1, "Frontend", groups=frontend_groups),
+            _project_node(2, "Backend", groups=backend_groups),
+        )
+
+    async def test_group_disabled_when_no_project(self):
+        app = _make_app(
+            project_id=None,
+            group_id=None,
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            group_select = modal.query_one("#task-edit-group", Select)
+            assert group_select.disabled is True
+
+    async def test_group_pre_selected_from_detail(self):
+        app = _make_app(
+            project_id=1,
+            group_id=10,
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            group_select = modal.query_one("#task-edit-group", Select)
+            assert group_select.disabled is False
+            assert group_select.value == 10
+
+    async def test_changing_project_clears_group(self):
+        app = _make_app(
+            project_id=1,
+            group_id=10,  # Login in Frontend
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            modal.query_one("#task-edit-project", Select).value = 2  # Backend
+            await pilot.pause()
+            group_select = modal.query_one("#task-edit-group", Select)
+            # The old group (10, Login) doesn't belong to Backend, so it clears to NULL.
+            assert group_select.value is Select.NULL
+
+    async def test_changing_project_to_none_disables_group(self):
+        app = _make_app(
+            project_id=1,
+            group_id=10,
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            modal.query_one("#task-edit-project", Select).clear()
+            await pilot.pause()
+            group_select = modal.query_one("#task-edit-group", Select)
+            assert group_select.disabled is True
+
+    async def test_assign_group_save_includes_group_id(self):
+        app = _make_app(
+            project_id=1,
+            group_id=None,
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            modal.query_one("#task-edit-group", Select).value = 11  # Signup
+            modal.action_save()
+            await pilot.pause()
+            assert app.result == {"task_id": 1, "changes": {"group_id": 11}}
+
+    async def test_unassign_group_save_clears_group_id(self):
+        app = _make_app(
+            project_id=1,
+            group_id=10,
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            modal.query_one("#task-edit-group", Select).clear()
+            modal.action_save()
+            await pilot.pause()
+            assert app.result == {"task_id": 1, "changes": {"group_id": None}}
+
+    async def test_switch_project_and_group_together(self):
+        app = _make_app(
+            project_id=1,
+            group_id=10,  # Login in Frontend
+            project_nodes=self._nodes_with_groups(),
+        )
+        async with app.run_test() as pilot:
+            modal = app.screen
+            modal.query_one("#task-edit-project", Select).value = 2  # Backend
+            await pilot.pause()
+            modal.query_one("#task-edit-group", Select).value = 20  # API
+            modal.action_save()
+            await pilot.pause()
+            assert app.result == {
+                "task_id": 1,
+                "changes": {"project_id": 2, "group_id": 20},
             }

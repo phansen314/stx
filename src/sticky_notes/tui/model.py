@@ -40,6 +40,25 @@ class WorkspaceModel:
     group_blocked_by_map: dict[int, tuple[int, ...]]
 
 
+def flatten_group_tree(nodes: tuple[GroupNode, ...]) -> list[tuple[str, int]]:
+    """Flatten a GroupNode tree into (label, id) pairs for a Select widget.
+
+    Labels show ancestry as "Parent > Child > Grandchild" so nested groups
+    remain distinguishable in a flat dropdown.
+    """
+    out: list[tuple[str, int]] = []
+
+    def walk(node: GroupNode, prefix: str) -> None:
+        label = f"{prefix} > {node.group.title}" if prefix else node.group.title
+        out.append((label, node.group.id))
+        for child in node.children:
+            walk(child, label)
+
+    for node in nodes:
+        walk(node, "")
+    return out
+
+
 def _topo_sort[T: _HasId](
     items: tuple[T, ...],
     blocked_by_map: dict[int, tuple[int, ...]],

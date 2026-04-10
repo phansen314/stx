@@ -1354,6 +1354,99 @@ class TestTaskGroupAssignment:
         assert service.get_task(conn, tid).group_id is None
 
 
+class TestUpdateTaskGroupId:
+    """update_task now accepts group_id directly; these tests cover the invariant."""
+
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
+        bid = insert_workspace(conn, "workspace1")
+        cid = insert_status(conn, bid, "todo")
+        pid = insert_project(conn, bid, "proj1")
+        return bid, cid, pid
+
+    def test_update_task_sets_group_id(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid = self._setup(conn)
+        grp = service.create_group(conn, pid, "g")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid)
+        service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+        assert service.get_task(conn, tid).group_id == grp.id
+
+    def test_update_task_clears_group_id(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid = self._setup(conn)
+        grp = service.create_group(conn, pid, "g")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid)
+        service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+        service.update_task(conn, tid, {"group_id": None}, source="test")
+        assert service.get_task(conn, tid).group_id is None
+
+    def test_update_task_group_wrong_project_raises(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid1 = self._setup(conn)
+        pid2 = insert_project(conn, bid, "proj2")
+        grp = service.create_group(conn, pid1, "g")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid2)
+        with pytest.raises(ValueError, match="belongs to project"):
+            service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+
+    def test_update_task_group_without_project_raises(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid = self._setup(conn)
+        grp = service.create_group(conn, pid, "g")
+        tid = insert_task(conn, bid, "t", cid)  # no project_id
+        with pytest.raises(ValueError, match="no project"):
+            service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+
+    def test_update_task_group_and_project_together(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid = self._setup(conn)
+        grp = service.create_group(conn, pid, "g")
+        tid = insert_task(conn, bid, "t", cid)  # no project_id
+        service.update_task(
+            conn, tid, {"project_id": pid, "group_id": grp.id}, source="test",
+        )
+        updated = service.get_task(conn, tid)
+        assert updated.project_id == pid
+        assert updated.group_id == grp.id
+
+    def test_update_task_group_archived_raises(self, conn: sqlite3.Connection) -> None:
+        bid, cid, pid = self._setup(conn)
+        grp = service.create_group(conn, pid, "g")
+        service.cascade_archive_group(conn, grp.id, source="test")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid)
+        with pytest.raises(ValueError, match="archived"):
+            service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+
+    def test_update_task_group_on_wrong_workspace_raises(self, conn: sqlite3.Connection) -> None:
+        bid1, cid1, pid1 = self._setup(conn)
+        bid2 = insert_workspace(conn, "workspace2")
+        cid2 = insert_status(conn, bid2, "todo")
+        pid2 = insert_project(conn, bid2, "proj2")
+        grp_other = service.create_group(conn, pid2, "g_other")
+        tid = insert_task(conn, bid1, "t", cid1, project_id=pid1)
+        with pytest.raises(ValueError, match="workspace"):
+            service.update_task(conn, tid, {"group_id": grp_other.id}, source="test")
+
+    def test_update_project_leaves_orphan_group_raises(self, conn: sqlite3.Connection) -> None:
+        """Changing project out from under an existing group must also clear/re-point it."""
+        bid, cid, pid1 = self._setup(conn)
+        pid2 = insert_project(conn, bid, "proj2")
+        grp = service.create_group(conn, pid1, "g")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid1)
+        service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+        with pytest.raises(ValueError, match="belongs to project"):
+            service.update_task(conn, tid, {"project_id": pid2}, source="test")
+
+    def test_update_project_and_clear_group_together(self, conn: sqlite3.Connection) -> None:
+        """Same scenario as above, but the caller clears group_id in the same update."""
+        bid, cid, pid1 = self._setup(conn)
+        pid2 = insert_project(conn, bid, "proj2")
+        grp = service.create_group(conn, pid1, "g")
+        tid = insert_task(conn, bid, "t", cid, project_id=pid1)
+        service.update_task(conn, tid, {"group_id": grp.id}, source="test")
+        service.update_task(
+            conn, tid, {"project_id": pid2, "group_id": None}, source="test",
+        )
+        updated = service.get_task(conn, tid)
+        assert updated.project_id == pid2
+        assert updated.group_id is None
+
+
 class TestTaskGroupHistory:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
         bid = insert_workspace(conn, "workspace1")

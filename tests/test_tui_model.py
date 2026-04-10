@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from sticky_notes.models import Group
 from sticky_notes.tui.model import (
     GroupNode,
     ProjectNode,
     WorkspaceModel,
+    flatten_group_tree,
     load_workspace_model,
 )
 from tests.helpers import (
@@ -272,3 +274,53 @@ class TestDependencyOrdering:
         children = model.projects[0].groups[0].children
         child_ids = [c.group.id for c in children]
         assert child_ids.index(c1) < child_ids.index(c2)
+
+
+class TestFlattenGroupTree:
+    def _group(self, id: int, title: str) -> Group:
+        return Group(
+            id=id, workspace_id=1, project_id=1, title=title, description=None,
+            parent_id=None, position=0, archived=False, created_at=0,
+        )
+
+    def _node(self, id: int, title: str, children: tuple[GroupNode, ...] = ()) -> GroupNode:
+        return GroupNode(group=self._group(id, title), tasks=(), children=children)
+
+    def test_empty(self):
+        assert flatten_group_tree(()) == []
+
+    def test_single_root(self):
+        tree = (self._node(1, "Frontend"),)
+        assert flatten_group_tree(tree) == [("Frontend", 1)]
+
+    def test_multiple_roots_preserve_order(self):
+        tree = (self._node(1, "Frontend"), self._node(2, "Backend"))
+        assert flatten_group_tree(tree) == [("Frontend", 1), ("Backend", 2)]
+
+    def test_nested_children(self):
+        login = self._node(2, "Login")
+        frontend = self._node(1, "Frontend", children=(login,))
+        assert flatten_group_tree((frontend,)) == [
+            ("Frontend", 1),
+            ("Frontend > Login", 2),
+        ]
+
+    def test_deep_nesting(self):
+        oauth = self._node(3, "OAuth")
+        login = self._node(2, "Login", children=(oauth,))
+        frontend = self._node(1, "Frontend", children=(login,))
+        assert flatten_group_tree((frontend,)) == [
+            ("Frontend", 1),
+            ("Frontend > Login", 2),
+            ("Frontend > Login > OAuth", 3),
+        ]
+
+    def test_parent_emitted_before_children(self):
+        """Depth-first pre-order: parents come before any descendants."""
+        a1 = self._node(3, "A1")
+        a2 = self._node(4, "A2")
+        a = self._node(1, "A", children=(a1, a2))
+        b = self._node(2, "B")
+        result = flatten_group_tree((a, b))
+        labels = [label for label, _ in result]
+        assert labels == ["A", "A > A1", "A > A2", "B"]

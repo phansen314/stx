@@ -259,10 +259,8 @@ class StickyNotesApp(App):
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
         model = self._models[task.workspace_id]
-        statuses = model.statuses
-        projects = tuple(p.project for p in model.projects)
         self.push_screen(
-            TaskEditModal(detail, statuses, projects),
+            TaskEditModal(detail, model.statuses, model.projects),
             callback=self._on_task_edit_dismiss,
         )
 
@@ -327,9 +325,8 @@ class StickyNotesApp(App):
         if not statuses:
             self.notify("No statuses — create one first", severity="warning")
             return
-        projects = tuple(p.project for p in self._active_model.projects)
         self.push_screen(
-            TaskCreateModal(statuses, projects),
+            TaskCreateModal(statuses, self._active_model.projects),
             callback=self._on_task_create_dismiss,
         )
 

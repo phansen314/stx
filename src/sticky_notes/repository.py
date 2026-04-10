@@ -37,14 +37,12 @@ from .models import (
 _WORKSPACE_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _STATUS_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _PROJECT_UPDATABLE: frozenset[str] = frozenset({"name", "description", "archived"})
-# group_id is intentionally excluded — assignment goes through
-# set_task_group_id / assign_task_to_group which enforce project-matching
-# invariants and record history that update_task would skip.
 _TASK_UPDATABLE: frozenset[str] = frozenset({
     "title",
     "description",
     "status_id",
     "project_id",
+    "group_id",
     "priority",
     "due_date",
     "position",
