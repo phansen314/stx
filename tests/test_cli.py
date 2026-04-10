@@ -601,7 +601,7 @@ class TestLsFilters:
         self._setup_workspace(cli)
         cli("task", "create", "low", "--priority", "1", "-S", "backlog")
         cli("task", "create", "high", "--priority", "3", "-S", "backlog")
-        out, _ = cli("task", "ls", "-P", "3")
+        out, _ = cli("task", "ls", "--priority", "3")
         assert "high" in out
         lines = [l for l in out.splitlines() if "low" in l]
         assert len(lines) == 0
@@ -610,7 +610,7 @@ class TestLsFilters:
         self._setup_workspace(cli)
         cli("task", "create", "Fix login bug", "-S", "backlog")
         cli("task", "create", "Add search feature", "-S", "backlog")
-        out, _ = cli("task", "ls", "-s", "login")
+        out, _ = cli("task", "ls", "--search", "login")
         assert "Fix login bug" in out
         lines = [l for l in out.splitlines() if "search feature" in l]
         assert len(lines) == 0
@@ -620,7 +620,7 @@ class TestLsFilters:
         cli("task", "create", "task1", "-S", "backlog", "--priority", "3")
         cli("task", "create", "task2", "-S", "backlog", "--priority", "1")
         cli("task", "create", "task3", "-S", "doing", "--priority", "3")
-        out, _ = cli("task", "ls", "-S", "backlog", "-P", "3")
+        out, _ = cli("task", "ls", "-S", "backlog", "--priority", "3")
         assert "task1" in out
         lines = [l for l in out.splitlines() if l.strip().startswith("task-")]
         assert len(lines) == 1

@@ -42,14 +42,14 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | `--status` | `-S` | **required** | Target status name |
 | `--desc` | `-d` | — | Description |
 | `--project` | `-p` | — | Project name |
-| `--priority` | `-P` | `1` | Priority 1–5 (convention: 1=lowest; range only is enforced) |
+| `--priority` | — | `1` | Priority 1–5 (convention: 1=lowest; range only is enforced) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
 | `--tag` | `-t` | — | Tag name (repeatable) |
 | `--group` | `-g` | — | Group title (infers project from group if `--project` not given) |
 
 ```sh
 todo task create "Write README" -S "To Do"
-todo task create "Deploy to prod" -S Backlog --project "Q2 launch" -P 3 --due 2026-05-01
+todo task create "Deploy to prod" -S Backlog --project "Q2 launch" --priority 3 --due 2026-05-01
 todo task create "Add tests" -S "To Do" --tag backend --tag ci
 todo task create "Fix layout" -S "To Do" --group "Frontend" --project "Q2 launch"
 ```
@@ -66,8 +66,8 @@ The JSON response is a full `TaskDetail` (same shape as `todo task show`), inclu
 | `--archived` | — | off | Show ONLY archived tasks |
 | `--status` | `-S` | — | Filter by status name |
 | `--project` | `-p` | — | Filter by project name |
-| `--priority` | `-P` | — | Filter by priority (1–5) |
-| `--search` | `-s` | — | Title substring search |
+| `--priority` | — | — | Filter by priority (1–5) |
+| `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
 | `--tag` | `-t` | — | Filter by tag name |
 
@@ -99,7 +99,7 @@ All flags are optional; only provided fields are updated.
 |---|---|---|---|
 | `--title` | — | — | New title |
 | `--desc` | `-d` | — | New description |
-| `--priority` | `-P` | — | New priority (1–5) |
+| `--priority` | — | — | New priority (1–5) |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
 | `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |
