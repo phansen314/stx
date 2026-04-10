@@ -409,3 +409,40 @@ class TestExportFullJson:
         result = export_full_json(conn)
         dep = result["task_dependencies"][0]
         assert dep["workspace_id"] == bid
+
+
+class TestExportMetadata:
+    def test_json_export_includes_metadata(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            col = insert_status(conn, bid, "Todo")
+            tid = insert_task(conn, bid, "T1", col)
+            conn.execute(
+                '''UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?''',
+                (tid,),
+            )
+        result = export_full_json(conn)
+        task = result["tasks"][0]
+        assert task["metadata"] == {"branch": "feat/kv"}
+
+    def test_markdown_export_includes_metadata_section(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            col = insert_status(conn, bid, "Todo")
+            tid = insert_task(conn, bid, "T1", col)
+            conn.execute(
+                '''UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?''',
+                (tid,),
+            )
+        md = export_markdown(conn)
+        assert "### Metadata" in md
+        assert "**branch**" in md
+        assert "feat/kv" in md
+
+    def test_markdown_export_omits_metadata_when_empty(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            col = insert_status(conn, bid, "Todo")
+            insert_task(conn, bid, "T1", col)
+        md = export_markdown(conn)
+        assert "### Metadata" not in md

@@ -58,6 +58,7 @@ def _task(
         project_id=project_id, description=None, status_id=status_id,
         priority=priority, due_date=due_date, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
+        metadata={},
     )
 
 
@@ -71,6 +72,7 @@ def _list_item(
         project_id=None, description=None, status_id=status_id,
         priority=priority, due_date=None, position=0, archived=False,
         created_at=0, start_date=None, finish_date=None, group_id=None,
+        metadata={},
         project_name=project_name, tag_names=tag_names,
     )
 
@@ -215,6 +217,7 @@ class TestFormatTaskDetail:
             id=7, workspace_id=1, title="T", project_id=None, description=None,
             status_id=1, priority=2, due_date=None, position=0, archived=False,
             created_at=0, start_date=None, finish_date=None, group_id=None,
+            metadata={},
             status=_status(1, "Todo"), project=None, group=None,
             blocked_by=(), blocks=(), history=(), tags=(),
         )
@@ -558,3 +561,27 @@ class TestFormatArchivePreview:
         assert "groups: 2" in out
         assert "statuses: 3" in out
         assert "tasks: 5" in out
+
+
+class TestFormatTaskDetailMetadata:
+    def _detail(self, **overrides) -> TaskDetail:
+        base = dict(
+            id=7, workspace_id=1, title="T", project_id=None, description=None,
+            status_id=1, priority=2, due_date=None, position=0, archived=False,
+            created_at=0, start_date=None, finish_date=None, group_id=None,
+            metadata={},
+            status=_status(1, "Todo"), project=None, group=None,
+            blocked_by=(), blocks=(), history=(), tags=(),
+        )
+        base.update(overrides)
+        return TaskDetail(**base)
+
+    def test_metadata_shown_when_nonempty(self):
+        out = presenters.format_task_detail(self._detail(metadata={"branch": "feat/kv", "jira": "PROJ-1"}))
+        assert "Metadata:" in out
+        assert "branch: feat/kv" in out
+        assert "jira: PROJ-1" in out
+
+    def test_metadata_hidden_when_empty(self):
+        out = presenters.format_task_detail(self._detail())
+        assert "Metadata:" not in out

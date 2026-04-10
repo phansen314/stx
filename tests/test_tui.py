@@ -526,3 +526,65 @@ class TestMultiWorkspaceTree:
             ws1_node = tree.root.children[0]
             proj_node = ws1_node.children[0]
             assert proj_node.is_expanded
+
+
+class TestRefreshWorkspaceReconciliation:
+    """Tests that refresh picks up new workspaces and drops archived ones."""
+
+    async def test_refresh_picks_up_new_workspace(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            assert len(tree.root.children) == 1
+            # Create a second workspace via service (simulating CLI)
+            service.create_workspace(app.conn, "Second")
+            app.action_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            assert len(tree.root.children) == 2
+
+    async def test_refresh_removes_archived_workspace(self, tmp_path):
+        db_path = tmp_path / "two-ws.db"
+        conn = get_connection(db_path)
+        init_db(conn)
+        ws1 = service.create_workspace(conn, "First")
+        service.create_status(conn, ws1.id, "Todo")
+        ws2 = service.create_workspace(conn, "Second")
+        service.create_status(conn, ws2.id, "Todo")
+        conn.close()
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            assert len(tree.root.children) == 2
+            # Archive ws2 directly in the DB (bypass cascade validation)
+            app.conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (ws2.id,))
+            app.conn.commit()
+            app.action_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            assert len(tree.root.children) == 1
+            assert tree.root.children[0].data.id == ws1.id
+
+    async def test_refresh_fallback_when_active_archived(self, tmp_path):
+        db_path = tmp_path / "fallback.db"
+        conn = get_connection(db_path)
+        init_db(conn)
+        ws1 = service.create_workspace(conn, "First")
+        service.create_status(conn, ws1.id, "Todo")
+        ws2 = service.create_workspace(conn, "Second")
+        service.create_status(conn, ws2.id, "Todo")
+        conn.close()
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            # Make ws2 active
+            app._active_workspace_id = ws2.id
+            # Archive ws2
+            app.conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (ws2.id,))
+            app.conn.commit()
+            app.action_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            # Should fall back to ws1
+            assert app._active_workspace_id == ws1.id
+            assert len(app.query_one("#workspaces-tree").root.children) == 1

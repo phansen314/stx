@@ -390,6 +390,38 @@ def list_tasks_by_ids(
     return tuple(row_to_task(r) for r in rows)
 
 
+# ---- Task metadata functions ----
+
+
+def set_task_metadata_key(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+    value: str,
+) -> None:
+    """Set a single metadata key using SQLite json_set. Creates or overwrites."""
+    cur = conn.execute(
+        '''UPDATE tasks SET metadata = json_set(metadata, '$."' || ? || '"', ?) WHERE id = ?''',
+        (key, value, task_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"task {task_id} not found")
+
+
+def remove_task_metadata_key(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+) -> None:
+    """Remove a single metadata key using SQLite json_remove."""
+    cur = conn.execute(
+        '''UPDATE tasks SET metadata = json_remove(metadata, '$."' || ? || '"') WHERE id = ?''',
+        (key, task_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"task {task_id} not found")
+
+
 # ---- Task dependency functions ----
 
 

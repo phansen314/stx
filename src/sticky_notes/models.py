@@ -147,6 +147,7 @@ class Task:
     start_date: int | None
     finish_date: int | None
     group_id: int | None
+    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)

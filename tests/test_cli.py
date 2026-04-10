@@ -2024,3 +2024,78 @@ class TestEndToEndSmoke:
         assert "dev" not in out
         out, _ = self.cli("workspace", "ls", "--all")
         assert "dev" in out
+
+
+# ---- Task metadata commands ----
+
+
+class TestTaskMetaCommands:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "My task", "-S", "todo")
+
+    def test_meta_ls_empty(self):
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "no metadata" in out
+
+    def test_meta_set_and_get(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        out, _ = self.cli("task", "meta", "get", "1", "branch")
+        assert "feat/kv" in out
+
+    def test_meta_ls_after_set(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        self.cli("task", "meta", "set", "1", "jira", "PROJ-123")
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "branch" in out
+        assert "feat/kv" in out
+        assert "jira" in out
+        assert "PROJ-123" in out
+
+    def test_meta_del(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        out, _ = self.cli("task", "meta", "del", "1", "branch")
+        assert "removed branch" in out
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "no metadata" in out
+
+    def test_meta_del_nonexistent(self):
+        _, err = self.cli("task", "meta", "del", "1", "nope", expect_exit=1)
+        assert "not found" in err
+
+    def test_meta_get_nonexistent(self):
+        _, err = self.cli("task", "meta", "get", "1", "nope", expect_exit=1)
+        assert "not found" in err
+
+    def test_meta_set_invalid_key(self):
+        _, err = self.cli("task", "meta", "set", "1", "BAD KEY", "v", expect_exit=1)
+        assert "must match" in err
+
+    def test_meta_set_json(self):
+        out, _ = self.cli("--json", "task", "meta", "set", "1", "branch", "feat/kv")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"]["metadata"]["branch"] == "feat/kv"
+
+    def test_meta_ls_json(self):
+        self.cli("task", "meta", "set", "1", "k", "v")
+        out, _ = self.cli("--json", "task", "meta", "ls", "1")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == {"k": "v"}
+
+    def test_meta_get_json(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        out, _ = self.cli("--json", "task", "meta", "get", "1", "branch")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == {"key": "branch", "value": "feat/kv"}
+
+    def test_meta_visible_in_show(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        out, _ = self.cli("task", "show", "1")
+        assert "Metadata:" in out
+        assert "branch: feat/kv" in out

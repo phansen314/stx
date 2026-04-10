@@ -27,6 +27,7 @@ class TaskListItem:
     start_date: int | None
     finish_date: int | None
     group_id: int | None
+    metadata: dict[str, str]
     project_name: str | None = None
     tag_names: tuple[str, ...] = ()
 
@@ -88,6 +89,7 @@ class TaskDetail:
     start_date: int | None
     finish_date: int | None
     group_id: int | None
+    metadata: dict[str, str]
     status: Status
     project: Project | None
     group: Group | None

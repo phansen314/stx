@@ -92,6 +92,10 @@ def format_task_detail(detail: TaskDetail) -> str:
     if detail.tags:
         tag_str = ", ".join(t.name for t in detail.tags)
         lines.append(f"  Tags:        {tag_str}")
+    if detail.metadata:
+        lines.append(f"  Metadata:")
+        for k, v in sorted(detail.metadata.items()):
+            lines.append(f"    {k}: {v}")
     lines.append(f"  Priority:    {detail.priority}")
     if detail.due_date:
         lines.append(f"  Due:         {format_timestamp(detail.due_date)}")

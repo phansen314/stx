@@ -758,9 +758,59 @@ def move_task_to_workspace(
                 target_tag = repo.insert_tag(conn, NewTag(workspace_id=target_workspace_id, name=tag.name))
             repo.add_tag_to_task(conn, new.id, target_tag.id)
 
+        for meta_key, meta_value in old.metadata.items():
+            repo.set_task_metadata_key(conn, new.id, meta_key, meta_value)
+
         repo.update_task(conn, task_id, {"archived": True})
         _record_changes(conn, task_id, old, {"archived": True}, source)
-        return new
+        return get_task(conn, new.id)
+
+
+# ---- Task metadata ----
+
+
+_META_KEY_RE = re.compile(r"^[a-z0-9_.-]+$")
+
+
+def _validate_meta_key(key: str) -> None:
+    if not key or len(key) > 64:
+        raise ValueError("metadata key must be 1-64 characters")
+    if not _META_KEY_RE.match(key):
+        raise ValueError(f"metadata key must match [a-z0-9_.-]+, got {key!r}")
+
+
+def _validate_meta_value(value: str) -> None:
+    if len(value) > 500:
+        raise ValueError("metadata value must be \u2264 500 characters")
+
+
+def set_task_meta(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+    value: str,
+) -> Task:
+    """Set a metadata key on a task. Validates key/value format."""
+    _validate_meta_key(key)
+    _validate_meta_value(value)
+    with transaction(conn), _friendly_errors():
+        repo.set_task_metadata_key(conn, task_id, key, value)
+        return get_task(conn, task_id)
+
+
+def remove_task_meta(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+) -> Task:
+    """Remove a metadata key from a task. Raises LookupError if key doesn't exist."""
+    _validate_meta_key(key)
+    with transaction(conn), _friendly_errors():
+        old = get_task(conn, task_id)
+        if key not in old.metadata:
+            raise LookupError(f"metadata key {key!r} not found on task {task_id}")
+        repo.remove_task_metadata_key(conn, task_id, key)
+        return get_task(conn, task_id)
 
 
 # ---- Dependency ----

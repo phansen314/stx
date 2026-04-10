@@ -116,16 +116,44 @@ class StickyNotesApp(App):
         self.request_refresh()
 
     async def on__refresh_requested(self, event: _RefreshRequested) -> None:
-        if self._active_workspace_id is None:
+        # Skip auto-refresh while a modal is open to avoid stealing focus
+        if len(self.screen_stack) > 1:
             return
+
+        tree = self.query_one(WorkspaceTree)
+        kanban = self.query_one(KanbanBoard)
+
+        # Reconcile workspace list — pick up new workspaces, drop archived ones
+        workspaces = list_workspaces(self.conn)
+        live_ids = {ws.id for ws in workspaces}
+        for stale_id in set(self._models) - live_ids:
+            del self._models[stale_id]
+        for ws_id in live_ids - set(self._models):
+            try:
+                model = load_workspace_model(self.conn, ws_id)
+                model = replace(model, statuses=self._order_statuses(model.statuses, ws_id))
+                self._models[ws_id] = model
+            except LookupError:
+                continue
+
+        if not self._models:
+            self._active_workspace_id = None
+            tree.show_empty("No workspaces")
+            await kanban.remove_children()
+            return
+
+        # Handle active workspace disappearing
+        if self._active_workspace_id not in self._models:
+            self._active_workspace_id = next(iter(self._models))
+
+        # Reload active workspace data
         try:
             model = load_workspace_model(self.conn, self._active_workspace_id)
         except LookupError:
             return
         model = replace(model, statuses=self._order_statuses(model.statuses, self._active_workspace_id))
         self._models[self._active_workspace_id] = model
-        tree = self.query_one(WorkspaceTree)
-        kanban = self.query_one(KanbanBoard)
+
         # Remember focused task id before reload
         prev_task_id: int | None = None
         if self._kanban_last_focused is not None:

@@ -82,8 +82,10 @@ from sticky_notes.repository import (
     archive_dependency,
     archive_group_dependency,
     remove_tag_from_task,
+    remove_task_metadata_key,
     reparent_children,
     set_task_group_id,
+    set_task_metadata_key,
     unassign_tasks_from_group,
     update_workspace,
     update_status,
@@ -1510,3 +1512,64 @@ class TestBatchGroupQueries:
     def test_list_groups_by_workspace_empty(self, conn: sqlite3.Connection) -> None:
         workspace, _, _ = self._setup(conn)
         assert list_groups_by_workspace(conn, workspace.id) == ()
+
+
+# ---- Task metadata ----
+
+
+class TestTaskMetadata:
+    def _setup(self, conn: sqlite3.Connection) -> int:
+        w = insert_workspace(conn, NewWorkspace(name="w"))
+        s = insert_status(conn, NewStatus(workspace_id=w.id, name="todo"))
+        t = insert_task(conn, NewTask(workspace_id=w.id, title="t", status_id=s.id))
+        return t.id
+
+    def test_set_metadata_key(self, conn: sqlite3.Connection) -> None:
+        tid = self._setup(conn)
+        set_task_metadata_key(conn, tid, "branch", "feat/kv")
+        row = conn.execute("SELECT metadata FROM tasks WHERE id = ?", (tid,)).fetchone()
+        assert '"branch"' in row["metadata"]
+        assert "feat/kv" in row["metadata"]
+
+    def test_overwrite_metadata_key(self, conn: sqlite3.Connection) -> None:
+        tid = self._setup(conn)
+        set_task_metadata_key(conn, tid, "branch", "feat/old")
+        set_task_metadata_key(conn, tid, "branch", "feat/new")
+        row = conn.execute("SELECT metadata FROM tasks WHERE id = ?", (tid,)).fetchone()
+        import json
+        meta = json.loads(row["metadata"])
+        assert meta["branch"] == "feat/new"
+
+    def test_remove_metadata_key(self, conn: sqlite3.Connection) -> None:
+        tid = self._setup(conn)
+        set_task_metadata_key(conn, tid, "branch", "feat/kv")
+        remove_task_metadata_key(conn, tid, "branch")
+        row = conn.execute("SELECT metadata FROM tasks WHERE id = ?", (tid,)).fetchone()
+        import json
+        assert json.loads(row["metadata"]) == {}
+
+    def test_remove_nonexistent_key_is_noop(self, conn: sqlite3.Connection) -> None:
+        """At the repo level, removing a key that doesn't exist is a no-op (rowcount=1)."""
+        tid = self._setup(conn)
+        remove_task_metadata_key(conn, tid, "nope")  # should not raise
+        row = conn.execute("SELECT metadata FROM tasks WHERE id = ?", (tid,)).fetchone()
+        import json
+        assert json.loads(row["metadata"]) == {}
+
+    def test_set_on_nonexistent_task_raises(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError, match="task 999 not found"):
+            set_task_metadata_key(conn, 999, "k", "v")
+
+    def test_remove_on_nonexistent_task_raises(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError, match="task 999 not found"):
+            remove_task_metadata_key(conn, 999, "k")
+
+    def test_key_with_dot_treated_literally(self, conn: sqlite3.Connection) -> None:
+        """Keys with dots should be treated as flat keys, not JSON path separators."""
+        tid = self._setup(conn)
+        set_task_metadata_key(conn, tid, "deploy.env", "prod")
+        task = get_task(conn, tid)
+        assert task is not None
+        assert task.metadata == {"deploy.env": "prod"}

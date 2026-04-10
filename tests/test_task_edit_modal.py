@@ -27,6 +27,7 @@ def make_detail(**overrides) -> TaskDetail:
         start_date=None,
         finish_date=None,
         group_id=None,
+        metadata={},
         status=Status(id=1, workspace_id=1, name="Todo", archived=False, created_at=0),
         project=None,
         group=None,

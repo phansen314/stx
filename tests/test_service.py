@@ -1995,3 +1995,72 @@ class TestArchivePreviewAndCascade:
         service.add_group_dependency(conn, g1, g2)  # should not crash
         deps = service.list_all_group_dependencies(conn)
         assert (g1, g2) in deps
+
+
+# ---- Task metadata ----
+
+
+class TestTaskMeta:
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int]:
+        bid = insert_workspace(conn, "w")
+        sid = insert_status(conn, bid, "todo")
+        tid = insert_task(conn, bid, "task1", sid)
+        return bid, tid
+
+    def test_set_meta(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        task = service.set_task_meta(conn, tid, "branch", "feat/kv")
+        assert task.metadata == {"branch": "feat/kv"}
+
+    def test_set_meta_overwrite(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/old")
+        task = service.set_task_meta(conn, tid, "branch", "feat/new")
+        assert task.metadata["branch"] == "feat/new"
+
+    def test_remove_meta(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        task = service.remove_task_meta(conn, tid, "branch")
+        assert task.metadata == {}
+
+    def test_remove_nonexistent_key_raises(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(LookupError, match="not found"):
+            service.remove_task_meta(conn, tid, "nope")
+
+    def test_key_validation_empty(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="1-64 characters"):
+            service.set_task_meta(conn, tid, "", "v")
+
+    def test_key_validation_too_long(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="1-64 characters"):
+            service.set_task_meta(conn, tid, "k" * 65, "v")
+
+    def test_key_validation_bad_chars(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.set_task_meta(conn, tid, "BAD KEY", "v")
+
+    def test_value_validation_too_long(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="500"):
+            service.set_task_meta(conn, tid, "k", "v" * 501)
+
+    def test_metadata_survives_task_update(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        service.update_task(conn, tid, {"title": "new title"}, "test")
+        task = service.get_task(conn, tid)
+        assert task.metadata == {"branch": "feat/kv"}
+
+    def test_move_task_to_workspace_copies_metadata(self, conn: sqlite3.Connection) -> None:
+        bid1, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        service.set_task_meta(conn, tid, "jira", "PROJ-1")
+        bid2 = insert_workspace(conn, "w2")
+        sid2 = insert_status(conn, bid2, "todo")
+        new_task = service.move_task_to_workspace(conn, tid, bid2, sid2, source="test")
+        assert new_task.metadata == {"branch": "feat/kv", "jira": "PROJ-1"}

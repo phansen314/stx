@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     start_date INTEGER,
     finish_date INTEGER,
     group_id INTEGER,
+    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
     CHECK (start_date IS NULL OR finish_date IS NULL OR finish_date >= start_date),
     CHECK (group_id IS NULL OR project_id IS NOT NULL),
     FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id) ON DELETE RESTRICT,

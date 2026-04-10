@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import sqlite3
 from typing import Any
 
@@ -74,6 +75,7 @@ def row_to_task(row: Row) -> Task:
         start_date=row["start_date"],
         finish_date=row["finish_date"],
         group_id=row["group_id"],
+        metadata=json.loads(row["metadata"]),
     )
 
 
