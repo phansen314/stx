@@ -1354,7 +1354,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tr = tag_sub.add_parser("archive", help="archive a tag")
     p_tr.set_defaults(command="tag_archive")
     p_tr.add_argument("name")
-    p_tr.add_argument("--unassign", action="store_true", help="also remove tag from all tasks")
+    p_tr.add_argument("--unassign", action="store_true", help="strip the tag from all tasks before archiving (without this flag, the archived tag remains attached to tasks)")
     p_tr.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_tr.add_argument("--dry-run", action="store_true", help="preview without executing")
 
