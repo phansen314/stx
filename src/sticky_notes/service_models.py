@@ -164,6 +164,11 @@ class EntityUpdatePreview:
     `before` / `after` contain only fields that differ — unchanged fields
     are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
     other entity kinds leave those empty.
+
+    Note: `before` and `after` are mutable dicts (shallow-frozen). This is
+    an intentional exception to the tuple-everywhere convention because
+    diff payloads are JSON-consumer-facing and dict shape is the natural
+    JSON representation. Callers must treat these fields as read-only.
     """
     entity_type: Literal["task", "project", "group"]
     entity_id: int
