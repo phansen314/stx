@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
 
@@ -156,6 +156,37 @@ class ArchivePreview:
     group_count: int
     project_count: int
     status_count: int
+
+
+@dataclass(frozen=True)
+class EntityUpdatePreview:
+    """Dry-run result for a field-level update (task/project/group edit).
+    `before` / `after` contain only fields that differ — unchanged fields
+    are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
+    other entity kinds leave those empty.
+    """
+    entity_type: Literal["task", "project", "group"]
+    entity_id: int
+    label: str  # task title, project name, group title
+    before: dict[str, Any] = field(default_factory=dict)
+    after: dict[str, Any] = field(default_factory=dict)
+    tags_added: tuple[str, ...] = ()
+    tags_removed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskMovePreview:
+    """Dry-run result for `task mv`. Shows from/to status, position, and
+    optional project change."""
+    task_id: int
+    title: str
+    from_status: str
+    to_status: str
+    from_position: int
+    to_position: int
+    from_project: str | None
+    to_project: str | None
+    project_changed: bool
 
 
 @dataclass(frozen=True)

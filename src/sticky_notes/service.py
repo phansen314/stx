@@ -37,6 +37,7 @@ from .models import (
 )
 from .service_models import (
     ArchivePreview,
+    EntityUpdatePreview,
     GroupDetail,
     GroupRef,
     GroupTreeNode,
@@ -45,6 +46,7 @@ from .service_models import (
     ProjectGroupTree,
     TaskDetail,
     TaskListItem,
+    TaskMovePreview,
     WorkspaceContext,
     WorkspaceListStatus,
     WorkspaceListView,
@@ -1669,6 +1671,151 @@ def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview
         project_count=0,
         status_count=0,
     )
+
+
+def preview_update_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    changes: dict[str, Any],
+    *,
+    add_tags: tuple[str, ...] = (),
+    remove_tags: tuple[str, ...] = (),
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_task` without writing. Validates the
+    merged change set the same way `update_task` does so dry-run surfaces
+    validation errors before commit.
+    """
+    old = get_task(conn, task_id)
+    merged: dict[str, Any] = {}
+    if "start_date" in changes or "finish_date" in changes:
+        merged["start_date"] = changes.get("start_date", old.start_date)
+        merged["finish_date"] = changes.get("finish_date", old.finish_date)
+    merged.update(changes)
+    _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
+    if "group_id" in changes or "project_id" in changes:
+        _validate_group_project_consistency(conn, old, changes)
+    before, after = _diff_fields(old, changes)
+    current_tag_names = tuple(t.name for t in repo.list_tags_by_task(conn, task_id))
+    added = tuple(t for t in add_tags if t.lower() not in {n.lower() for n in current_tag_names})
+    removed: list[str] = []
+    for t in remove_tags:
+        matches = [n for n in current_tag_names if n.lower() == t.lower()]
+        if not matches:
+            raise LookupError(f"task {task_id} is not tagged {t!r}")
+        removed.append(matches[0])
+    return EntityUpdatePreview(
+        entity_type="task",
+        entity_id=task_id,
+        label=old.title,
+        before=before,
+        after=after,
+        tags_added=added,
+        tags_removed=tuple(removed),
+    )
+
+
+def preview_move_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    status_id: int,
+    position: int,
+    *,
+    project_id: Any = _UNSET,
+) -> TaskMovePreview:
+    """Compute a from/to snapshot for `move_task`. No DB writes."""
+    task = get_task(conn, task_id)
+    from_status = get_status(conn, task.status_id)
+    to_status = get_status(conn, status_id)
+    from_project = (
+        repo.get_project(conn, task.project_id).name if task.project_id is not None else None
+    )
+    if project_id is _UNSET:
+        to_project_id = task.project_id
+        project_changed = False
+    else:
+        to_project_id = project_id
+        project_changed = to_project_id != task.project_id
+    to_project = (
+        repo.get_project(conn, to_project_id).name if to_project_id is not None else None
+    )
+    return TaskMovePreview(
+        task_id=task_id,
+        title=task.title,
+        from_status=from_status.name,
+        to_status=to_status.name,
+        from_position=task.position,
+        to_position=position,
+        from_project=from_project,
+        to_project=to_project,
+        project_changed=project_changed,
+    )
+
+
+def preview_update_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_project` without writing."""
+    old = get_project(conn, project_id)
+    before, after = _diff_fields(old, changes)
+    return EntityUpdatePreview(
+        entity_type="project",
+        entity_id=project_id,
+        label=old.name,
+        before=before,
+        after=after,
+    )
+
+
+def preview_update_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_group` without writing. For `parent_id`
+    changes, the before/after values are parent group titles (or None).
+    """
+    old = get_group(conn, group_id)
+    if "parent_id" in changes:
+        new_parent_id = changes["parent_id"]
+        if new_parent_id is not None and _would_create_cycle(conn, group_id, new_parent_id):
+            raise ValueError("reparenting would create a cycle")
+        before_parent = (
+            get_group(conn, old.parent_id).title if old.parent_id is not None else None
+        )
+        after_parent = (
+            get_group(conn, new_parent_id).title if new_parent_id is not None else None
+        )
+        # Rewrite so _diff_fields reports titles, not raw IDs.
+        changes_for_diff = {k: v for k, v in changes.items() if k != "parent_id"}
+        before, after = _diff_fields(old, changes_for_diff)
+        if before_parent != after_parent:
+            before["parent"] = before_parent
+            after["parent"] = after_parent
+    else:
+        before, after = _diff_fields(old, changes)
+    return EntityUpdatePreview(
+        entity_type="group",
+        entity_id=group_id,
+        label=old.title,
+        before=before,
+        after=after,
+    )
+
+
+def _diff_fields(entity: Any, changes: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (before, after) dicts containing only fields in `changes`
+    whose new value differs from the entity's current value.
+    """
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    for key, new_value in changes.items():
+        current = getattr(entity, key, None)
+        if current != new_value:
+            before[key] = current
+            after[key] = new_value
+    return before, after
 
 
 def archive_task(

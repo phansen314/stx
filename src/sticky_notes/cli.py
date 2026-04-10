@@ -204,6 +204,11 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: P
         changes["project_id"] = service.get_project_by_name(conn, workspace.id, args.project).id
     add_tags = tuple(args.tag or ())
     remove_tags = tuple(args.untag or ())
+    if args.dry_run:
+        preview = service.preview_update_task(
+            conn, task_id, changes, add_tags=add_tags, remove_tags=remove_tags,
+        )
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     updated = service.update_task(
         conn, task_id, changes, source="cli",
         add_tags=add_tags, remove_tags=remove_tags,
@@ -216,9 +221,16 @@ def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
     task_id = _resolve_task(conn, workspace, args.task_num)
     col = service.get_status_by_name(conn, workspace.id, args.status)
     position = args.position if args.position is not None else 0
+    project_id_arg: Any = service._UNSET
     if args.project:
-        project_id = service.get_project_by_name(conn, workspace.id, args.project).id
-        updated = service.move_task(conn, task_id, col.id, position, source="cli", project_id=project_id)
+        project_id_arg = service.get_project_by_name(conn, workspace.id, args.project).id
+    if args.dry_run:
+        preview = service.preview_move_task(
+            conn, task_id, col.id, position, project_id=project_id_arg,
+        )
+        return Ok(data=preview, text=presenters.format_task_move_preview(preview))
+    if project_id_arg is not service._UNSET:
+        updated = service.move_task(conn, task_id, col.id, position, source="cli", project_id=project_id_arg)
     else:
         updated = service.move_task(conn, task_id, col.id, position, source="cli")
     return Ok(data=updated, text=f"moved {format_task_num(task_id)} -> {col.name}")
@@ -425,6 +437,9 @@ def cmd_project_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path
     changes: dict[str, Any] = {}
     if args.desc is not None:
         changes["description"] = args.desc.strip() or None
+    if args.dry_run:
+        preview = service.preview_update_project(conn, proj.id, changes)
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     if not changes:
         return Ok(data=proj, text="nothing to update")
     updated = service.update_project(conn, proj.id, changes)
@@ -565,7 +580,11 @@ def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
-    updated = service.update_group(conn, grp.id, {"title": args.new_title})
+    changes = {"title": args.new_title}
+    if args.dry_run:
+        preview = service.preview_update_group(conn, grp.id, changes)
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
+    updated = service.update_group(conn, grp.id, changes)
     return Ok(data=updated, text=f"renamed group '{args.title}' -> '{args.new_title}'")
 
 
@@ -575,6 +594,9 @@ def cmd_group_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
     changes: dict[str, Any] = {}
     if args.desc is not None:
         changes["description"] = args.desc.strip() or None
+    if args.dry_run:
+        preview = service.preview_update_group(conn, grp.id, changes)
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     if not changes:
         return Ok(data=grp, text="nothing to update")
     updated = service.update_group(conn, grp.id, changes)
@@ -599,11 +621,20 @@ def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
     workspace = _resolve_workspace(conn, args, db_path)
     grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
     if args.to_top:
-        updated = service.update_group(conn, grp.id, {"parent_id": None})
+        changes: dict[str, Any] = {"parent_id": None}
+    else:
+        parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
+        changes = {"parent_id": parent.id}
+    if args.dry_run:
+        preview = service.preview_update_group(conn, grp.id, changes)
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
+    updated = service.update_group(conn, grp.id, changes)
+    if args.to_top:
         return Ok(data=updated, text=f"promoted group '{grp.title}' to top-level")
-    parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
-    updated = service.update_group(conn, grp.id, {"parent_id": parent.id})
-    return Ok(data=updated, text=f"moved group '{grp.title}' under '{parent.title}'")
+    parent_title = (
+        service.get_group(conn, changes["parent_id"]).title if changes["parent_id"] is not None else None
+    )
+    return Ok(data=updated, text=f"moved group '{grp.title}' under '{parent_title}'")
 
 
 def cmd_group_assign(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -1030,6 +1061,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--project", "-p", default=None)
     p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
+    p_edit.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_mv = task_sub.add_parser("mv", help="move task to status (within workspace)")
     p_mv.set_defaults(command="task_mv")
@@ -1037,6 +1069,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mv.add_argument("--status", "-S", required=True, help="target status name")
     p_mv.add_argument("position", type=int, nargs="?", default=None, help="zero-indexed position within status; 0 = top (default), higher values move further down")
     p_mv.add_argument("--project", "-p", default=None, help="also change task project")
+    p_mv.add_argument("--dry-run", action="store_true", help="preview move without writing")
 
     p_transfer = task_sub.add_parser("transfer", help="move task to a different workspace")
     p_transfer.set_defaults(command="task_transfer")
@@ -1180,6 +1213,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pe.set_defaults(command="project_edit")
     p_pe.add_argument("name")
     p_pe.add_argument("--desc", "-d", default=None, help="project description")
+    p_pe.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_pren = proj_sub.add_parser("rename", help="rename a project")
     p_pren.set_defaults(command="project_rename")
@@ -1258,12 +1292,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_grn.add_argument("title")
     p_grn.add_argument("new_title")
     p_grn.add_argument("--project", "-p", default=None, help="disambiguate by project")
+    p_grn.add_argument("--dry-run", action="store_true", help="preview rename without writing")
 
     p_ge = grp_sub.add_parser("edit", help="edit a group")
     p_ge.set_defaults(command="group_edit")
     p_ge.add_argument("title")
     p_ge.add_argument("--desc", "-d", default=None, help="group description")
     p_ge.add_argument("--project", "-p", default=None, help="disambiguate by project")
+    p_ge.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_garc = grp_sub.add_parser("archive", help="cascade-archive group and all descendant groups/tasks")
     p_garc.set_defaults(command="group_archive")
@@ -1279,6 +1315,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmv_parent.add_argument("--parent", help="new parent group title")
     p_gmv_parent.add_argument("--to-top", action="store_true", help="promote to top-level (no parent)")
     p_gmv.add_argument("--project", "-p", default=None, help="disambiguate by project")
+    p_gmv.add_argument("--dry-run", action="store_true", help="preview reparent without writing")
 
     p_gasn = grp_sub.add_parser("assign", help="assign task to group")
     p_gasn.set_defaults(command="group_assign")

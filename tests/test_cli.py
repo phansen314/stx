@@ -1724,6 +1724,79 @@ class TestInfo:
 # ---- Archive commands (dry-run, cascade, confirmation) ----
 
 
+class TestEditDryRun:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("status", "create", "done")
+        cli("project", "create", "alpha")
+        cli("project", "create", "beta")
+        cli("group", "create", "top", "-p", "alpha")
+        cli("group", "create", "child", "-p", "alpha", "--parent", "top")
+        cli("tag", "create", "bug")
+        cli("task", "create", "T1", "-S", "todo", "-p", "alpha", "--priority", "2")
+
+    def test_task_edit_dry_run_text(self):
+        out, _ = self.cli("task", "edit", "1", "--title", "T1 renamed", "--priority", "4", "--dry-run")
+        assert "dry-run" in out
+        assert "title" in out and "T1" in out and "T1 renamed" in out
+        assert "priority" in out
+        # Task unchanged
+        show, _ = self.cli("task", "show", "1")
+        assert "T1 renamed" not in show
+        assert "Priority:    2" in show
+
+    def test_task_edit_dry_run_tag_diff(self):
+        out, _ = self.cli("task", "edit", "1", "--tag", "bug", "--tag", "urgent", "--dry-run")
+        assert "+tag bug" in out
+        assert "+tag urgent" in out
+
+    def test_task_edit_dry_run_json(self):
+        out, _ = self.cli("--json", "task", "edit", "1", "--priority", "5", "--dry-run")
+        data = json.loads(out)["data"]
+        assert data["entity_type"] == "task"
+        assert data["after"]["priority"] == 5
+        assert data["before"]["priority"] == 2
+
+    def test_task_mv_dry_run(self):
+        out, _ = self.cli("task", "mv", "1", "-S", "done", "--dry-run")
+        assert "dry-run" in out
+        assert "'todo'" in out and "'done'" in out
+        # Still in todo
+        ls, _ = self.cli("task", "ls")
+        assert "T1" in ls
+
+    def test_task_mv_dry_run_project_change(self):
+        out, _ = self.cli("task", "mv", "1", "-S", "done", "-p", "beta", "--dry-run")
+        assert "project" in out
+        assert "'alpha'" in out and "'beta'" in out
+
+    def test_project_edit_dry_run(self):
+        out, _ = self.cli("project", "edit", "alpha", "--desc", "new description", "--dry-run")
+        assert "dry-run" in out
+        assert "description" in out
+
+    def test_group_edit_dry_run(self):
+        out, _ = self.cli("group", "edit", "top", "-p", "alpha", "--desc", "new desc", "--dry-run")
+        assert "dry-run" in out
+        assert "description" in out
+
+    def test_group_rename_dry_run(self):
+        out, _ = self.cli("group", "rename", "top", "top-renamed", "-p", "alpha", "--dry-run")
+        assert "dry-run" in out
+        assert "title" in out
+        # Still exists under old name
+        show, _ = self.cli("group", "show", "top", "-p", "alpha")
+        assert "top" in show
+
+    def test_group_mv_dry_run_to_top(self):
+        out, _ = self.cli("group", "mv", "child", "--to-top", "-p", "alpha", "--dry-run")
+        assert "dry-run" in out
+        assert "parent" in out
+
+
 class TestArchiveDryRun:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):

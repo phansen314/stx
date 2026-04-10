@@ -106,10 +106,12 @@ All flags are optional; only provided fields are updated.
 | `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |
 | `--untag` | — | — | Remove tag (repeatable) |
+| `--dry-run` | — | off | Preview the field + tag diff without writing |
 
 ```sh
 todo task edit task-0003 --priority 4 --due 2026-06-01
 todo task edit task-0003 --tag urgent --untag backend
+todo task edit task-0003 --priority 5 --dry-run
 ```
 
 ---
@@ -123,11 +125,13 @@ todo task edit task-0003 --tag urgent --untag backend
 | `--status` / `-S` | Target status name (**required**) |
 | `position` (optional positional) | Integer position within status (default: `0` = top) |
 | `--project` / `-p` | Also change the task's project |
+| `--dry-run` | Preview from/to status + position without writing |
 
 ```sh
 todo task mv task-0001 --status "In Progress"
 todo task mv task-0001 -S Done 2          # position 2 within Done status
 todo task mv task-0001 -S Backlog --project "Next sprint"
+todo task mv task-0001 -S Done --dry-run
 ```
 
 **Note:** `todo task done` does not exist. To mark done: `todo task mv <task> -S Done` (requires a status literally named "Done").
@@ -328,7 +332,7 @@ todo status archive "Old Status" --force
 | `project create` | `name` | `--desc` / `-d` | Create project |
 | `project ls` | — | — | List projects |
 | `project show` | `name` | — | Show project detail |
-| `project edit` | `name` | `--desc` / `-d` | Edit project description |
+| `project edit` | `name` | `--desc` / `-d`, `--dry-run` | Edit project description; `--dry-run` previews the diff |
 | `project rename` | `old new` | — | Rename project from `old` to `new` |
 | `project archive` | `name` | `--force`, `--dry-run` | Cascade-archive project and all groups/tasks. Prompts y/N unless `--force`. |
 
@@ -381,10 +385,10 @@ Groups are project-scoped hierarchical collections of tasks. All group commands 
 | `group create` | `title` | `--project/-p` (**required**), `--parent TITLE`, `--desc/-d` | Create group; optionally nested under parent |
 | `group ls` | — | `--project/-p`, `--all/-a`, `--tree` | List (flat or tree view) |
 | `group show` | `title` | `--project/-p` | Show detail with ancestry |
-| `group rename` | `title new_title` | `--project/-p` | Rename |
-| `group edit` | `title` | `--desc/-d`, `--project/-p` | Edit group description |
+| `group rename` | `title new_title` | `--project/-p`, `--dry-run` | Rename; `--dry-run` previews the diff |
+| `group edit` | `title` | `--desc/-d`, `--project/-p`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
 | `group archive` | `title` | `--project/-p`, `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
-| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--project/-p` | Reparent under another group, or `--to-top` to promote to top-level |
+| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--project/-p`, `--dry-run` | Reparent under another group, or `--to-top` to promote to top-level; `--dry-run` previews the diff |
 | `group assign` | `task group_title` | `--project/-p` | Assign task to group |
 | `group unassign` | `task` | — | Unassign task from its group |
 | `group dep create` | `group_title depends_on_title` | `--project/-p` | Add group dependency (group blocked by depends-on) |
@@ -469,6 +473,8 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 |---|---|
 | `task create` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
 | `task edit`, `task archive`, `task mv` | full Task object |
+| `task edit --dry-run`, `project edit --dry-run`, `group edit/rename/mv --dry-run` | `EntityUpdatePreview`: `{entity_type, entity_id, label, before, after, tags_added, tags_removed}` |
+| `task mv --dry-run` | `TaskMovePreview`: `{task_id, title, from_status, to_status, from_position, to_position, from_project, to_project, project_changed}` |
 | `workspace create/rename` | full Workspace object |
 | `workspace archive` | `{"workspace": {...Workspace}, "active_cleared": bool}` — `active_cleared` is `true` when the archived workspace was the active workspace and the active-workspace pointer was cleared as a side-effect |
 | `status create/rename/archive` | full Status object |

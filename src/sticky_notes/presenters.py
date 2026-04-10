@@ -8,12 +8,14 @@ from .formatting import format_group_num, format_priority, format_task_num, form
 from .models import Project, Status, Tag, Task, TaskHistory, Workspace
 from .service_models import (
     ArchivePreview,
+    EntityUpdatePreview,
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
     ProjectDetail,
     ProjectGroupTree,
     TaskDetail,
+    TaskMovePreview,
     WorkspaceContext,
     WorkspaceListView,
 )
@@ -293,4 +295,40 @@ def format_archive_preview(preview: ArchivePreview) -> str:
         lines.append(f"  statuses: {preview.status_count}")
     if preview.task_count:
         lines.append(f"  tasks: {preview.task_count}")
+    return "\n".join(lines)
+
+
+def format_entity_update_preview(preview: EntityUpdatePreview) -> str:
+    if preview.entity_type == "task":
+        header_id = format_task_num(preview.entity_id)
+    elif preview.entity_type == "group":
+        header_id = format_group_num(preview.entity_id)
+    else:
+        header_id = f"{preview.entity_type}-{preview.entity_id}"
+    lines = [f"dry-run: would update {header_id} ({preview.label})"]
+    for key in preview.after:
+        before = preview.before.get(key)
+        after = preview.after[key]
+        lines.append(f"  {key}: {before!r} -> {after!r}")
+    for tag in preview.tags_added:
+        lines.append(f"  +tag {tag}")
+    for tag in preview.tags_removed:
+        lines.append(f"  -tag {tag}")
+    if len(lines) == 1:
+        lines.append("  (no changes)")
+    return "\n".join(lines)
+
+
+def format_task_move_preview(preview: TaskMovePreview) -> str:
+    lines = [f"dry-run: would move {format_task_num(preview.task_id)} ({preview.title})"]
+    lines.append(
+        f"  status: '{preview.from_status}' -> '{preview.to_status}'"
+    )
+    lines.append(
+        f"  position: {preview.from_position} -> {preview.to_position}"
+    )
+    if preview.project_changed:
+        before = preview.from_project if preview.from_project is not None else "(none)"
+        after = preview.to_project if preview.to_project is not None else "(none)"
+        lines.append(f"  project: '{before}' -> '{after}'")
     return "\n".join(lines)
