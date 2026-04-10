@@ -418,25 +418,37 @@ def list_projects(
     return repo.list_projects(conn, workspace_id, include_archived=include_archived)
 
 
+def _validate_project_update(
+    conn: sqlite3.Connection,
+    project_id: int,
+    changes: dict[str, Any],
+) -> None:
+    """Shared validation for project updates. Currently enforces the
+    archive-cascade block: archiving a project with active tasks or
+    groups requires `project archive` instead of `project edit`.
+    """
+    if changes.get("archived") is True:
+        active_tasks = repo.list_tasks_by_project(conn, project_id)
+        if active_tasks:
+            raise ValueError(
+                f"project has {len(active_tasks)} active task(s); "
+                "use 'project archive' to cascade"
+            )
+        active_groups = repo.list_groups(conn, project_id)
+        if active_groups:
+            raise ValueError(
+                f"project has {len(active_groups)} active group(s); "
+                "use 'project archive' to cascade"
+            )
+
+
 def update_project(
     conn: sqlite3.Connection,
     project_id: int,
     changes: dict[str, Any],
 ) -> Project:
     with transaction(conn), _friendly_errors():
-        if changes.get("archived") is True:
-            active_tasks = repo.list_tasks_by_project(conn, project_id)
-            if active_tasks:
-                raise ValueError(
-                    f"project has {len(active_tasks)} active task(s); "
-                    "use 'project archive' to cascade"
-                )
-            active_groups = repo.list_groups(conn, project_id)
-            if active_groups:
-                raise ValueError(
-                    f"project has {len(active_groups)} active group(s); "
-                    "use 'project archive' to cascade"
-                )
+        _validate_project_update(conn, project_id, changes)
         return repo.update_project(conn, project_id, changes)
 
 
@@ -1770,8 +1782,11 @@ def preview_update_project(
     project_id: int,
     changes: dict[str, Any],
 ) -> EntityUpdatePreview:
-    """Compute a diff for `update_project` without writing."""
+    """Compute a diff for `update_project` without writing. Runs the same
+    validation as `update_project` so dry-run surfaces rejection errors.
+    """
     old = get_project(conn, project_id)
+    _validate_project_update(conn, project_id, changes)
     before, after = _diff_fields(old, changes)
     return EntityUpdatePreview(
         entity_type="project",

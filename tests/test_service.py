@@ -297,6 +297,21 @@ class TestProjectService:
         updated = service.update_project(conn, proj.id, {"archived": True})
         assert updated.archived is True
 
+    def test_preview_update_project_rejects_archive_with_active_tasks(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        proj = service.create_project(conn, bid, "alpha")
+        insert_task(conn, bid, "task", cid, project_id=proj.id)
+        with pytest.raises(ValueError, match="active task"):
+            service.preview_update_project(conn, proj.id, {"archived": True})
+
+    def test_preview_update_project_rejects_archive_with_active_groups(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        proj = service.create_project(conn, bid, "alpha")
+        service.create_group(conn, proj.id, "g1")
+        with pytest.raises(ValueError, match="active group"):
+            service.preview_update_project(conn, proj.id, {"archived": True})
+
 
 # ---- Task ----
 
