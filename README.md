@@ -62,8 +62,7 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 
 | Flag | Description |
 |------|-------------|
-| `--all` / `-a` | Include archived tasks |
-| `--archived` | Show only archived tasks |
+| `--archived {hide,include,only}` | Archived visibility (default `hide`) |
 | `--status` / `-S` | Filter by status name |
 | `--project` / `-p` | Filter by project name |
 | `--priority` | Filter by priority (1-5) |

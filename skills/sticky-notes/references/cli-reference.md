@@ -63,8 +63,7 @@ The JSON response is a full `TaskDetail` (same shape as `todo task show`), inclu
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--all` | `-a` | off | Include archived tasks |
-| `--archived` | — | off | Show ONLY archived tasks |
+| `--archived` | — | `hide` | Archived visibility: `hide` (default), `include` (active + archived), `only` (archived only) |
 | `--status` | `-S` | — | Filter by status name |
 | `--project` | `-p` | — | Filter by project name |
 | `--priority` | — | — | Filter by priority (1–5) |
@@ -76,7 +75,7 @@ The JSON response is a full `TaskDetail` (same shape as `todo task show`), inclu
 todo task ls
 todo task ls --project "Q2 launch" --status "In Progress"
 todo task ls --search auth --priority 3
-todo task ls --tag backend --all
+todo task ls --tag backend --archived include
 ```
 
 ---
@@ -135,7 +134,7 @@ todo task mv task-0001 -S Backlog --project "Next sprint"
 
 ### `todo task archive <task> [--force] [--dry-run]`
 
-Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Non-interactive stdin (pipes, CI) requires `--force` or `--dry-run` — the command fails fast rather than hang on `input()`. Tasks remain queryable with `--all` or `--archived`.
+Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Non-interactive stdin (pipes, CI) requires `--force` or `--dry-run` — the command fails fast rather than hang on `input()`. Archived tasks remain queryable via `task ls --archived include` or `--archived only`.
 
 ---
 
@@ -292,7 +291,7 @@ todo task transfer task-0001 --to ops --status Backlog --dry-run
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `workspace create` | `name` | `--statuses "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--statuses` takes a single comma-separated string (e.g. `--statuses "To Do,In Progress,Done"`). Quote the whole value. |
-| `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
+| `workspace ls` | — | `--archived {hide,include,only}` (default `hide`) | List workspaces; marks active workspace |
 | `workspace use` | `name` | — | Switch active workspace |
 | `workspace rename` | `old new` | — | Rename workspace from `old` to `new` |
 | `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (projects, groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
@@ -364,7 +363,7 @@ Tags are workspace-scoped. Many-to-many with tasks. `todo task create`/`todo tas
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `tag create` | `name` | — | Create a tag (workspace-scoped) |
-| `tag ls` | — | `--all` / `-a` | List tags (include archived with `-a`) |
+| `tag ls` | — | `--archived {hide,include,only}` (default `hide`) | List tags |
 | `tag rename` | `old new` | — | Rename tag from `old` to `new` |
 | `tag archive` | `name` | `--unassign`, `--force`, `--dry-run` | Archive tag; `--unassign` strips it from all tasks first. Prompts y/N unless `--force`. |
 

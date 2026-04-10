@@ -161,7 +161,8 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
         service.resolve_group(conn, workspace.id, args.group, project_name=args.project).id
         if args.group else None
     )
-    only_archived = getattr(args, "archived", False)
+    include_archived = args.archived in ("include", "only")
+    only_archived = args.archived == "only"
     view = service.get_workspace_list_view(
         conn, workspace.id,
         status_id=status_id,
@@ -170,7 +171,7 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
         group_id=group_id,
         priority=args.priority,
         search=args.search,
-        include_archived=args.all,
+        include_archived=include_archived,
         only_archived=only_archived,
     )
     return Ok(data=view, text=presenters.format_workspace_list_view(view))
@@ -278,7 +279,10 @@ def cmd_workspace_create(conn: sqlite3.Connection, args: argparse.Namespace, db_
 
 
 def cmd_workspace_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    workspaces = service.list_workspaces(conn, include_archived=args.all)
+    include_archived = args.archived in ("include", "only")
+    workspaces = service.list_workspaces(conn, include_archived=include_archived)
+    if args.archived == "only":
+        workspaces = tuple(w for w in workspaces if w.archived)
     active_id = get_active_workspace_id(db_path)
     payload = [{**to_dict(w), "active": w.id == active_id} for w in workspaces]
     return Ok(data=payload, text=presenters.format_workspace_list(workspaces, active_id))
@@ -633,7 +637,10 @@ def cmd_tag_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    tags = service.list_tags(conn, workspace.id, include_archived=args.all)
+    include_archived = args.archived in ("include", "only")
+    tags = service.list_tags(conn, workspace.id, include_archived=include_archived)
+    if args.archived == "only":
+        tags = tuple(t for t in tags if t.archived)
     return Ok(data=tags, text=presenters.format_tag_list(tags))
 
 
@@ -1004,8 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ls = task_sub.add_parser("ls", help="list tasks")
     p_ls.set_defaults(command="task_ls")
-    p_ls.add_argument("--all", "-a", action="store_true", help="include archived")
-    p_ls.add_argument("--archived", action="store_true", help="show only archived")
+    p_ls.add_argument("--archived", choices=["hide", "include", "only"], default="hide", help="archived visibility: hide (default), include, or only")
     p_ls.add_argument("--status", "-S", default=None, help="filter by status name")
     p_ls.add_argument("--project", "-p", default=None, help="filter by project name")
     p_ls.add_argument("--priority", type=int, default=None, help="filter by priority (1-5)")
@@ -1088,7 +1094,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_wl = workspace_sub.add_parser("ls", help="list workspaces")
     p_wl.set_defaults(command="workspace_ls")
-    p_wl.add_argument("--all", "-a", action="store_true", help="include archived")
+    p_wl.add_argument("--archived", choices=["hide", "include", "only"], default="hide", help="archived visibility: hide (default), include, or only")
 
     p_wu = workspace_sub.add_parser("use", help="switch active workspace")
     p_wu.set_defaults(command="workspace_use")
@@ -1338,7 +1344,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tl = tag_sub.add_parser("ls", help="list tags")
     p_tl.set_defaults(command="tag_ls")
-    p_tl.add_argument("--all", "-a", action="store_true", help="include archived")
+    p_tl.add_argument("--archived", choices=["hide", "include", "only"], default="hide", help="archived visibility: hide (default), include, or only")
 
     p_tren = tag_sub.add_parser("rename", help="rename a tag")
     p_tren.set_defaults(command="tag_rename")

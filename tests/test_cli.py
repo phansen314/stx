@@ -985,7 +985,7 @@ class TestTagCommands:
         out, _ = cli("tag", "ls")
         assert "bug" in out
         assert "old" not in out
-        out, _ = cli("tag", "ls", "--all")
+        out, _ = cli("tag", "ls", "--archived", "include")
         assert "bug" in out
         assert "old" in out
         assert "(archived)" in out
@@ -1794,8 +1794,8 @@ class TestArchiveCascade:
         # Workspace hidden from default ls
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
-        # But visible with --all
-        out2, _ = self.cli("workspace", "ls", "--all")
+        # But visible with --archived include
+        out2, _ = self.cli("workspace", "ls", "--archived", "include")
         assert "dev" in out2
 
 
@@ -2140,7 +2140,7 @@ class TestEndToEndSmoke:
         assert get_active_workspace_id(self.db_path) is None
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
-        out, _ = self.cli("workspace", "ls", "--all")
+        out, _ = self.cli("workspace", "ls", "--archived", "include")
         assert "dev" in out
 
 
