@@ -93,7 +93,7 @@ def format_task_detail(detail: TaskDetail) -> str:
         tag_str = ", ".join(t.name for t in detail.tags)
         lines.append(f"  Tags:        {tag_str}")
     if detail.metadata:
-        lines.append(f"  Metadata:")
+        lines.append("  Metadata:")
         for k, v in sorted(detail.metadata.items()):
             lines.append(f"    {k}: {v}")
     lines.append(f"  Priority:    {detail.priority}")
@@ -225,10 +225,10 @@ def format_group_detail(
 ) -> str:
     lines = [f"Group: {detail.title} ({format_group_num(detail.id)})"]
     if detail.description:
-        lines.append(f"  {detail.description}")
-    lines.append(f"  Project: {project_name}")
-    lines.append(f"  Path:    {' > '.join(ancestry_titles)}")
-    lines.append(f"  Tasks:   {len(detail.tasks)}")
+        lines.append(f"  Description: {detail.description}")
+    lines.append(f"  Project:     {project_name}")
+    lines.append(f"  Path:        {' > '.join(ancestry_titles)}")
+    lines.append(f"  Tasks:       {len(detail.tasks)}")
     if detail.children:
         child_names = ", ".join(c.title for c in detail.children)
         lines.append(f"  Sub-groups: {child_names}")

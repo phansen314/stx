@@ -458,8 +458,8 @@ class TestNewTaskFieldsMatchSchema:
         """NewTask fields + DB-defaulted/service-managed columns should cover all tasks columns."""
         schema_cols = _schema_columns(conn, "tasks")
         db_defaulted = {"id", "created_at", "archived"}
-        # group_id is managed by assign_task_to_group, not at insert time
-        service_managed = {"group_id", "metadata"}
+        # metadata starts as the SQL default '{}' and is managed via json_set afterwards
+        service_managed = {"metadata"}
         new_task_fields = {f.name for f in dataclasses.fields(NewTask)}
         assert new_task_fields | db_defaulted | service_managed == schema_cols
 

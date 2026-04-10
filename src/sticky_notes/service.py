@@ -758,11 +758,11 @@ def move_task_to_workspace(
                 target_tag = repo.insert_tag(conn, NewTag(workspace_id=target_workspace_id, name=tag.name))
             repo.add_tag_to_task(conn, new.id, target_tag.id)
 
-        for meta_key, meta_value in old.metadata.items():
-            repo.set_task_metadata_key(conn, new.id, meta_key, meta_value)
+        repo.copy_task_metadata(conn, task_id, new.id)
 
         repo.update_task(conn, task_id, {"archived": True})
         _record_changes(conn, task_id, old, {"archived": True}, source)
+        # Refetch: `new` was built before tags/metadata were attached.
         return get_task(conn, new.id)
 
 
@@ -770,18 +770,22 @@ def move_task_to_workspace(
 
 
 _META_KEY_RE = re.compile(r"^[a-z0-9_.-]+$")
+_META_VALUE_MAX = 500
 
 
-def _validate_meta_key(key: str) -> None:
-    if not key or len(key) > 64:
+def _normalize_meta_key(key: str) -> str:
+    """Lowercase and validate a metadata key.
+
+    Keys are stored lowercase to match the codebase's COLLATE NOCASE convention.
+    JSON-stored fields cannot use column collation, so we normalize at the
+    application layer instead.
+    """
+    normalized = key.lower()
+    if not normalized or len(normalized) > 64:
         raise ValueError("metadata key must be 1-64 characters")
-    if not _META_KEY_RE.match(key):
+    if not _META_KEY_RE.match(normalized):
         raise ValueError(f"metadata key must match [a-z0-9_.-]+, got {key!r}")
-
-
-def _validate_meta_value(value: str) -> None:
-    if len(value) > 500:
-        raise ValueError("metadata value must be \u2264 500 characters")
+    return normalized
 
 
 def get_task_meta(
@@ -789,13 +793,17 @@ def get_task_meta(
     task_id: int,
     key: str,
 ) -> str:
-    """Get a metadata value by key. Validates key format. Raises LookupError if
-    the task or key is missing."""
-    _validate_meta_key(key)
+    """Get a metadata value by key.
+
+    Keys are normalized to lowercase before lookup. Raises ``ValueError`` if
+    the key has an invalid shape, ``LookupError`` if the task doesn't exist
+    or the key isn't present.
+    """
+    normalized = _normalize_meta_key(key)
     task = get_task(conn, task_id)
-    if key not in task.metadata:
+    if normalized not in task.metadata:
         raise LookupError(f"metadata key {key!r} not found on task {task_id}")
-    return task.metadata[key]
+    return task.metadata[normalized]
 
 
 def set_task_meta(
@@ -804,11 +812,12 @@ def set_task_meta(
     key: str,
     value: str,
 ) -> Task:
-    """Set a metadata key on a task. Validates key/value format."""
-    _validate_meta_key(key)
-    _validate_meta_value(value)
+    """Set a metadata key on a task. Key is normalized to lowercase."""
+    normalized = _normalize_meta_key(key)
+    if len(value) > _META_VALUE_MAX:
+        raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
     with transaction(conn), _friendly_errors():
-        repo.set_task_metadata_key(conn, task_id, key, value)
+        repo.set_task_metadata_key(conn, task_id, normalized, value)
         return get_task(conn, task_id)
 
 
@@ -818,12 +827,12 @@ def remove_task_meta(
     key: str,
 ) -> Task:
     """Remove a metadata key from a task. Raises LookupError if key doesn't exist."""
-    _validate_meta_key(key)
+    normalized = _normalize_meta_key(key)
     with transaction(conn), _friendly_errors():
         old = get_task(conn, task_id)
-        if key not in old.metadata:
+        if normalized not in old.metadata:
             raise LookupError(f"metadata key {key!r} not found on task {task_id}")
-        repo.remove_task_metadata_key(conn, task_id, key)
+        repo.remove_task_metadata_key(conn, task_id, normalized)
         return get_task(conn, task_id)
 
 

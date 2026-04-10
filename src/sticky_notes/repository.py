@@ -393,27 +393,22 @@ def list_tasks_by_ids(
 # ---- Task metadata functions ----
 
 
-def _assert_safe_meta_key(key: str) -> None:
-    # Defensive guard: keys are interpolated into the JSON path '$."<key>"' via
-    # string concatenation in SQL. A key containing a double-quote would break
-    # out of the path literal. The service layer enforces a stricter slug
-    # regex, but repo callers (tests, future code) may bypass it, so we
-    # backstop here.
-    if '"' in key or "\\" in key:
-        raise ValueError(f"metadata key contains unsafe characters: {key!r}")
-
-
 def set_task_metadata_key(
     conn: sqlite3.Connection,
     task_id: int,
     key: str,
     value: str,
 ) -> None:
-    """Set a single metadata key using SQLite json_set. Creates or overwrites."""
-    _assert_safe_meta_key(key)
+    """Set a single metadata key using SQLite json_set. Creates or overwrites.
+
+    Callers must pre-validate the key (see service._normalize_meta_key). The
+    slug charset enforced there excludes characters that could escape the
+    quoted JSON path literal built below.
+    """
+    path = f'$."{key}"'
     cur = conn.execute(
-        '''UPDATE tasks SET metadata = json_set(metadata, '$."' || ? || '"', ?) WHERE id = ?''',
-        (key, value, task_id),
+        "UPDATE tasks SET metadata = json_set(metadata, ?, ?) WHERE id = ?",
+        (path, value, task_id),
     )
     if cur.rowcount == 0:
         raise LookupError(f"task {task_id} not found")
@@ -424,14 +419,35 @@ def remove_task_metadata_key(
     task_id: int,
     key: str,
 ) -> None:
-    """Remove a single metadata key using SQLite json_remove."""
-    _assert_safe_meta_key(key)
+    """Remove a single metadata key using SQLite json_remove.
+
+    Callers must pre-validate the key (see service._normalize_meta_key).
+    """
+    path = f'$."{key}"'
     cur = conn.execute(
-        '''UPDATE tasks SET metadata = json_remove(metadata, '$."' || ? || '"') WHERE id = ?''',
-        (key, task_id),
+        "UPDATE tasks SET metadata = json_remove(metadata, ?) WHERE id = ?",
+        (path, task_id),
     )
     if cur.rowcount == 0:
         raise LookupError(f"task {task_id} not found")
+
+
+def copy_task_metadata(
+    conn: sqlite3.Connection,
+    src_task_id: int,
+    dst_task_id: int,
+) -> None:
+    """Copy the entire metadata blob from one task to another.
+
+    Used when a task moves between workspaces — the destination is a fresh
+    row with empty metadata, and we want a byte-for-byte copy of the source.
+    """
+    cur = conn.execute(
+        "UPDATE tasks SET metadata = (SELECT metadata FROM tasks WHERE id = ?) WHERE id = ?",
+        (src_task_id, dst_task_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"task {dst_task_id} not found")
 
 
 # ---- Task dependency functions ----

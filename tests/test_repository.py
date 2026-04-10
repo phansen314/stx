@@ -82,6 +82,7 @@ from sticky_notes.repository import (
     archive_dependency,
     archive_group_dependency,
     remove_tag_from_task,
+    copy_task_metadata,
     remove_task_metadata_key,
     reparent_children,
     set_task_group_id,
@@ -1574,15 +1575,20 @@ class TestTaskMetadata:
         assert task is not None
         assert task.metadata == {"deploy.env": "prod"}
 
-    def test_key_with_quote_rejected(self, conn: sqlite3.Connection) -> None:
-        """Defensive: repo-level guard against keys that could break JSON path quoting."""
-        tid = self._setup(conn)
-        with pytest.raises(ValueError, match="unsafe characters"):
-            set_task_metadata_key(conn, tid, 'ev"il', "v")
-        with pytest.raises(ValueError, match="unsafe characters"):
-            remove_task_metadata_key(conn, tid, 'ev"il')
+    def test_copy_task_metadata(self, conn: sqlite3.Connection) -> None:
+        src = self._setup(conn)
+        # Fresh task on the same workspace serves as the copy destination.
+        dst_row = conn.execute("SELECT workspace_id, status_id FROM tasks WHERE id = ?", (src,)).fetchone()
+        dst_task = insert_task(conn, NewTask(workspace_id=dst_row["workspace_id"], title="dst", status_id=dst_row["status_id"]))
+        set_task_metadata_key(conn, src, "branch", "feat/kv")
+        set_task_metadata_key(conn, src, "jira", "proj-1")
+        copy_task_metadata(conn, src, dst_task.id)
+        dst_meta = get_task(conn, dst_task.id).metadata
+        assert dst_meta == {"branch": "feat/kv", "jira": "proj-1"}
+        # Source should be unchanged.
+        assert get_task(conn, src).metadata == {"branch": "feat/kv", "jira": "proj-1"}
 
-    def test_key_with_backslash_rejected(self, conn: sqlite3.Connection) -> None:
-        tid = self._setup(conn)
-        with pytest.raises(ValueError, match="unsafe characters"):
-            set_task_metadata_key(conn, tid, "ev\\il", "v")
+    def test_copy_task_metadata_nonexistent_dst_raises(self, conn: sqlite3.Connection) -> None:
+        src = self._setup(conn)
+        with pytest.raises(LookupError, match="task 999 not found"):
+            copy_task_metadata(conn, src, 999)

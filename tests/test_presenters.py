@@ -452,9 +452,9 @@ class TestFormatGroupDetail:
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         assert "Group: G (group-0001)" in out
-        assert "Project: P" in out
-        assert "Path:    G" in out
-        assert "Tasks:   0" in out
+        assert "Project:     P" in out
+        assert "Path:        G" in out
+        assert "Tasks:       0" in out
 
     def test_description_rendered(self):
         d = GroupDetail(
@@ -463,7 +463,7 @@ class TestFormatGroupDetail:
             tasks=(), children=(), parent=None,
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
-        assert "Important group" in out
+        assert "Description: Important group" in out
 
     def test_no_description_omitted(self):
         d = GroupDetail(

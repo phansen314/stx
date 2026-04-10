@@ -245,6 +245,11 @@ class TestTaskCommands:
         out, _ = cli("task", "create", "Fix it", "-d", "Full description here", "-S", "todo")
         assert "created task-0001" in out
 
+    def test_add_empty_desc_normalized_to_null(self, cli):
+        out, _ = cli("--json", "task", "create", "Fix it", "-d", "", "-S", "todo")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
+
     def test_ls_grouped_by_column(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "in progress")
@@ -458,6 +463,16 @@ class TestProjectCommands:
         cli("project", "create", "backend")
         out, _ = cli("project", "edit", "backend")
         assert "nothing to update" in out
+
+    def test_create_empty_desc_normalized_to_null(self, cli):
+        out, _ = cli("--json", "project", "create", "backend", "--desc", "")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
+
+    def test_create_whitespace_desc_normalized_to_null(self, cli):
+        out, _ = cli("--json", "project", "create", "backend", "--desc", "   ")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
 
 
 # ---- Dependency commands ----
@@ -840,6 +855,11 @@ class TestGroupCLI:
         out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
         assert "UI components" in out
 
+    def test_create_empty_desc_normalized_to_null(self):
+        out, _ = self.cli("--json", "group", "create", "Frontend", "--project", "sprint1", "--desc", "")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
+
     def test_edit_description(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         out, _ = self.cli("group", "edit", "Frontend", "--project", "sprint1", "--desc", "UI layer")
@@ -1029,8 +1049,14 @@ class TestContext:
         assert "Groups:" not in out
 
     def test_context_no_active_workspace(self, cli):
-        out, _ = cli("context")
-        assert "no active workspace" in out
+        _, err = cli("context", expect_exit=1)
+        assert "no active workspace" in err
+
+    def test_context_no_active_workspace_json(self, cli):
+        _, err = cli("--json", "context", expect_exit=1)
+        data = json.loads(err)
+        assert data["ok"] is False
+        assert data["code"] == "missing_active_workspace"
 
 
 # ---- JSON output ----
@@ -2082,18 +2108,35 @@ class TestTaskMetaCommands:
         out, _ = self.cli("--json", "task", "meta", "set", "1", "branch", "feat/kv")
         data = json.loads(out)
         assert data["ok"] is True
-        assert data["data"]["metadata"]["branch"] == "feat/kv"
+        assert data["data"] == {"key": "branch", "value": "feat/kv"}
 
     def test_meta_ls_json(self):
         self.cli("task", "meta", "set", "1", "k", "v")
+        self.cli("task", "meta", "set", "1", "a", "b")
         out, _ = self.cli("--json", "task", "meta", "ls", "1")
         data = json.loads(out)
         assert data["ok"] is True
-        assert data["data"] == {"k": "v"}
+        assert data["data"] == [
+            {"key": "a", "value": "b"},
+            {"key": "k", "value": "v"},
+        ]
+
+    def test_meta_ls_json_empty(self):
+        out, _ = self.cli("--json", "task", "meta", "ls", "1")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == []
 
     def test_meta_get_json(self):
         self.cli("task", "meta", "set", "1", "branch", "feat/kv")
         out, _ = self.cli("--json", "task", "meta", "get", "1", "branch")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == {"key": "branch", "value": "feat/kv"}
+
+    def test_meta_del_json(self):
+        self.cli("task", "meta", "set", "1", "branch", "feat/kv")
+        out, _ = self.cli("--json", "task", "meta", "del", "1", "branch")
         data = json.loads(out)
         assert data["ok"] is True
         assert data["data"] == {"key": "branch", "value": "feat/kv"}
@@ -2114,6 +2157,31 @@ class TestTaskMetaCommands:
             stripped = line.lstrip()
             key, sep, rest = stripped.partition(" ")
             assert rest.lstrip() != "", f"no separation between key and value: {line!r}"
+
+    def test_meta_set_nonexistent_task(self):
+        _, err = self.cli("task", "meta", "set", "999", "branch", "feat/kv", expect_exit=1)
+        assert "not found" in err
+
+    def test_meta_key_case_insensitive_roundtrip(self):
+        self.cli("task", "meta", "set", "1", "Branch", "feat/kv")
+        # Stored lowercase — lookups by any case should hit it
+        out, _ = self.cli("task", "meta", "get", "1", "BRANCH")
+        assert "feat/kv" in out
+        out, _ = self.cli("task", "meta", "get", "1", "branch")
+        assert "feat/kv" in out
+
+    def test_meta_key_normalized_in_ls(self):
+        self.cli("task", "meta", "set", "1", "Branch", "feat/kv")
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "branch" in out
+        assert "Branch" not in out
+
+    def test_meta_del_mixed_case(self):
+        self.cli("task", "meta", "set", "1", "Branch", "feat/kv")
+        out, _ = self.cli("task", "meta", "del", "1", "BRANCH")
+        assert "removed branch" in out
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "no metadata" in out
 
     def test_meta_by_title(self):
         self.cli("task", "meta", "set", "My task", "branch", "feat/kv", "--by-title")

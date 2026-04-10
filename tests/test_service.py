@@ -2079,3 +2079,27 @@ class TestTaskMeta:
         sid2 = insert_status(conn, bid2, "todo")
         new_task = service.move_task_to_workspace(conn, tid, bid2, sid2, source="test")
         assert new_task.metadata == {"branch": "feat/kv", "jira": "PROJ-1"}
+
+    def test_set_meta_normalizes_case(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "BRANCH", "feat/kv")
+        task = service.get_task(conn, tid)
+        assert task.metadata == {"branch": "feat/kv"}
+
+    def test_get_meta_case_insensitive(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        assert service.get_task_meta(conn, tid, "Branch") == "feat/kv"
+        assert service.get_task_meta(conn, tid, "BRANCH") == "feat/kv"
+
+    def test_remove_meta_case_insensitive(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        service.remove_task_meta(conn, tid, "BRANCH")
+        assert service.get_task(conn, tid).metadata == {}
+
+    def test_set_meta_overwrites_regardless_of_case(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "Branch", "old")
+        service.set_task_meta(conn, tid, "BRANCH", "new")
+        assert service.get_task(conn, tid).metadata == {"branch": "new"}

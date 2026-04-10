@@ -557,9 +557,8 @@ class TestRefreshWorkspaceReconciliation:
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             assert len(tree.root.children) == 2
-            # Archive ws2 directly in the DB (bypass cascade validation)
-            app.conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (ws2.id,))
-            app.conn.commit()
+            # Archive ws2 via the real cascade path (matches what CLI does)
+            service.cascade_archive_workspace(app.conn, ws2.id, source="test")
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()
@@ -579,9 +578,8 @@ class TestRefreshWorkspaceReconciliation:
         async with app.run_test() as pilot:
             # Make ws2 active
             app._active_workspace_id = ws2.id
-            # Archive ws2
-            app.conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (ws2.id,))
-            app.conn.commit()
+            # Archive ws2 via the real cascade path
+            service.cascade_archive_workspace(app.conn, ws2.id, source="test")
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()

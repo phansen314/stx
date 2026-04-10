@@ -133,7 +133,7 @@ def cmd_task_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path:
         title=args.title,
         status_id=col.id,
         project_id=project_id,
-        description=args.desc,
+        description=(args.desc or "").strip() or None,
         priority=args.priority,
         due_date=due,
         group_id=group_id,
@@ -362,7 +362,8 @@ def cmd_status_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_pa
 
 def cmd_project_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    proj = service.create_project(conn, workspace.id, args.name, description=args.desc)
+    description = (args.desc or "").strip() or None
+    proj = service.create_project(conn, workspace.id, args.name, description=description)
     return Ok(data=proj, text=f"created project '{proj.name}'")
 
 
@@ -469,7 +470,8 @@ def cmd_group_create(conn: sqlite3.Connection, args: argparse.Namespace, db_path
     if args.parent:
         parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
         parent_id = parent.id
-    grp = service.create_group(conn, proj.id, args.title, parent_id=parent_id, description=args.desc)
+    description = (args.desc or "").strip() or None
+    grp = service.create_group(conn, proj.id, args.title, parent_id=parent_id, description=description)
     return Ok(data=grp, text=f"created group '{grp.title}' ({format_group_num(grp.id)})")
 
 
@@ -618,11 +620,7 @@ def cmd_tag_archive(conn: sqlite3.Connection, args: argparse.Namespace, db_path:
 
 
 def cmd_context(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
-    try:
-        workspace = _resolve_workspace(conn, args, db_path)
-    except NoActiveWorkspaceError:
-        msg = "no active workspace — use 'todo workspace create <name>' or 'todo workspace use <name>'"
-        return Ok(data=None, text=msg)
+    workspace = _resolve_workspace(conn, args, db_path)
     ctx = service.get_workspace_context(conn, workspace.id)
     return Ok(data=ctx, text=presenters.format_workspace_context(ctx))
 
@@ -712,32 +710,39 @@ def cmd_task_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     task = service.get_task(conn, task_id)
-    if not task.metadata:
-        return Ok(data=task.metadata, text="no metadata")
-    width = max(len(k) for k in task.metadata) + 2
-    lines = [f"  {k:<{width}}{v}" for k, v in sorted(task.metadata.items())]
-    return Ok(data=task.metadata, text="\n".join(lines))
+    records = [{"key": k, "value": v} for k, v in sorted(task.metadata.items())]
+    if not records:
+        return Ok(data=records, text="no metadata")
+    width = max(len(r["key"]) for r in records) + 2
+    lines = [f"  {r['key']:<{width}}{r['value']}" for r in records]
+    return Ok(data=records, text="\n".join(lines))
 
 
 def cmd_task_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     value = service.get_task_meta(conn, task_id, args.key)
-    return Ok(data={"key": args.key, "value": value}, text=value)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
 
 
 def cmd_task_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
-    task = service.set_task_meta(conn, task_id, args.key, args.value)
-    return Ok(data=task, text=f"set {args.key}={args.value} on {format_task_num(task_id)}")
+    service.set_task_meta(conn, task_id, args.key, args.value)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on {format_task_num(task_id)}")
 
 
 def cmd_task_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
-    task = service.remove_task_meta(conn, task_id, args.key)
-    return Ok(data=task, text=f"removed {args.key} from {format_task_num(task_id)}")
+    # Capture the value before deletion so we can include it in the response.
+    # get_task_meta raises LookupError for missing keys, same as remove_task_meta.
+    removed = service.get_task_meta(conn, task_id, args.key)
+    service.remove_task_meta(conn, task_id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from {format_task_num(task_id)}")
 
 
 def cmd_tui(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
