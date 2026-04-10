@@ -26,6 +26,7 @@ def make_project_detail(**overrides) -> ProjectDetail:
         archived=False,
         created_at=0,
         tasks=(),
+        metadata={},
     )
     defaults.update(overrides)
     return ProjectDetail(**defaults)
@@ -45,6 +46,7 @@ def make_group_detail(**overrides) -> GroupDetail:
         tasks=(),
         children=(),
         parent=None,
+        metadata={},
     )
     defaults.update(overrides)
     return GroupDetail(**defaults)
@@ -56,6 +58,7 @@ def make_workspace(**overrides) -> Workspace:
         name="Dev",
         archived=False,
         created_at=0,
+        metadata={},
     )
     defaults.update(overrides)
     return Workspace(**defaults)

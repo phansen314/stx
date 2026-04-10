@@ -16,10 +16,12 @@ from textual.widgets import Header, Footer
 from sticky_notes.active_workspace import get_active_workspace_id
 from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
-from sticky_notes.service import create_group, create_project, create_task, get_group_detail, get_project_detail, get_task_detail, get_workspace, list_workspaces, update_group, update_project, update_task, update_workspace
+from sticky_notes.formatting import format_task_num
+from sticky_notes.service import create_group, create_project, create_task, get_group, get_group_detail, get_project, get_project_detail, get_task_detail, get_workspace, list_workspaces, replace_group_metadata, replace_project_metadata, replace_task_metadata, replace_workspace_metadata, update_group, update_project, update_task, update_workspace
 from sticky_notes.tui.config import TuiConfig, load_config
+from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
+from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
 
 
@@ -43,6 +45,7 @@ class StickyNotesApp(App):
         Binding("b", "focus_kanban", "Board", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         Binding("e", "edit", "Edit", show=True),
+        Binding("m", "metadata", "Meta", show=True),
         Binding("[", "status_left", "◀ Status", show=False),
         Binding("shift+left", "status_left", show=False),
         Binding("]", "status_right", "Status ▶", show=False),
@@ -266,6 +269,109 @@ class StickyNotesApp(App):
 
     def _on_task_edit_dismiss(self, result: dict | None) -> None:
         self._dismiss_callback(result, lambda: update_task(self.conn, result["task_id"], result["changes"], source="tui"))
+
+    def action_metadata(self) -> None:
+        if self._active_model is None:
+            return
+        if self.active_panel == ActivePanel.TREE:
+            node = self.query_one(WorkspaceTree).cursor_node
+            if node is None:
+                return
+            data = node.data
+            if isinstance(data, Task):
+                self._open_task_metadata(data)
+            elif isinstance(data, Workspace):
+                self._open_workspace_metadata(data)
+            elif isinstance(data, Project):
+                self._open_project_metadata(data)
+            elif isinstance(data, Group):
+                self._open_group_metadata(data)
+        elif self._kanban_last_focused is not None:
+            self._open_task_metadata(self._kanban_last_focused.task_data)
+
+    def _open_task_metadata(self, task: Task) -> None:
+        detail = get_task_detail(self.conn, task.id)
+        title = escape_markup(detail.title)
+        self.push_screen(
+            MetadataModal(
+                display_title=f"Metadata: {format_task_num(detail.id)} \u2014 {title}",
+                metadata=detail.metadata,
+                result_key="task_id",
+                entity_id=detail.id,
+            ),
+            callback=self._on_task_metadata_dismiss,
+        )
+
+    def _open_workspace_metadata(self, workspace: Workspace) -> None:
+        fresh = get_workspace(self.conn, workspace.id)
+        name = escape_markup(fresh.name)
+        self.push_screen(
+            MetadataModal(
+                display_title=f"Metadata: workspace \u2014 {name}",
+                metadata=fresh.metadata,
+                result_key="workspace_id",
+                entity_id=fresh.id,
+            ),
+            callback=self._on_workspace_metadata_dismiss,
+        )
+
+    def _open_project_metadata(self, project: Project) -> None:
+        fresh = get_project(self.conn, project.id)
+        name = escape_markup(fresh.name)
+        self.push_screen(
+            MetadataModal(
+                display_title=f"Metadata: project \u2014 {name}",
+                metadata=fresh.metadata,
+                result_key="project_id",
+                entity_id=fresh.id,
+            ),
+            callback=self._on_project_metadata_dismiss,
+        )
+
+    def _open_group_metadata(self, group: Group) -> None:
+        fresh = get_group(self.conn, group.id)
+        title = escape_markup(fresh.title)
+        self.push_screen(
+            MetadataModal(
+                display_title=f"Metadata: group \u2014 {title}",
+                metadata=fresh.metadata,
+                result_key="group_id",
+                entity_id=fresh.id,
+            ),
+            callback=self._on_group_metadata_dismiss,
+        )
+
+    def _on_task_metadata_dismiss(self, result: dict | None) -> None:
+        self._dismiss_callback(
+            result,
+            lambda: replace_task_metadata(
+                self.conn, result["task_id"], result["metadata"], source="tui",
+            ),
+        )
+
+    def _on_workspace_metadata_dismiss(self, result: dict | None) -> None:
+        self._dismiss_callback(
+            result,
+            lambda: replace_workspace_metadata(
+                self.conn, result["workspace_id"], result["metadata"], source="tui",
+            ),
+        )
+
+    def _on_project_metadata_dismiss(self, result: dict | None) -> None:
+        self._dismiss_callback(
+            result,
+            lambda: replace_project_metadata(
+                self.conn, result["project_id"], result["metadata"], source="tui",
+            ),
+        )
+
+    def _on_group_metadata_dismiss(self, result: dict | None) -> None:
+        self._dismiss_callback(
+            result,
+            lambda: replace_group_metadata(
+                self.conn, result["group_id"], result["metadata"], source="tui",
+            ),
+        )
 
     def _edit_project(self, project: Project) -> None:
         detail = get_project_detail(self.conn, project.id)

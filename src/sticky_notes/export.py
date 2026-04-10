@@ -184,15 +184,60 @@ def _render_descriptions_section(
     return lines
 
 
-def _render_metadata_section(
+def _render_task_metadata_section(
     tasks: tuple,
 ) -> list[str]:
     has_meta = [(t.id, t.title, t.metadata) for t in tasks if t.metadata]
     if not has_meta:
         return []
-    lines = ["### Metadata", ""]
+    lines = ["### Task Metadata", ""]
     for tid, title, meta in has_meta:
         lines.append(f"#### {format_task_num(tid)}: {_md_escape(title)}")
+        lines.append("")
+        for k, v in sorted(meta.items()):
+            lines.append(f"- **{_md_escape(k)}**: {_md_escape(v)}")
+        lines.append("")
+    return lines
+
+
+def _render_workspace_metadata_block(workspace) -> list[str]:
+    if not workspace.metadata:
+        return []
+    lines = ["**Metadata:**", ""]
+    for k, v in sorted(workspace.metadata.items()):
+        lines.append(f"- **{_md_escape(k)}**: {_md_escape(v)}")
+    lines.append("")
+    return lines
+
+
+def _render_project_metadata_section(projects: tuple) -> list[str]:
+    has_meta = [(p.name, p.metadata) for p in projects if p.metadata]
+    if not has_meta:
+        return []
+    lines = ["### Project Metadata", ""]
+    for name, meta in has_meta:
+        lines.append(f"#### {_md_escape(name)}")
+        lines.append("")
+        for k, v in sorted(meta.items()):
+            lines.append(f"- **{_md_escape(k)}**: {_md_escape(v)}")
+        lines.append("")
+    return lines
+
+
+def _render_group_metadata_section(
+    conn: sqlite3.Connection,
+    projects: tuple,
+) -> list[str]:
+    rows: list[tuple[str, str, dict[str, str]]] = []
+    for p in projects:
+        for g in service.list_groups(conn, p.id):
+            if g.metadata:
+                rows.append((p.name, g.title, g.metadata))
+    if not rows:
+        return []
+    lines = ["### Group Metadata", ""]
+    for proj_name, title, meta in rows:
+        lines.append(f"#### {_md_escape(proj_name)} > {_md_escape(title)}")
         lines.append("")
         for k, v in sorted(meta.items()):
             lines.append(f"- **{_md_escape(k)}**: {_md_escape(v)}")
@@ -299,6 +344,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         bid = workspace.id
         lines.append(f"## Workspace: {_md_escape(workspace.name)}")
         lines.append("")
+        lines += _render_workspace_metadata_block(workspace)
 
         statuses = service.list_statuses(conn, bid)
         tasks = service.list_tasks(conn, bid)
@@ -319,7 +365,9 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_groups_section(conn, projects)
         lines += _render_tasks_section(statuses, tasks_by_status, proj_map, tag_map, task_tag_map)
         lines += _render_descriptions_section(tasks)
-        lines += _render_metadata_section(tasks)
+        lines += _render_project_metadata_section(projects)
+        lines += _render_group_metadata_section(conn, projects)
+        lines += _render_task_metadata_section(tasks)
 
         workspace_deps = [
             (tid, did)

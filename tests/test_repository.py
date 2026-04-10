@@ -83,10 +83,16 @@ from sticky_notes.repository import (
     archive_group_dependency,
     remove_tag_from_task,
     copy_task_metadata,
+    remove_group_metadata_key,
+    remove_project_metadata_key,
     remove_task_metadata_key,
+    remove_workspace_metadata_key,
     reparent_children,
+    set_group_metadata_key,
+    set_project_metadata_key,
     set_task_group_id,
     set_task_metadata_key,
+    set_workspace_metadata_key,
     unassign_tasks_from_group,
     update_workspace,
     update_status,
@@ -1592,3 +1598,63 @@ class TestTaskMetadata:
         src = self._setup(conn)
         with pytest.raises(LookupError, match="task 999 not found"):
             copy_task_metadata(conn, src, 999)
+
+
+class TestEntityMetadata:
+    """Repository-layer metadata set/remove for workspaces, projects, and groups.
+
+    Exercises the generic _set_metadata_key / _remove_metadata_key helpers via
+    each public per-entity wrapper. Service-layer case normalization and
+    validation is covered in test_service.py.
+    """
+
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
+        w = insert_workspace(conn, NewWorkspace(name="w"))
+        p = insert_project(conn, NewProject(workspace_id=w.id, name="p"))
+        g = insert_group(conn, NewGroup(workspace_id=w.id, project_id=p.id, title="g"))
+        return w.id, p.id, g.id
+
+    def test_workspace_set_remove(self, conn: sqlite3.Connection) -> None:
+        wid, _, _ = self._setup(conn)
+        set_workspace_metadata_key(conn, wid, "env", "prod")
+        import json as _json
+        row = conn.execute("SELECT metadata FROM workspaces WHERE id = ?", (wid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {"env": "prod"}
+        remove_workspace_metadata_key(conn, wid, "env")
+        row = conn.execute("SELECT metadata FROM workspaces WHERE id = ?", (wid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {}
+
+    def test_project_set_remove(self, conn: sqlite3.Connection) -> None:
+        _, pid, _ = self._setup(conn)
+        set_project_metadata_key(conn, pid, "owner", "alice")
+        import json as _json
+        row = conn.execute("SELECT metadata FROM projects WHERE id = ?", (pid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {"owner": "alice"}
+        remove_project_metadata_key(conn, pid, "owner")
+        row = conn.execute("SELECT metadata FROM projects WHERE id = ?", (pid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {}
+
+    def test_group_set_remove(self, conn: sqlite3.Connection) -> None:
+        _, _, gid = self._setup(conn)
+        set_group_metadata_key(conn, gid, "sprint", "3")
+        import json as _json
+        row = conn.execute("SELECT metadata FROM groups WHERE id = ?", (gid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {"sprint": "3"}
+        remove_group_metadata_key(conn, gid, "sprint")
+        row = conn.execute("SELECT metadata FROM groups WHERE id = ?", (gid,)).fetchone()
+        assert _json.loads(row["metadata"]) == {}
+
+    def test_workspace_nonexistent_raises(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError, match="workspace 999 not found"):
+            set_workspace_metadata_key(conn, 999, "k", "v")
+
+    def test_project_nonexistent_raises(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError, match="project 999 not found"):
+            set_project_metadata_key(conn, 999, "k", "v")
+
+    def test_group_nonexistent_raises(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError, match="group 999 not found"):
+            set_group_metadata_key(conn, 999, "k", "v")

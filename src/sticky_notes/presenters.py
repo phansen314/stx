@@ -66,6 +66,10 @@ def format_project_detail(detail: ProjectDetail) -> str:
     lines = [f"{detail.name}"]
     if detail.description:
         lines.append(f"  {detail.description}")
+    if detail.metadata:
+        lines.append("  Metadata:")
+        for k, v in sorted(detail.metadata.items()):
+            lines.append(f"    {k}: {v}")
     lines.append(f"  Tasks: {len(detail.tasks)}")
     for t in detail.tasks:
         lines.append(f"    {format_task_num(t.id)}  {t.title}")
@@ -136,6 +140,10 @@ def format_workspace_list_view(view: WorkspaceListView) -> str:
 
 def format_workspace_context(ctx: WorkspaceContext) -> str:
     lines: list[str] = [f"== {ctx.view.workspace.name} =="]
+    if ctx.view.workspace.metadata:
+        lines.append("Metadata:")
+        for k, v in sorted(ctx.view.workspace.metadata.items()):
+            lines.append(f"  {k}: {v}")
     view_str = format_workspace_list_view(ctx.view)
     if view_str:
         lines.append(view_str)
@@ -229,6 +237,10 @@ def format_group_detail(
     lines.append(f"  Project:     {project_name}")
     lines.append(f"  Path:        {' > '.join(ancestry_titles)}")
     lines.append(f"  Tasks:       {len(detail.tasks)}")
+    if detail.metadata:
+        lines.append("  Metadata:")
+        for k, v in sorted(detail.metadata.items()):
+            lines.append(f"    {k}: {v}")
     if detail.children:
         child_names = ", ".join(c.title for c in detail.children)
         lines.append(f"  Sub-groups: {child_names}")

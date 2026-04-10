@@ -31,7 +31,7 @@ from sticky_notes.service_models import (
 
 
 def _workspace(id: int = 1, name: str = "B", archived: bool = False) -> Workspace:
-    return Workspace(id=id, name=name, archived=archived, created_at=0)
+    return Workspace(id=id, name=name, archived=archived, created_at=0, metadata={})
 
 
 def _status(id: int, name: str, archived: bool = False) -> Status:
@@ -40,7 +40,7 @@ def _status(id: int, name: str, archived: bool = False) -> Status:
 
 def _project(id: int, name: str, description: str | None = None) -> Project:
     return Project(
-        id=id, workspace_id=1, name=name, description=description, archived=False, created_at=0,
+        id=id, workspace_id=1, name=name, description=description, archived=False, created_at=0, metadata={},
     )
 
 
@@ -175,7 +175,7 @@ class TestFormatProjectDetail:
     def test_empty_tasks(self):
         detail = ProjectDetail(
             id=1, workspace_id=1, name="P", description=None,
-            archived=False, created_at=0, tasks=(),
+            archived=False, created_at=0, tasks=(), metadata={},
         )
         out = presenters.format_project_detail(detail)
         assert "P" in out
@@ -185,7 +185,7 @@ class TestFormatProjectDetail:
         detail = ProjectDetail(
             id=1, workspace_id=1, name="P", description="desc",
             archived=False, created_at=0,
-            tasks=(_task(5, "work"),),
+            tasks=(_task(5, "work"),), metadata={},
         )
         out = presenters.format_project_detail(detail)
         assert "desc" in out
@@ -237,7 +237,7 @@ class TestFormatTaskDetail:
         d = self._detail(
             project=_project(5, "proj"),
             project_id=5,
-            group=Group(id=3, workspace_id=1, project_id=5, title="g", description=None, parent_id=None, position=0, archived=False, created_at=0),
+            group=Group(id=3, workspace_id=1, project_id=5, title="g", description=None, parent_id=None, position=0, archived=False, created_at=0, metadata={}),
             tags=(_tag(1, "bug"), _tag(2, "urgent")),
             description="do the thing",
             due_date=1_000_000,
@@ -317,7 +317,7 @@ class TestFormatWorkspaceContext:
 
     def _ref(self, id: int, proj_id: int, title: str) -> GroupRef:
         return GroupRef(id=id, workspace_id=1, project_id=proj_id, title=title, description=None, parent_id=None,
-                        position=0, archived=False, created_at=0)
+                        position=0, archived=False, created_at=0, metadata={})
 
     def test_workspace_header(self):
         out = presenters.format_workspace_context(self._ctx(name="work"))
@@ -355,7 +355,7 @@ class TestFormatGroupList:
     def _ref(self, id: int, title: str, *, archived: bool = False, task_count: int = 0) -> GroupRef:
         return GroupRef(
             id=id, workspace_id=1, project_id=1, title=title, description=None, parent_id=None, position=0,
-            archived=archived, created_at=0,
+            archived=archived, created_at=0, metadata={},
             task_ids=tuple(range(task_count)), child_ids=(),
         )
 
@@ -395,7 +395,7 @@ class TestFormatGroupTrees:
     def _node(self, id: int, title: str, children=()) -> GroupTreeNode:
         ref = GroupRef(
             id=id, workspace_id=1, project_id=1, title=title, description=None, parent_id=None, position=0,
-            archived=False, created_at=0, task_ids=(), child_ids=(),
+            archived=False, created_at=0, metadata={}, task_ids=(), child_ids=(),
         )
         return GroupTreeNode(group=ref, children=children)
 
@@ -448,7 +448,7 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1, workspace_id=1, project_id=1, title="G", description=None, parent_id=None, position=0,
             archived=False, created_at=0,
-            tasks=(), children=(), parent=None,
+            tasks=(), children=(), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         assert "Group: G (group-0001)" in out
@@ -460,7 +460,7 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1, workspace_id=1, project_id=1, title="G", description="Important group", parent_id=None, position=0,
             archived=False, created_at=0,
-            tasks=(), children=(), parent=None,
+            tasks=(), children=(), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         assert "Description: Important group" in out
@@ -469,7 +469,7 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1, workspace_id=1, project_id=1, title="G", description=None, parent_id=None, position=0,
             archived=False, created_at=0,
-            tasks=(), children=(), parent=None,
+            tasks=(), children=(), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         lines = out.splitlines()
@@ -477,12 +477,12 @@ class TestFormatGroupDetail:
         assert lines[1].startswith("  Project:")
 
     def test_with_children_and_tasks(self):
-        child = Group(id=2, workspace_id=1, project_id=1, title="ChildA", description=None, parent_id=1, position=0, archived=False, created_at=0)
+        child = Group(id=2, workspace_id=1, project_id=1, title="ChildA", description=None, parent_id=1, position=0, archived=False, created_at=0, metadata={})
         d = GroupDetail(
             id=1, workspace_id=1, project_id=1, title="Root", description=None, parent_id=None, position=0,
             archived=False, created_at=0,
             tasks=(_task(10, "work", priority=3, due_date=1_000_000),),
-            children=(child,), parent=None,
+            children=(child,), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("Root",))
         assert "Sub-groups: ChildA" in out

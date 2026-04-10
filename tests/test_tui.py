@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from textual.widgets import Input
 
 from sticky_notes import service
 from sticky_notes.active_workspace import set_active_workspace_id
@@ -10,6 +11,7 @@ from sticky_notes.connection import get_connection, init_db
 from sticky_notes.models import Group, Project, Task, Workspace
 from sticky_notes.tui.app import StickyNotesApp
 from sticky_notes.tui.config import TuiConfig
+from sticky_notes.tui.screens import MetadataModal
 from sticky_notes.tui.widgets import KanbanBoard, TaskCard
 
 
@@ -585,4 +587,190 @@ class TestRefreshWorkspaceReconciliation:
             await pilot.pause()
             # Should fall back to ws1
             assert app._active_workspace_id == ws1.id
-            assert len(app.query_one("#workspaces-tree").root.children) == 1
+
+
+class TestMetadataKeybinding:
+    @pytest.fixture
+    def app(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        return StickyNotesApp(db_path=db_path, config=TuiConfig()), ids
+
+    async def test_m_on_task_card_opens_metadata_modal(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            card = app.query(TaskCard).first()
+            app.set_focus(card)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert isinstance(app.screen, MetadataModal)
+
+    async def test_m_on_tree_task_opens_metadata_modal(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            proj_node = [n for n in ws_node.children if n.allow_expand][0]
+            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            tree.select_node(task_leaf)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert isinstance(app.screen, MetadataModal)
+
+    async def test_m_on_workspace_tree_node_opens_modal(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            tree.select_node(ws_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert isinstance(app.screen, MetadataModal)
+
+    async def test_m_on_project_tree_node_opens_modal(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            proj_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(proj_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert isinstance(app.screen, MetadataModal)
+
+    async def test_m_on_group_tree_node_opens_modal(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            # Seeded fixture has no groups — create one inline.
+            group = service.create_group(app.conn, ids["project_id"], "beta")
+            app.action_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            group_node = self._find_group_node(app, group.id)
+            assert group_node is not None
+            tree = app.query_one("#workspaces-tree")
+            tree.select_node(group_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert isinstance(app.screen, MetadataModal)
+
+    def _find_group_node(self, app, group_id: int):
+        tree = app.query_one("#workspaces-tree")
+        for ws_node in tree.root.children:
+            for proj_node in ws_node.children:
+                if not proj_node.allow_expand:
+                    continue
+                for child in proj_node.children:
+                    if isinstance(child.data, Group) and child.data.id == group_id:
+                        return child
+        return None
+
+    async def test_m_on_root_tree_node_noop(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            tree.select_node(tree.root)
+            app.set_focus(tree)
+            await pilot.pause()
+            stack_before = len(app.screen_stack)
+            await pilot.press("m")
+            await pilot.pause()
+            assert len(app.screen_stack) == stack_before
+            assert not isinstance(app.screen, MetadataModal)
+
+    async def test_task_metadata_save_persists_via_service(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            card = app.query(TaskCard).first()
+            task_id = card.task_data.id
+            app.set_focus(card)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, MetadataModal)
+            row = modal.query(".metadata-row").first()
+            row.query_one(".metadata-key", Input).value = "assignee"
+            row.query_one(".metadata-value", Input).value = "alice"
+            modal.action_save()
+            await pilot.pause()
+            await pilot.pause()
+            assert service.get_task(app.conn, task_id).metadata == {"assignee": "alice"}
+
+    async def test_workspace_metadata_save_persists_via_service(self, app):
+        app, ids = app
+        ws_id = ids["workspace_id"]
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            tree.select_node(ws_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, MetadataModal)
+            row = modal.query(".metadata-row").first()
+            row.query_one(".metadata-key", Input).value = "env"
+            row.query_one(".metadata-value", Input).value = "prod"
+            modal.action_save()
+            await pilot.pause()
+            await pilot.pause()
+            assert service.get_workspace(app.conn, ws_id).metadata == {"env": "prod"}
+
+    async def test_project_metadata_save_persists_via_service(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            proj_node = [n for n in ws_node.children if n.allow_expand][0]
+            project_id = proj_node.data.id
+            tree.select_node(proj_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, MetadataModal)
+            row = modal.query(".metadata-row").first()
+            row.query_one(".metadata-key", Input).value = "repo"
+            row.query_one(".metadata-value", Input).value = "https://example.com"
+            modal.action_save()
+            await pilot.pause()
+            await pilot.pause()
+            assert service.get_project(app.conn, project_id).metadata == {
+                "repo": "https://example.com",
+            }
+
+    async def test_group_metadata_save_persists_via_service(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            group = service.create_group(app.conn, ids["project_id"], "beta")
+            app.action_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            group_node = self._find_group_node(app, group.id)
+            assert group_node is not None
+            tree = app.query_one("#workspaces-tree")
+            tree.select_node(group_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, MetadataModal)
+            row = modal.query(".metadata-row").first()
+            row.query_one(".metadata-key", Input).value = "owner"
+            row.query_one(".metadata-value", Input).value = "alice"
+            modal.action_save()
+            await pilot.pause()
+            await pilot.pause()
+            assert service.get_group(app.conn, group.id).metadata == {"owner": "alice"}

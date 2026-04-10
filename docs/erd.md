@@ -23,6 +23,7 @@ erDiagram
     workspaces {
         INTEGER id PK
         TEXT name
+        TEXT metadata
         INTEGER archived
         INTEGER created_at
     }
@@ -32,6 +33,7 @@ erDiagram
         INTEGER workspace_id FK
         TEXT name
         TEXT description
+        TEXT metadata
         INTEGER archived
         INTEGER created_at
     }
@@ -51,6 +53,7 @@ erDiagram
         INTEGER parent_id FK
         TEXT title
         TEXT description
+        TEXT metadata
         INTEGER position
         INTEGER archived
         INTEGER created_at

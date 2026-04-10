@@ -706,16 +706,29 @@ def cmd_info(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
 # ---- TUI ----
 
 
+# ---- Metadata helpers (shared across entity types) ----
+
+
+def _meta_records(metadata: dict[str, str]) -> list[dict[str, str]]:
+    return [{"key": k, "value": v} for k, v in sorted(metadata.items())]
+
+
+def _format_meta_records(records: list[dict[str, str]]) -> str:
+    if not records:
+        return "no metadata"
+    width = max(len(r["key"]) for r in records) + 2
+    return "\n".join(f"  {r['key']:<{width}}{r['value']}" for r in records)
+
+
+# ---- Task metadata ----
+
+
 def cmd_task_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     task = service.get_task(conn, task_id)
-    records = [{"key": k, "value": v} for k, v in sorted(task.metadata.items())]
-    if not records:
-        return Ok(data=records, text="no metadata")
-    width = max(len(r["key"]) for r in records) + 2
-    lines = [f"  {r['key']:<{width}}{r['value']}" for r in records]
-    return Ok(data=records, text="\n".join(lines))
+    records = _meta_records(task.metadata)
+    return Ok(data=records, text=_format_meta_records(records))
 
 
 def cmd_task_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -731,7 +744,7 @@ def cmd_task_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     service.set_task_meta(conn, task_id, args.key, args.value)
     key = args.key.lower()
-    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on {format_task_num(task_id)}")
+    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on task {format_task_num(task_id)}")
 
 
 def cmd_task_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -742,7 +755,108 @@ def cmd_task_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_pat
     removed = service.get_task_meta(conn, task_id, args.key)
     service.remove_task_meta(conn, task_id, args.key)
     key = args.key.lower()
-    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from {format_task_num(task_id)}")
+    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from task {format_task_num(task_id)}")
+
+
+# ---- Workspace metadata ----
+
+
+def cmd_workspace_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    records = _meta_records(workspace.metadata)
+    return Ok(data=records, text=_format_meta_records(records))
+
+
+def cmd_workspace_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    value = service.get_workspace_meta(conn, workspace.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
+
+
+def cmd_workspace_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    service.set_workspace_meta(conn, workspace.id, args.key, args.value)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on workspace '{workspace.name}'")
+
+
+def cmd_workspace_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    removed = service.get_workspace_meta(conn, workspace.id, args.key)
+    service.remove_workspace_meta(conn, workspace.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from workspace '{workspace.name}'")
+
+
+# ---- Project metadata ----
+
+
+def cmd_project_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    project = service.get_project_by_name(conn, workspace.id, args.name)
+    records = _meta_records(project.metadata)
+    return Ok(data=records, text=_format_meta_records(records))
+
+
+def cmd_project_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    project = service.get_project_by_name(conn, workspace.id, args.name)
+    value = service.get_project_meta(conn, project.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
+
+
+def cmd_project_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    project = service.get_project_by_name(conn, workspace.id, args.name)
+    service.set_project_meta(conn, project.id, args.key, args.value)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on project '{project.name}'")
+
+
+def cmd_project_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    project = service.get_project_by_name(conn, workspace.id, args.name)
+    removed = service.get_project_meta(conn, project.id, args.key)
+    service.remove_project_meta(conn, project.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from project '{project.name}'")
+
+
+# ---- Group metadata ----
+
+
+def cmd_group_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    records = _meta_records(grp.metadata)
+    return Ok(data=records, text=_format_meta_records(records))
+
+
+def cmd_group_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    value = service.get_group_meta(conn, grp.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
+
+
+def cmd_group_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    service.set_group_meta(conn, grp.id, args.key, args.value)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": args.value}, text=f"set {key}={args.value} on group '{grp.title}'")
+
+
+def cmd_group_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, db_path)
+    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    removed = service.get_group_meta(conn, grp.id, args.key)
+    service.remove_group_meta(conn, grp.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": removed}, text=f"removed {key} from group '{grp.title}'")
 
 
 def cmd_tui(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -774,6 +888,10 @@ HANDLERS: dict[str, CommandHandler] = {
     "workspace_use": cmd_workspace_use,
     "workspace_rename": cmd_workspace_rename,
     "workspace_archive": cmd_workspace_archive,
+    "workspace_meta_ls": cmd_workspace_meta_ls,
+    "workspace_meta_get": cmd_workspace_meta_get,
+    "workspace_meta_set": cmd_workspace_meta_set,
+    "workspace_meta_del": cmd_workspace_meta_del,
     "status_create": cmd_status_create,
     "status_ls": cmd_status_ls,
     "status_rename": cmd_status_rename,
@@ -783,6 +901,10 @@ HANDLERS: dict[str, CommandHandler] = {
     "project_show": cmd_project_show,
     "project_edit": cmd_project_edit,
     "project_archive": cmd_project_archive,
+    "project_meta_ls": cmd_project_meta_ls,
+    "project_meta_get": cmd_project_meta_get,
+    "project_meta_set": cmd_project_meta_set,
+    "project_meta_del": cmd_project_meta_del,
     "dep_create": cmd_dep_create,
     "dep_archive": cmd_dep_archive,
     "group_dep_create": cmd_group_dep_create,
@@ -796,6 +918,10 @@ HANDLERS: dict[str, CommandHandler] = {
     "group_mv": cmd_group_mv,
     "group_assign": cmd_group_assign,
     "group_unassign": cmd_group_unassign,
+    "group_meta_ls": cmd_group_meta_ls,
+    "group_meta_get": cmd_group_meta_get,
+    "group_meta_set": cmd_group_meta_set,
+    "group_meta_del": cmd_group_meta_del,
     "tag_create": cmd_tag_create,
     "tag_ls": cmd_tag_ls,
     "tag_archive": cmd_tag_archive,
@@ -946,6 +1072,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_warc.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_warc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
+    p_wmeta = workspace_sub.add_parser("meta", help="workspace metadata key/value management")
+    wmeta_sub = p_wmeta.add_subparsers()
+
+    p_wmeta_ls = wmeta_sub.add_parser("ls", help="list all metadata")
+    p_wmeta_ls.set_defaults(command="workspace_meta_ls")
+
+    p_wmeta_get = wmeta_sub.add_parser("get", help="get a metadata value")
+    p_wmeta_get.set_defaults(command="workspace_meta_get")
+    p_wmeta_get.add_argument("key")
+
+    p_wmeta_set = wmeta_sub.add_parser("set", help="set a metadata key/value")
+    p_wmeta_set.set_defaults(command="workspace_meta_set")
+    p_wmeta_set.add_argument("key")
+    p_wmeta_set.add_argument("value")
+
+    p_wmeta_del = wmeta_sub.add_parser("del", help="delete a metadata key")
+    p_wmeta_del.set_defaults(command="workspace_meta_del")
+    p_wmeta_del.add_argument("key")
+
     # ---- Status subcommands ----
 
     p_status = sub.add_parser("status", help="status management")
@@ -998,6 +1143,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_parc.add_argument("name")
     p_parc.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_parc.add_argument("--dry-run", action="store_true", help="preview without executing")
+
+    p_pmeta = proj_sub.add_parser("meta", help="project metadata key/value management")
+    pmeta_sub = p_pmeta.add_subparsers()
+
+    p_pmeta_ls = pmeta_sub.add_parser("ls", help="list all metadata")
+    p_pmeta_ls.set_defaults(command="project_meta_ls")
+    p_pmeta_ls.add_argument("name", help="project name")
+
+    p_pmeta_get = pmeta_sub.add_parser("get", help="get a metadata value")
+    p_pmeta_get.set_defaults(command="project_meta_get")
+    p_pmeta_get.add_argument("name", help="project name")
+    p_pmeta_get.add_argument("key")
+
+    p_pmeta_set = pmeta_sub.add_parser("set", help="set a metadata key/value")
+    p_pmeta_set.set_defaults(command="project_meta_set")
+    p_pmeta_set.add_argument("name", help="project name")
+    p_pmeta_set.add_argument("key")
+    p_pmeta_set.add_argument("value")
+
+    p_pmeta_del = pmeta_sub.add_parser("del", help="delete a metadata key")
+    p_pmeta_del.set_defaults(command="project_meta_del")
+    p_pmeta_del.add_argument("name", help="project name")
+    p_pmeta_del.add_argument("key")
 
     # ---- Dependency subcommands ----
 
@@ -1092,6 +1260,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_gun.set_defaults(command="group_unassign")
     p_gun.add_argument("task", help="task number or title")
     p_gun.add_argument("--by-title", action="store_true", help="resolve task by title string")
+
+    p_gmeta = grp_sub.add_parser("meta", help="group metadata key/value management")
+    gmeta_sub = p_gmeta.add_subparsers()
+
+    p_gmeta_ls = gmeta_sub.add_parser("ls", help="list all metadata")
+    p_gmeta_ls.set_defaults(command="group_meta_ls")
+    p_gmeta_ls.add_argument("title", help="group title")
+    p_gmeta_ls.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gmeta_get = gmeta_sub.add_parser("get", help="get a metadata value")
+    p_gmeta_get.set_defaults(command="group_meta_get")
+    p_gmeta_get.add_argument("title", help="group title")
+    p_gmeta_get.add_argument("key")
+    p_gmeta_get.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gmeta_set = gmeta_sub.add_parser("set", help="set a metadata key/value")
+    p_gmeta_set.set_defaults(command="group_meta_set")
+    p_gmeta_set.add_argument("title", help="group title")
+    p_gmeta_set.add_argument("key")
+    p_gmeta_set.add_argument("value")
+    p_gmeta_set.add_argument("--project", "-p", default=None, help="disambiguate by project")
+
+    p_gmeta_del = gmeta_sub.add_parser("del", help="delete a metadata key")
+    p_gmeta_del.set_defaults(command="group_meta_del")
+    p_gmeta_del.add_argument("title", help="group title")
+    p_gmeta_del.add_argument("key")
+    p_gmeta_del.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     # ---- Tag subcommands ----
 

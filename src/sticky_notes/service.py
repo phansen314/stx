@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -833,7 +835,11 @@ def move_task_to_workspace(
         return get_task(conn, new.id)
 
 
-# ---- Task metadata ----
+# ---- Entity metadata ----
+#
+# Tasks, workspaces, projects, and groups all carry a JSON key/value metadata
+# blob. Keys are normalized to lowercase on write/read (matching the codebase's
+# COLLATE NOCASE convention, which can't be applied directly to JSON keys).
 
 
 _META_KEY_RE = re.compile(r"^[a-z0-9_.-]+$")
@@ -855,52 +861,265 @@ def _normalize_meta_key(key: str) -> str:
     return normalized
 
 
-def get_task_meta(
+def _get_entity_meta(
     conn: sqlite3.Connection,
-    task_id: int,
+    entity_id: int,
     key: str,
+    *,
+    fetcher: Callable[[sqlite3.Connection, int], Any],
+    entity_name: str,
 ) -> str:
-    """Get a metadata value by key.
-
-    Keys are normalized to lowercase before lookup. Raises ``ValueError`` if
-    the key has an invalid shape, ``LookupError`` if the task doesn't exist
-    or the key isn't present.
+    """Generic entity-metadata read. `fetcher` must return an object whose
+    `.metadata` attribute is a dict of lowercase keys to values. Raises
+    ``ValueError`` for invalid key shape, ``LookupError`` if the entity is
+    missing or the key isn't present.
     """
     normalized = _normalize_meta_key(key)
-    task = get_task(conn, task_id)
-    if normalized not in task.metadata:
-        raise LookupError(f"metadata key {key!r} not found on task {task_id}")
-    return task.metadata[normalized]
+    entity = fetcher(conn, entity_id)
+    if normalized not in entity.metadata:
+        raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
+    return entity.metadata[normalized]
 
 
-def set_task_meta(
+def _set_entity_meta(
     conn: sqlite3.Connection,
-    task_id: int,
+    entity_id: int,
     key: str,
     value: str,
-) -> Task:
-    """Set a metadata key on a task. Key is normalized to lowercase."""
+    *,
+    setter: Callable[[sqlite3.Connection, int, str, str], None],
+    fetcher: Callable[[sqlite3.Connection, int], Any],
+) -> Any:
+    """Generic entity-metadata write. Validates the key and value length,
+    then persists via `setter` and returns the refreshed entity from `fetcher`.
+    """
     normalized = _normalize_meta_key(key)
     if len(value) > _META_VALUE_MAX:
         raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
     with transaction(conn), _friendly_errors():
-        repo.set_task_metadata_key(conn, task_id, normalized, value)
-        return get_task(conn, task_id)
+        setter(conn, entity_id, normalized, value)
+        return fetcher(conn, entity_id)
 
 
-def remove_task_meta(
+def _remove_entity_meta(
     conn: sqlite3.Connection,
-    task_id: int,
+    entity_id: int,
     key: str,
-) -> Task:
-    """Remove a metadata key from a task. Raises LookupError if key doesn't exist."""
+    *,
+    remover: Callable[[sqlite3.Connection, int, str], None],
+    fetcher: Callable[[sqlite3.Connection, int], Any],
+    entity_name: str,
+) -> Any:
+    """Generic entity-metadata removal. Raises ``LookupError`` if the key
+    isn't present on the entity.
+    """
     normalized = _normalize_meta_key(key)
     with transaction(conn), _friendly_errors():
-        old = get_task(conn, task_id)
+        old = fetcher(conn, entity_id)
         if normalized not in old.metadata:
-            raise LookupError(f"metadata key {key!r} not found on task {task_id}")
-        repo.remove_task_metadata_key(conn, task_id, normalized)
-        return get_task(conn, task_id)
+            raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
+        remover(conn, entity_id, normalized)
+        return fetcher(conn, entity_id)
+
+
+def _replace_entity_metadata(
+    conn: sqlite3.Connection,
+    entity_id: int,
+    new_metadata: dict[str, str],
+    *,
+    writer: Callable[[sqlite3.Connection, int, str], None],
+    fetcher: Callable[[sqlite3.Connection, int], Any],
+) -> Any:
+    """Generic bulk-replace for an entity's metadata blob.
+
+    Normalizes every key, rejects duplicates after normalization, enforces
+    the per-value length cap, then writes the whole dict in one UPDATE and
+    returns the refreshed entity. No history is recorded — consistent with
+    per-key set/remove helpers which also bypass history.
+    """
+    normalized: dict[str, str] = {}
+    for raw_key, value in new_metadata.items():
+        key = _normalize_meta_key(raw_key)
+        if key in normalized:
+            raise ValueError(f"duplicate metadata key after normalization: {key!r}")
+        if len(value) > _META_VALUE_MAX:
+            raise ValueError(
+                f"metadata value for key {key!r} must be \u2264 {_META_VALUE_MAX} characters"
+            )
+        normalized[key] = value
+    with transaction(conn), _friendly_errors():
+        fetcher(conn, entity_id)  # existence check
+        writer(conn, entity_id, json.dumps(normalized))
+        return fetcher(conn, entity_id)
+
+
+# ---- Task metadata ----
+
+
+def get_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
+    return _get_entity_meta(conn, task_id, key, fetcher=get_task, entity_name="task")
+
+
+def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) -> Task:
+    return _set_entity_meta(
+        conn, task_id, key, value,
+        setter=repo.set_task_metadata_key,
+        fetcher=get_task,
+    )
+
+
+def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> Task:
+    return _remove_entity_meta(
+        conn, task_id, key,
+        remover=repo.remove_task_metadata_key,
+        fetcher=get_task,
+        entity_name="task",
+    )
+
+
+def replace_task_metadata(
+    conn: sqlite3.Connection,
+    task_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Task:
+    """Atomically replace a task's entire metadata blob. `source` is accepted
+    for signature parity with `update_task`; metadata writes don't record
+    history today (consistent with per-key `set_task_meta` / `remove_task_meta`).
+    """
+    del source  # not tracked today; see docstring
+    return _replace_entity_metadata(
+        conn, task_id, new_metadata,
+        writer=repo.replace_task_metadata,
+        fetcher=get_task,
+    )
+
+
+# ---- Workspace metadata ----
+
+
+def get_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> str:
+    return _get_entity_meta(conn, workspace_id, key, fetcher=get_workspace, entity_name="workspace")
+
+
+def set_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> Workspace:
+    return _set_entity_meta(
+        conn, workspace_id, key, value,
+        setter=repo.set_workspace_metadata_key,
+        fetcher=get_workspace,
+    )
+
+
+def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> Workspace:
+    return _remove_entity_meta(
+        conn, workspace_id, key,
+        remover=repo.remove_workspace_metadata_key,
+        fetcher=get_workspace,
+        entity_name="workspace",
+    )
+
+
+def replace_workspace_metadata(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Workspace:
+    """Atomically replace a workspace's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, workspace_id, new_metadata,
+        writer=repo.replace_workspace_metadata,
+        fetcher=get_workspace,
+    )
+
+
+# ---- Project metadata ----
+
+
+def get_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str:
+    return _get_entity_meta(conn, project_id, key, fetcher=get_project, entity_name="project")
+
+
+def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> Project:
+    return _set_entity_meta(
+        conn, project_id, key, value,
+        setter=repo.set_project_metadata_key,
+        fetcher=get_project,
+    )
+
+
+def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> Project:
+    return _remove_entity_meta(
+        conn, project_id, key,
+        remover=repo.remove_project_metadata_key,
+        fetcher=get_project,
+        entity_name="project",
+    )
+
+
+def replace_project_metadata(
+    conn: sqlite3.Connection,
+    project_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Project:
+    """Atomically replace a project's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, project_id, new_metadata,
+        writer=repo.replace_project_metadata,
+        fetcher=get_project,
+    )
+
+
+# ---- Group metadata ----
+
+
+def get_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
+    return _get_entity_meta(conn, group_id, key, fetcher=get_group, entity_name="group")
+
+
+def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> Group:
+    return _set_entity_meta(
+        conn, group_id, key, value,
+        setter=repo.set_group_metadata_key,
+        fetcher=get_group,
+    )
+
+
+def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> Group:
+    return _remove_entity_meta(
+        conn, group_id, key,
+        remover=repo.remove_group_metadata_key,
+        fetcher=get_group,
+        entity_name="group",
+    )
+
+
+def replace_group_metadata(
+    conn: sqlite3.Connection,
+    group_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Group:
+    """Atomically replace a group's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, group_id, new_metadata,
+        writer=repo.replace_group_metadata,
+        fetcher=get_group,
+    )
 
 
 # ---- Dependency ----

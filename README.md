@@ -52,7 +52,7 @@ Entry point: `todo`
 | `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
 | `todo task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
 | `todo task log <task>` | Show task change history |
-| `todo task meta ls\|get\|set\|del <task> ...` | JSON key/value metadata CRUD (lowercase-normalized keys) |
+| `todo task meta ls\|get\|set\|del <task> ...` | JSON key/value metadata CRUD (lowercase-normalized keys; workspaces, projects, and groups expose the same four verbs) |
 
 Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
 
@@ -75,13 +75,13 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 
 | Command | Description |
 |---------|-------------|
-| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `archive [--force\|--dry-run]` |
+| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
 | `todo status ...` | `create`, `ls`, `rename`, `archive [--reassign-to STATUS\|--force]` |
-| `todo project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc\|--name]`, `archive [--force\|--dry-run]` |
+| `todo project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc\|--name]`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del <name>` |
 | `todo dep ...` | `create`, `archive` |
 | `todo group-dep ...` | `create`, `archive` (group-level dependencies) |
 | `todo tag ...` | `create`, `ls`, `archive [--unassign\|--force\|--dry-run]` |
-| `todo group ...` | `create [--desc]`, `ls [--tree]`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign` |
+| `todo group ...` | `create [--desc]`, `ls [--tree]`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `meta ls\|get\|set\|del <title> [--project]` |
 | `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
 | `todo export` | Export database as JSON (default) or Markdown (`--md`) |
 | `todo info` | Show sticky-notes file locations |
@@ -114,6 +114,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 
 - **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right). Diff-based kanban sync with coalescing refresh.
 - **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing. The task modal has a Group selector that filters by the selected Project and updates reactively.
+- **Metadata editor**: Press `m` on any tree node (task, workspace, project, group) or kanban card to view/edit the entity's JSON key/value metadata blob. Dynamic rows with add/delete, client-side duplicate-key detection, and bulk-replace on save via `service.replace_*_metadata`.
 - **Create modals**: Press `n` to create new tasks, projects, or groups via a resource type selector. The task-create modal exposes the same project-scoped Group selector.
 - **Workspace switching**: Press `s` to switch between workspaces.
 - **Config**: `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds)
@@ -126,6 +127,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 | `b` | Focus kanban board |
 | `r` | Refresh |
 | `e` | Edit selected entity |
+| `m` | Edit metadata on selected entity |
 | `n` | Create new (task/group/project) |
 | `s` | Switch workspace |
 | `[` / `]` | Move task left/right across statuses |
@@ -241,3 +243,7 @@ For manual TUI testing with seeded data:
 python tests/seed.py tmp/test.db
 todo tui --db tmp/test.db
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Release process is documented in [RELEASING.md](RELEASING.md).

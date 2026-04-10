@@ -435,7 +435,7 @@ class TestExportMetadata:
                 (tid,),
             )
         md = export_markdown(conn)
-        assert "### Metadata" in md
+        assert "### Task Metadata" in md
         assert "**branch**" in md
         assert "feat/kv" in md
 
@@ -445,4 +445,64 @@ class TestExportMetadata:
             col = insert_status(conn, bid, "Todo")
             insert_task(conn, bid, "T1", col)
         md = export_markdown(conn)
-        assert "### Metadata" not in md
+        assert "### Task Metadata" not in md
+        assert "### Project Metadata" not in md
+        assert "### Group Metadata" not in md
+
+
+class TestExportEntityMetadata:
+    def test_workspace_metadata_block(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            insert_status(conn, bid, "Todo")
+            conn.execute(
+                '''UPDATE workspaces SET metadata = '{"env":"prod"}' WHERE id = ?''',
+                (bid,),
+            )
+        md = export_markdown(conn)
+        assert "## Workspace: W" in md
+        assert "**Metadata:**" in md
+        assert "**env**: prod" in md
+
+    def test_project_metadata_section(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            insert_status(conn, bid, "Todo")
+            pid = insert_project(conn, bid, "backend")
+            conn.execute(
+                '''UPDATE projects SET metadata = '{"owner":"alice"}' WHERE id = ?''',
+                (pid,),
+            )
+        md = export_markdown(conn)
+        assert "### Project Metadata" in md
+        assert "#### backend" in md
+        assert "**owner**: alice" in md
+
+    def test_group_metadata_section(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            insert_status(conn, bid, "Todo")
+            pid = insert_project(conn, bid, "backend")
+            gid = insert_group(conn, pid, "Sprint1")
+            conn.execute(
+                '''UPDATE groups SET metadata = '{"sprint":"3"}' WHERE id = ?''',
+                (gid,),
+            )
+        md = export_markdown(conn)
+        assert "### Group Metadata" in md
+        assert "#### backend > Sprint1" in md
+        assert "**sprint**: 3" in md
+
+    def test_json_export_includes_entity_metadata(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            bid = insert_workspace(conn, "W")
+            insert_status(conn, bid, "Todo")
+            pid = insert_project(conn, bid, "backend")
+            gid = insert_group(conn, pid, "Sprint1")
+            conn.execute("UPDATE workspaces SET metadata = '{\"env\":\"prod\"}' WHERE id = ?", (bid,))
+            conn.execute("UPDATE projects SET metadata = '{\"owner\":\"alice\"}' WHERE id = ?", (pid,))
+            conn.execute("UPDATE groups SET metadata = '{\"sprint\":\"3\"}' WHERE id = ?", (gid,))
+        result = export_full_json(conn)
+        assert result["workspaces"][0]["metadata"] == {"env": "prod"}
+        assert result["projects"][0]["metadata"] == {"owner": "alice"}
+        assert result["groups"][0]["metadata"] == {"sprint": "3"}

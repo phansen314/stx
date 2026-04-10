@@ -135,18 +135,37 @@ NOT carried over:
   `update_task` (via an inner `_update_task_body` so they can hold their own
   outer transaction without tripping the transaction manager's nesting guard).
 
-## Task Metadata (service-only)
+## Entity Metadata (service-only)
+
+Tasks, workspaces, projects, and groups each carry an independent JSON
+key/value metadata blob, enforced identically at the service layer via
+generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
+/ `_replace_entity_metadata`) that are called by per-entity one-line delegates.
 
 - **Metadata keys are normalized to lowercase** on write, read, and removal
   (`_normalize_meta_key()`). This matches the codebase's case-insensitive naming
   convention (`COLLATE NOCASE`), which can't be applied directly to JSON keys.
 - **Key charset:** `[a-z0-9_.-]+` after normalization; max 64 characters.
 - **Value length cap:** 500 characters. Values are otherwise free-form text.
-- **Keys are stored lowercase:** `task meta set X branch feat/kv` and
-  `task meta get X BRANCH` resolve to the same entry.
+- **Keys are stored lowercase:** `meta set X Branch feat/kv` and
+  `meta get X BRANCH` resolve to the same entry on any entity.
 - **Removing a missing key raises `LookupError`** with a "not found" message.
-- **Cross-workspace move preserves metadata** — copied verbatim via
-  `repo.copy_task_metadata` as part of `move_task_to_workspace`.
+- **Cross-workspace move preserves task metadata** — copied verbatim via
+  `repo.copy_task_metadata` as part of `move_task_to_workspace`. Workspace,
+  project, and group metadata is scoped to those entities and does not
+  participate in cross-workspace task moves.
+- **Two write surfaces, same normalization rules.** Per-key writes go through
+  `set_*_meta` / `remove_*_meta` (one key at a time, used by the CLI); bulk
+  writes go through `replace_*_metadata` (the whole dict at once, used by the
+  TUI `MetadataModal` to atomically apply multi-row edits). The bulk path
+  walks every pair through `_normalize_meta_key`, rejects duplicate keys
+  post-normalization, enforces the 500-char value cap, then writes a
+  `json.dumps()`-ed blob in a single UPDATE.
+- **No metadata changes are recorded in `task_history`.** Both the per-key
+  and bulk-replace code paths bypass history recording. The `source` parameter
+  on `replace_*_metadata` is accepted for signature parity with `update_task`
+  but currently ignored; it exists so a future decision to start tracking
+  metadata changes can land without breaking callers.
 
 ## Audit Trail (service-only logic, DB-enforced schema)
 

@@ -15,7 +15,7 @@ from helpers import ModalTestApp
 def _group(id: int, project_id: int, title: str) -> Group:
     return Group(
         id=id, workspace_id=1, project_id=project_id, title=title, description=None,
-        parent_id=None, position=0, archived=False, created_at=0,
+        parent_id=None, position=0, archived=False, created_at=0, metadata={},
     )
 
 
@@ -24,7 +24,7 @@ def _project_node(
 ) -> ProjectNode:
     project = Project(
         id=project_id, workspace_id=1, name=name, description=None,
-        archived=False, created_at=0,
+        archived=False, created_at=0, metadata={},
     )
     return ProjectNode(project=project, groups=groups, ungrouped_tasks=())
 
@@ -64,7 +64,7 @@ STATUSES = (
 )
 
 PROJECTS = (
-    Project(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0),
+    Project(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0, metadata={}),
 )
 
 PROJECT_NODES = tuple(

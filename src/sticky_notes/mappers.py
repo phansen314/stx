@@ -35,6 +35,7 @@ def row_to_workspace(row: Row) -> Workspace:
         name=row["name"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata"]),
     )
 
 
@@ -46,6 +47,7 @@ def row_to_project(row: Row) -> Project:
         description=row["description"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata"]),
     )
 
 
@@ -90,6 +92,7 @@ def row_to_group(row: Row) -> Group:
         position=row["position"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata"]),
     )
 
 

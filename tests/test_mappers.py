@@ -244,7 +244,7 @@ class TestShallowFields:
             shallow_fields("not a dataclass", str)
 
     def test_rejects_wrong_instance_type(self) -> None:
-        workspace = Workspace(id=1, name="b", archived=False, created_at=0)
+        workspace = Workspace(id=1, name="b", archived=False, created_at=0, metadata={})
         with pytest.raises(TypeError, match="is not an instance of"):
             shallow_fields(workspace, Task)
 
@@ -266,7 +266,7 @@ def _status() -> Status:
 
 
 def _group() -> Group:
-    return Group(id=1, workspace_id=1, project_id=1, title="g", description=None, parent_id=None, position=0, archived=False, created_at=0)
+    return Group(id=1, workspace_id=1, project_id=1, title="g", description=None, parent_id=None, position=0, archived=False, created_at=0, metadata={})
 
 
 class TestTaskToListItem:
@@ -332,7 +332,7 @@ class TestTaskToDetail:
 
 class TestProjectToDetail:
     def test_creates_detail(self) -> None:
-        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0)
+        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0, metadata={})
         task = _task()
         detail = project_to_detail(project, tasks=(task,))
         assert isinstance(detail, ProjectDetail)
@@ -340,7 +340,7 @@ class TestProjectToDetail:
         assert detail.tasks == (task,)
 
     def test_project_fields_copied(self) -> None:
-        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0)
+        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0, metadata={})
         detail = project_to_detail(project, tasks=())
         for f in dataclasses.fields(project):
             assert getattr(detail, f.name) == getattr(project, f.name)
@@ -365,7 +365,7 @@ class TestGroupToRef:
 class TestGroupToDetail:
     def test_creates_detail(self) -> None:
         group = _group()
-        child = Group(id=2, workspace_id=1, project_id=1, title="child", description=None, parent_id=1, position=0, archived=False, created_at=0)
+        child = Group(id=2, workspace_id=1, project_id=1, title="child", description=None, parent_id=1, position=0, archived=False, created_at=0, metadata={})
         detail = group_to_detail(group, tasks=(), children=(child,), parent=None)
         assert isinstance(detail, GroupDetail)
         assert detail.title == "g"
@@ -432,7 +432,7 @@ class TestTaskFieldMatchesSchema:
 class TestNewWorkspaceFieldsMatchSchema:
     def test_new_workspace_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
         schema_cols = _schema_columns(conn, "workspaces")
-        db_defaulted = {"id", "created_at", "archived"}
+        db_defaulted = {"id", "created_at", "archived", "metadata"}
         new_workspace_fields = {f.name for f in dataclasses.fields(NewWorkspace)}
         assert new_workspace_fields | db_defaulted == schema_cols
 
@@ -440,7 +440,7 @@ class TestNewWorkspaceFieldsMatchSchema:
 class TestNewProjectFieldsMatchSchema:
     def test_new_project_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
         schema_cols = _schema_columns(conn, "projects")
-        db_defaulted = {"id", "created_at", "archived"}
+        db_defaulted = {"id", "created_at", "archived", "metadata"}
         new_proj_fields = {f.name for f in dataclasses.fields(NewProject)}
         assert new_proj_fields | db_defaulted == schema_cols
 

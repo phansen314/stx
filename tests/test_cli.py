@@ -2192,3 +2192,197 @@ class TestTaskMetaCommands:
         self.cli("task", "meta", "del", "My task", "branch", "--by-title")
         out, _ = self.cli("task", "meta", "ls", "1")
         assert "no metadata" in out
+
+
+# ---- Workspace metadata ----
+
+
+class TestWorkspaceMetaCommands:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+
+    def test_ls_empty(self):
+        out, _ = self.cli("workspace", "meta", "ls")
+        assert "no metadata" in out
+
+    def test_set_and_get(self):
+        self.cli("workspace", "meta", "set", "env", "prod")
+        out, _ = self.cli("workspace", "meta", "get", "env")
+        assert "prod" in out
+
+    def test_ls_after_set(self):
+        self.cli("workspace", "meta", "set", "env", "prod")
+        self.cli("workspace", "meta", "set", "region", "us-east-1")
+        out, _ = self.cli("workspace", "meta", "ls")
+        assert "env" in out
+        assert "prod" in out
+        assert "region" in out
+
+    def test_del(self):
+        self.cli("workspace", "meta", "set", "env", "prod")
+        out, _ = self.cli("workspace", "meta", "del", "env")
+        assert "removed env" in out
+        out, _ = self.cli("workspace", "meta", "ls")
+        assert "no metadata" in out
+
+    def test_del_missing(self):
+        _, err = self.cli("workspace", "meta", "del", "nope", expect_exit=1)
+        assert "not found" in err
+
+    def test_get_missing(self):
+        _, err = self.cli("workspace", "meta", "get", "nope", expect_exit=1)
+        assert "not found" in err
+
+    def test_case_insensitive(self):
+        self.cli("workspace", "meta", "set", "Env", "prod")
+        out, _ = self.cli("workspace", "meta", "get", "ENV")
+        assert "prod" in out
+
+    def test_set_json(self):
+        out, _ = self.cli("--json", "workspace", "meta", "set", "env", "prod")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == {"key": "env", "value": "prod"}
+
+    def test_ls_json(self):
+        self.cli("workspace", "meta", "set", "a", "1")
+        self.cli("workspace", "meta", "set", "b", "2")
+        out, _ = self.cli("--json", "workspace", "meta", "ls")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"] == [{"key": "a", "value": "1"}, {"key": "b", "value": "2"}]
+
+    def test_respects_workspace_flag(self, cli):
+        cli("workspace", "create", "other")
+        cli("workspace", "use", "dev")
+        cli("workspace", "meta", "set", "env", "dev-val")
+        cli("-w", "other", "workspace", "meta", "set", "env", "other-val")
+        out, _ = cli("workspace", "meta", "get", "env")
+        assert "dev-val" in out
+        out, _ = cli("-w", "other", "workspace", "meta", "get", "env")
+        assert "other-val" in out
+
+
+class TestWorkspaceMetaNoActiveWorkspace:
+    """Workspace meta commands must surface the centralized missing_active_workspace
+    error when run without an active workspace and without -w override. Separate
+    class because these tests need to NOT have the 'dev' autouse fixture."""
+
+    def test_ls_no_active_workspace(self, cli):
+        _, err = cli("workspace", "meta", "ls", expect_exit=1)
+        assert "no active workspace" in err
+
+    def test_set_no_active_workspace(self, cli):
+        _, err = cli("workspace", "meta", "set", "env", "prod", expect_exit=1)
+        assert "no active workspace" in err
+
+    def test_ls_no_active_workspace_json(self, cli):
+        _, err = cli("--json", "workspace", "meta", "ls", expect_exit=1)
+        data = json.loads(err)
+        assert data["ok"] is False
+        assert data["code"] == "missing_active_workspace"
+
+
+# ---- Project metadata ----
+
+
+class TestProjectMetaCommands:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("project", "create", "backend")
+
+    def test_ls_empty(self):
+        out, _ = self.cli("project", "meta", "ls", "backend")
+        assert "no metadata" in out
+
+    def test_set_and_get(self):
+        self.cli("project", "meta", "set", "backend", "owner", "alice")
+        out, _ = self.cli("project", "meta", "get", "backend", "owner")
+        assert "alice" in out
+
+    def test_del(self):
+        self.cli("project", "meta", "set", "backend", "owner", "alice")
+        self.cli("project", "meta", "del", "backend", "owner")
+        out, _ = self.cli("project", "meta", "ls", "backend")
+        assert "no metadata" in out
+
+    def test_del_missing(self):
+        _, err = self.cli("project", "meta", "del", "backend", "nope", expect_exit=1)
+        assert "not found" in err
+
+    def test_unknown_project(self):
+        _, err = self.cli("project", "meta", "set", "ghost", "k", "v", expect_exit=1)
+        assert "not found" in err
+
+    def test_case_insensitive(self):
+        self.cli("project", "meta", "set", "backend", "Owner", "alice")
+        out, _ = self.cli("project", "meta", "get", "backend", "OWNER")
+        assert "alice" in out
+
+    def test_set_json(self):
+        out, _ = self.cli("--json", "project", "meta", "set", "backend", "owner", "alice")
+        data = json.loads(out)
+        assert data["data"] == {"key": "owner", "value": "alice"}
+
+
+# ---- Group metadata ----
+
+
+class TestGroupMetaCommands:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("project", "create", "backend")
+        cli("group", "create", "Sprint 1", "--project", "backend")
+
+    def test_ls_empty(self):
+        out, _ = self.cli("group", "meta", "ls", "Sprint 1", "--project", "backend")
+        assert "no metadata" in out
+
+    def test_set_and_get(self):
+        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01", "--project", "backend")
+        out, _ = self.cli("group", "meta", "get", "Sprint 1", "start", "--project", "backend")
+        assert "2026-01-01" in out
+
+    def test_del(self):
+        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01", "--project", "backend")
+        self.cli("group", "meta", "del", "Sprint 1", "start", "--project", "backend")
+        out, _ = self.cli("group", "meta", "ls", "Sprint 1", "--project", "backend")
+        assert "no metadata" in out
+
+    def test_del_missing(self):
+        _, err = self.cli(
+            "group", "meta", "del", "Sprint 1", "nope", "--project", "backend",
+            expect_exit=1,
+        )
+        assert "not found" in err
+
+    def test_unknown_group(self):
+        _, err = self.cli(
+            "group", "meta", "set", "Ghost", "k", "v", "--project", "backend",
+            expect_exit=1,
+        )
+        assert "not found" in err
+
+    def test_case_insensitive(self):
+        self.cli(
+            "group", "meta", "set", "Sprint 1", "Start", "2026-01-01",
+            "--project", "backend",
+        )
+        out, _ = self.cli(
+            "group", "meta", "get", "Sprint 1", "START", "--project", "backend",
+        )
+        assert "2026-01-01" in out
+
+    def test_set_json(self):
+        out, _ = self.cli(
+            "--json", "group", "meta", "set", "Sprint 1", "start", "2026-01-01",
+            "--project", "backend",
+        )
+        data = json.loads(out)
+        assert data["data"] == {"key": "start", "value": "2026-01-01"}

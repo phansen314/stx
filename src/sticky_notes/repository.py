@@ -391,61 +391,152 @@ def list_tasks_by_ids(
 # ---- Task metadata functions ----
 
 
-def set_task_metadata_key(
+# Allowlist of tables that carry a `metadata` JSON column, mapped to the
+# singular entity name used in LookupError messages. Table names are
+# interpolated into SQL (not parameter-bound) in the generic helpers below,
+# so every caller goes through a public wrapper that pins its table literal.
+_METADATA_TABLES: dict[str, str] = {
+    "tasks": "task",
+    "workspaces": "workspace",
+    "projects": "project",
+    "groups": "group",
+}
+
+
+def _set_metadata_key(
     conn: sqlite3.Connection,
-    task_id: int,
+    table: str,
+    entity_id: int,
     key: str,
     value: str,
 ) -> None:
-    """Set a single metadata key using SQLite json_set. Creates or overwrites.
+    """Set a single metadata key via SQLite json_set. Creates or overwrites.
 
-    Callers must pre-validate the key (see service._normalize_meta_key). The
+    Callers must pre-validate the key (see service._normalize_meta_key); the
     slug charset enforced there excludes characters that could escape the
     quoted JSON path literal built below.
     """
+    if table not in _METADATA_TABLES:
+        raise ValueError(f"invalid metadata table: {table!r}")
     path = f'$."{key}"'
     cur = conn.execute(
-        "UPDATE tasks SET metadata = json_set(metadata, ?, ?) WHERE id = ?",
-        (path, value, task_id),
+        f"UPDATE {table} SET metadata = json_set(metadata, ?, ?) WHERE id = ?",
+        (path, value, entity_id),
     )
     if cur.rowcount == 0:
-        raise LookupError(f"task {task_id} not found")
+        raise LookupError(f"{_METADATA_TABLES[table]} {entity_id} not found")
 
 
-def remove_task_metadata_key(
+def _remove_metadata_key(
     conn: sqlite3.Connection,
-    task_id: int,
+    table: str,
+    entity_id: int,
     key: str,
 ) -> None:
-    """Remove a single metadata key using SQLite json_remove.
-
-    Callers must pre-validate the key (see service._normalize_meta_key).
-    """
+    """Remove a single metadata key via SQLite json_remove."""
+    if table not in _METADATA_TABLES:
+        raise ValueError(f"invalid metadata table: {table!r}")
     path = f'$."{key}"'
     cur = conn.execute(
-        "UPDATE tasks SET metadata = json_remove(metadata, ?) WHERE id = ?",
-        (path, task_id),
+        f"UPDATE {table} SET metadata = json_remove(metadata, ?) WHERE id = ?",
+        (path, entity_id),
     )
     if cur.rowcount == 0:
-        raise LookupError(f"task {task_id} not found")
+        raise LookupError(f"{_METADATA_TABLES[table]} {entity_id} not found")
 
 
-def copy_task_metadata(
+def _copy_metadata(
     conn: sqlite3.Connection,
-    src_task_id: int,
-    dst_task_id: int,
+    table: str,
+    src_id: int,
+    dst_id: int,
 ) -> None:
-    """Copy the entire metadata blob from one task to another.
+    """Copy the entire metadata blob from src to dst within the same table."""
+    if table not in _METADATA_TABLES:
+        raise ValueError(f"invalid metadata table: {table!r}")
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = (SELECT metadata FROM {table} WHERE id = ?) WHERE id = ?",
+        (src_id, dst_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_METADATA_TABLES[table]} {dst_id} not found")
 
-    Used when a task moves between workspaces — the destination is a fresh
+
+def _replace_metadata(
+    conn: sqlite3.Connection,
+    table: str,
+    entity_id: int,
+    metadata_json: str,
+) -> None:
+    """Atomically replace the entire metadata blob. Caller must supply a
+    pre-serialized JSON object string; validity is enforced by the column's
+    CHECK (json_valid(metadata)) constraint."""
+    if table not in _METADATA_TABLES:
+        raise ValueError(f"invalid metadata table: {table!r}")
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = ? WHERE id = ?",
+        (metadata_json, entity_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_METADATA_TABLES[table]} {entity_id} not found")
+
+
+# ---- Per-entity public wrappers ----
+
+
+def set_task_metadata_key(conn: sqlite3.Connection, task_id: int, key: str, value: str) -> None:
+    _set_metadata_key(conn, "tasks", task_id, key, value)
+
+
+def remove_task_metadata_key(conn: sqlite3.Connection, task_id: int, key: str) -> None:
+    _remove_metadata_key(conn, "tasks", task_id, key)
+
+
+def copy_task_metadata(conn: sqlite3.Connection, src_task_id: int, dst_task_id: int) -> None:
+    """Used when a task moves between workspaces — the destination is a fresh
     row with empty metadata, and we want a byte-for-byte copy of the source.
     """
-    cur = conn.execute(
-        "UPDATE tasks SET metadata = (SELECT metadata FROM tasks WHERE id = ?) WHERE id = ?",
-        (src_task_id, dst_task_id),
-    )
-    if cur.rowcount == 0:
-        raise LookupError(f"task {dst_task_id} not found")
+    _copy_metadata(conn, "tasks", src_task_id, dst_task_id)
+
+
+def replace_task_metadata(conn: sqlite3.Connection, task_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "tasks", task_id, metadata_json)
+
+
+def set_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> None:
+    _set_metadata_key(conn, "workspaces", workspace_id, key, value)
+
+
+def remove_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, key: str) -> None:
+    _remove_metadata_key(conn, "workspaces", workspace_id, key)
+
+
+def replace_workspace_metadata(conn: sqlite3.Connection, workspace_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "workspaces", workspace_id, metadata_json)
+
+
+def set_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> None:
+    _set_metadata_key(conn, "projects", project_id, key, value)
+
+
+def remove_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: str) -> None:
+    _remove_metadata_key(conn, "projects", project_id, key)
+
+
+def replace_project_metadata(conn: sqlite3.Connection, project_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "projects", project_id, metadata_json)
+
+
+def set_group_metadata_key(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> None:
+    _set_metadata_key(conn, "groups", group_id, key, value)
+
+
+def remove_group_metadata_key(conn: sqlite3.Connection, group_id: int, key: str) -> None:
+    _remove_metadata_key(conn, "groups", group_id, key)
+
+
+def replace_group_metadata(conn: sqlite3.Connection, group_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "groups", group_id, metadata_json)
 
 
 # ---- Task dependency functions ----
@@ -1020,12 +1111,12 @@ def get_group_ancestry(
     """Return groups from root to the given group, inclusive."""
     rows = conn.execute(
         "WITH RECURSIVE ancestry AS ("
-        "  SELECT id, workspace_id, project_id, title, description, parent_id, position, archived, created_at, 0 AS depth "
+        "  SELECT id, workspace_id, project_id, title, description, metadata, parent_id, position, archived, created_at, 0 AS depth "
         "  FROM groups WHERE id = ? "
         "  UNION ALL "
-        "  SELECT g.id, g.workspace_id, g.project_id, g.title, g.description, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
+        "  SELECT g.id, g.workspace_id, g.project_id, g.title, g.description, g.metadata, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
         "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
-        ") SELECT id, workspace_id, project_id, title, description, parent_id, position, archived, created_at "
+        ") SELECT id, workspace_id, project_id, title, description, metadata, parent_id, position, archived, created_at "
         "FROM ancestry ORDER BY depth DESC",
         (group_id,),
     ).fetchall()

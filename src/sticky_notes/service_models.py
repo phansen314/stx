@@ -45,6 +45,7 @@ class GroupRef:
     position: int
     archived: bool
     created_at: int
+    metadata: dict[str, str]
     task_ids: tuple[int, ...] = ()
     child_ids: tuple[int, ...] = ()
 
@@ -108,6 +109,7 @@ class ProjectDetail:
     archived: bool
     created_at: int
     tasks: tuple[Task, ...]
+    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,7 @@ class GroupDetail:
     tasks: tuple[Task, ...]
     children: tuple[Group, ...]
     parent: Group | None
+    metadata: dict[str, str]
 
 
 # ---- Preview types ----

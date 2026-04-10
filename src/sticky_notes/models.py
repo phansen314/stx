@@ -110,6 +110,7 @@ class Workspace:
     name: str
     archived: bool
     created_at: int
+    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,7 @@ class Project:
     description: str | None
     archived: bool
     created_at: int
+    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,7 @@ class Group:
     position: int
     archived: bool
     created_at: int
+    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)

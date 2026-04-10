@@ -23,7 +23,7 @@ def make_status(**overrides) -> Status:
 
 
 def make_project(**overrides) -> Project:
-    defaults = dict(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0)
+    defaults = dict(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0, metadata={})
     defaults.update(overrides)
     return Project(**defaults)
 
@@ -40,7 +40,7 @@ PROJECT_NODES = tuple(
 def _group(id: int, project_id: int, title: str) -> Group:
     return Group(
         id=id, workspace_id=1, project_id=project_id, title=title, description=None,
-        parent_id=None, position=0, archived=False, created_at=0,
+        parent_id=None, position=0, archived=False, created_at=0, metadata={},
     )
 
 

@@ -146,28 +146,37 @@ Shows the full audit trail of field changes (TaskHistory).
 
 ---
 
-### `todo task meta` — Task Metadata Key/Value Store
+## Entity Metadata — `task meta` · `workspace meta` · `project meta` · `group meta`
 
-Each task carries a JSON key/value blob for arbitrary metadata (external IDs, branch names, JIRA tickets, etc.). Keys are **case-insensitive** (normalized to lowercase on write); lookups with any casing resolve to the stored lowercase form.
+Tasks, workspaces, projects, and groups each carry an independent JSON key/value metadata blob for arbitrary side data (external IDs, branch names, JIRA tickets, environment tags, sprint windows, ownership, etc.). The rules below apply to **all four** entity types — the per-entity subsections that follow only differ in how you identify the target entity.
 
-**Key rules:** charset `[a-z0-9_.-]+` after lowercase-normalization, 1–64 characters.
+**Key rules:** charset `[a-z0-9_.-]+` after lowercase-normalization, 1–64 characters. Keys are **case-insensitive** (normalized on write); `set X Branch` and `get X BRANCH` resolve to the same stored `branch` entry.
+
 **Value rules:** free-form text, up to 500 characters.
+
+**Uniform JSON `data` shape** across all four commands and all four entity types:
+
+- `meta ls` → `[{"key": "...", "value": "..."}]` (sorted by key; empty list if no metadata)
+- `meta get` → `{"key": "...", "value": "..."}`
+- `meta set` → `{"key": "...", "value": "..."}` (the just-set record; key is the lowercase-normalized form)
+- `meta del` → `{"key": "...", "value": "..."}` (the just-removed record)
+
+Text output for `ls` on an empty entity: `"no metadata"`. `get`/`set`/`del` on a missing key raise `LookupError` (`not_found`, exit 1).
+
+Markdown export (`todo export --md`) renders metadata under dedicated sections: `**Metadata:**` block per workspace, `### Project Metadata`, `### Group Metadata`, `### Task Metadata`. JSON export (`todo export`) inlines `metadata` dicts on every entity.
+
+---
+
+### `todo task meta`
 
 | Command | Args | Description |
 |---|---|---|
 | `task meta ls` | `task_num` | List all metadata entries; empty → `"no metadata"` |
-| `task meta get` | `task_num key` | Get the value for a key. `LookupError` if key not set. |
+| `task meta get` | `task_num key` | Get the value for a key |
 | `task meta set` | `task_num key value` | Set (create or overwrite) a key's value |
-| `task meta del` | `task_num key` | Remove a key. `LookupError` if key not set. |
+| `task meta del` | `task_num key` | Remove a key |
 
-All four accept `--by-title` to resolve the task by title.
-
-**JSON `data` shape** — uniform across all four commands:
-
-- `task meta ls` → `[{"key": "...", "value": "..."}]` (sorted by key; empty list if no metadata)
-- `task meta get` → `{"key": "...", "value": "..."}`
-- `task meta set` → `{"key": "...", "value": "..."}` (the just-set record; key is the lowercase-normalized form)
-- `task meta del` → `{"key": "...", "value": "..."}` (the just-removed record)
+All four accept `--by-title` to resolve the task by title. Metadata is also shown by `todo task show`. Cross-workspace `todo task transfer` copies task metadata verbatim to the new task.
 
 ```sh
 todo task meta set task-0001 branch feat/kv
@@ -178,7 +187,66 @@ todo task meta get task-0001 branch
 todo task meta del task-0001 jira
 ```
 
-Metadata is also shown by `todo task show` and included in `todo export --md` (dedicated "Metadata" section per task) and `todo export` (JSON `tasks[].metadata` object). Cross-workspace `todo task transfer` copies metadata verbatim to the new task.
+---
+
+### `todo workspace meta`
+
+Operates on the **active** workspace (or the workspace named by the global `-w/--workspace` flag). No positional name.
+
+| Command | Args | Description |
+|---|---|---|
+| `workspace meta ls` | — | List metadata for the active workspace |
+| `workspace meta get` | `key` | Get a value |
+| `workspace meta set` | `key value` | Set or overwrite a value |
+| `workspace meta del` | `key` | Remove a key |
+
+```sh
+todo workspace meta set env prod
+todo workspace meta set region us-east-1
+todo workspace meta ls
+todo -w ops workspace meta get env     # -w targets a different workspace
+```
+
+---
+
+### `todo project meta`
+
+Positional project name is required (there is no "active project" concept).
+
+| Command | Args | Description |
+|---|---|---|
+| `project meta ls` | `name` | List metadata for a project |
+| `project meta get` | `name key` | Get a value |
+| `project meta set` | `name key value` | Set or overwrite a value |
+| `project meta del` | `name key` | Remove a key |
+
+```sh
+todo project meta set backend owner alice
+todo project meta set backend slack "#backend-dev"
+todo project meta ls backend
+todo project meta del backend slack
+```
+
+---
+
+### `todo group meta`
+
+Positional group title + optional `--project/-p` for disambiguation when the title collides across projects in the same workspace.
+
+| Command | Args | Flags | Description |
+|---|---|---|---|
+| `group meta ls` | `title` | `--project/-p` | List metadata for a group |
+| `group meta get` | `title key` | `--project/-p` | Get a value |
+| `group meta set` | `title key value` | `--project/-p` | Set or overwrite a value |
+| `group meta del` | `title key` | `--project/-p` | Remove a key |
+
+```sh
+todo group meta set "Sprint 1" start 2026-01-01 --project backend
+todo group meta set "Sprint 1" end 2026-01-14 --project backend
+todo group meta ls "Sprint 1" --project backend
+```
+
+In `todo export --md` the Group Metadata section labels each block `#### <project> > <group>` to disambiguate.
 
 ---
 
@@ -400,6 +468,8 @@ todo backup /tmp/sticky-notes-backup.db --overwrite
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
 
+**Keybindings** (selected): `w` focus tree, `b` focus board, `e` edit selected entity, `m` edit metadata on selected entity (task/workspace/project/group), `n` new resource, `s` switch workspace, `[`/`]` move task across statuses, `r` refresh, `ctrl+q` quit. The metadata editor is reached by pressing `m` on a focused kanban task card or any entity node in the workspace tree; it presents editable key/value rows with add/delete buttons and atomically bulk-replaces the entity's metadata blob on save via `service.replace_*_metadata`. Keys are normalized to lowercase before comparison so retyping a key's case is a no-op.
+
 ---
 
 ## `--by-title` Flag
@@ -432,14 +502,15 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | `tag ls` | array of Tag objects |
 | `group ls` | array of GroupRef objects |
 | `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
-| `project show` | ProjectDetail with `tasks` array |
-| `group show` | GroupDetail with `tasks` and `children` arrays |
+| `project show` | ProjectDetail with `tasks` array and `metadata` dict |
+| `group show` | GroupDetail with `tasks`, `children` arrays, and `metadata` dict |
+| `workspace ls` / `project ls` / `group ls` | entities include their `metadata` dicts |
 | `task log` | array of TaskHistory objects |
 | `context` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 | `backup` | `{"source": "...", "dest": "...", "bytes": N}` |
 | `info` | `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...]}` |
-| `task meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
-| `task meta get`, `task meta set`, `task meta del` | `{"key": "...", "value": "..."}` |
+| `task meta ls`, `workspace meta ls`, `project meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
+| `task meta get/set/del`, `workspace meta get/set/del`, `project meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
 
 > **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "statuses": [...]}` directly at the top level. `context` wraps the same workspace+statuses shape inside a `"view"` key — they are **not** interchangeable payloads.
