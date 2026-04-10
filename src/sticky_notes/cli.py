@@ -710,34 +710,32 @@ def cmd_info(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) 
 
 def cmd_task_meta_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    task_id = _resolve_task(conn, workspace, args.task_num, by_title=getattr(args, "by_title", False))
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     task = service.get_task(conn, task_id)
     if not task.metadata:
         return Ok(data=task.metadata, text="no metadata")
-    lines = [f"  {k:<12} {v}" for k, v in sorted(task.metadata.items())]
+    width = max(len(k) for k in task.metadata) + 2
+    lines = [f"  {k:<{width}}{v}" for k, v in sorted(task.metadata.items())]
     return Ok(data=task.metadata, text="\n".join(lines))
 
 
 def cmd_task_meta_get(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    task_id = _resolve_task(conn, workspace, args.task_num, by_title=getattr(args, "by_title", False))
-    task = service.get_task(conn, task_id)
-    if args.key not in task.metadata:
-        raise LookupError(f"metadata key {args.key!r} not found on task {task_id}")
-    value = task.metadata[args.key]
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
+    value = service.get_task_meta(conn, task_id, args.key)
     return Ok(data={"key": args.key, "value": value}, text=value)
 
 
 def cmd_task_meta_set(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    task_id = _resolve_task(conn, workspace, args.task_num, by_title=getattr(args, "by_title", False))
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     task = service.set_task_meta(conn, task_id, args.key, args.value)
     return Ok(data=task, text=f"set {args.key}={args.value} on {format_task_num(task_id)}")
 
 
 def cmd_task_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    task_id = _resolve_task(conn, workspace, args.task_num, by_title=getattr(args, "by_title", False))
+    task_id = _resolve_task(conn, workspace, args.task_num, by_title=args.by_title)
     task = service.remove_task_meta(conn, task_id, args.key)
     return Ok(data=task, text=f"removed {args.key} from {format_task_num(task_id)}")
 
@@ -893,22 +891,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_meta_ls = meta_sub.add_parser("ls", help="list all metadata")
     p_meta_ls.set_defaults(command="task_meta_ls")
     p_meta_ls.add_argument("task_num")
+    p_meta_ls.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
     p_meta_get = meta_sub.add_parser("get", help="get a metadata value")
     p_meta_get.set_defaults(command="task_meta_get")
     p_meta_get.add_argument("task_num")
     p_meta_get.add_argument("key")
+    p_meta_get.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
     p_meta_set = meta_sub.add_parser("set", help="set a metadata key/value")
     p_meta_set.set_defaults(command="task_meta_set")
     p_meta_set.add_argument("task_num")
     p_meta_set.add_argument("key")
     p_meta_set.add_argument("value")
+    p_meta_set.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
     p_meta_del = meta_sub.add_parser("del", help="delete a metadata key")
     p_meta_del.set_defaults(command="task_meta_del")
     p_meta_del.add_argument("task_num")
     p_meta_del.add_argument("key")
+    p_meta_del.add_argument("--by-title", action="store_true", help="resolve task by title string")
 
     # ---- Workspace subcommands ----
 

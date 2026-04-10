@@ -2056,6 +2056,21 @@ class TestTaskMeta:
         task = service.get_task(conn, tid)
         assert task.metadata == {"branch": "feat/kv"}
 
+    def test_get_meta(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "branch", "feat/kv")
+        assert service.get_task_meta(conn, tid, "branch") == "feat/kv"
+
+    def test_get_meta_missing_key_raises(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(LookupError, match="not found"):
+            service.get_task_meta(conn, tid, "nope")
+
+    def test_get_meta_invalid_key_raises(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.get_task_meta(conn, tid, "BAD KEY")
+
     def test_move_task_to_workspace_copies_metadata(self, conn: sqlite3.Connection) -> None:
         bid1, tid = self._setup(conn)
         service.set_task_meta(conn, tid, "branch", "feat/kv")

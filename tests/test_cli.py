@@ -2070,6 +2070,10 @@ class TestTaskMetaCommands:
         _, err = self.cli("task", "meta", "get", "1", "nope", expect_exit=1)
         assert "not found" in err
 
+    def test_meta_get_invalid_key(self):
+        _, err = self.cli("task", "meta", "get", "1", "BAD KEY", expect_exit=1)
+        assert "must match" in err
+
     def test_meta_set_invalid_key(self):
         _, err = self.cli("task", "meta", "set", "1", "BAD KEY", "v", expect_exit=1)
         assert "must match" in err
@@ -2099,3 +2103,24 @@ class TestTaskMetaCommands:
         out, _ = self.cli("task", "show", "1")
         assert "Metadata:" in out
         assert "branch: feat/kv" in out
+
+    def test_meta_ls_padding_adapts_to_long_key(self):
+        self.cli("task", "meta", "set", "1", "deployment.environment", "prod")
+        self.cli("task", "meta", "set", "1", "k", "v")
+        out, _ = self.cli("task", "meta", "ls", "1")
+        # Each line: 2-space indent + key + padding + value. Value must not
+        # butt up against the key — there should be at least one space between.
+        for line in out.splitlines():
+            stripped = line.lstrip()
+            key, sep, rest = stripped.partition(" ")
+            assert rest.lstrip() != "", f"no separation between key and value: {line!r}"
+
+    def test_meta_by_title(self):
+        self.cli("task", "meta", "set", "My task", "branch", "feat/kv", "--by-title")
+        out, _ = self.cli("task", "meta", "get", "My task", "branch", "--by-title")
+        assert "feat/kv" in out
+        out, _ = self.cli("task", "meta", "ls", "My task", "--by-title")
+        assert "branch" in out
+        self.cli("task", "meta", "del", "My task", "branch", "--by-title")
+        out, _ = self.cli("task", "meta", "ls", "1")
+        assert "no metadata" in out

@@ -393,6 +393,16 @@ def list_tasks_by_ids(
 # ---- Task metadata functions ----
 
 
+def _assert_safe_meta_key(key: str) -> None:
+    # Defensive guard: keys are interpolated into the JSON path '$."<key>"' via
+    # string concatenation in SQL. A key containing a double-quote would break
+    # out of the path literal. The service layer enforces a stricter slug
+    # regex, but repo callers (tests, future code) may bypass it, so we
+    # backstop here.
+    if '"' in key or "\\" in key:
+        raise ValueError(f"metadata key contains unsafe characters: {key!r}")
+
+
 def set_task_metadata_key(
     conn: sqlite3.Connection,
     task_id: int,
@@ -400,6 +410,7 @@ def set_task_metadata_key(
     value: str,
 ) -> None:
     """Set a single metadata key using SQLite json_set. Creates or overwrites."""
+    _assert_safe_meta_key(key)
     cur = conn.execute(
         '''UPDATE tasks SET metadata = json_set(metadata, '$."' || ? || '"', ?) WHERE id = ?''',
         (key, value, task_id),
@@ -414,6 +425,7 @@ def remove_task_metadata_key(
     key: str,
 ) -> None:
     """Remove a single metadata key using SQLite json_remove."""
+    _assert_safe_meta_key(key)
     cur = conn.execute(
         '''UPDATE tasks SET metadata = json_remove(metadata, '$."' || ? || '"') WHERE id = ?''',
         (key, task_id),

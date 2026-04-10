@@ -784,6 +784,20 @@ def _validate_meta_value(value: str) -> None:
         raise ValueError("metadata value must be \u2264 500 characters")
 
 
+def get_task_meta(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+) -> str:
+    """Get a metadata value by key. Validates key format. Raises LookupError if
+    the task or key is missing."""
+    _validate_meta_key(key)
+    task = get_task(conn, task_id)
+    if key not in task.metadata:
+        raise LookupError(f"metadata key {key!r} not found on task {task_id}")
+    return task.metadata[key]
+
+
 def set_task_meta(
     conn: sqlite3.Connection,
     task_id: int,

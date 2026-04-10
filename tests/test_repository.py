@@ -1573,3 +1573,16 @@ class TestTaskMetadata:
         task = get_task(conn, tid)
         assert task is not None
         assert task.metadata == {"deploy.env": "prod"}
+
+    def test_key_with_quote_rejected(self, conn: sqlite3.Connection) -> None:
+        """Defensive: repo-level guard against keys that could break JSON path quoting."""
+        tid = self._setup(conn)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            set_task_metadata_key(conn, tid, 'ev"il', "v")
+        with pytest.raises(ValueError, match="unsafe characters"):
+            remove_task_metadata_key(conn, tid, 'ev"il')
+
+    def test_key_with_backslash_rejected(self, conn: sqlite3.Connection) -> None:
+        tid = self._setup(conn)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            set_task_metadata_key(conn, tid, "ev\\il", "v")
