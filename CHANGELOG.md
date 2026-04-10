@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`todo group-dep`** moved under `todo group dep`. The top-level hyphenated verb is gone; use `todo group dep create` / `todo group dep archive` instead. Breaking.
 - **`todo dep create` / `todo dep archive`** now take `--task TASK --blocked-by TASK` flags instead of two positional arguments. Removes the "which came first, the blocker or the blocked?" ambiguity. Breaking.
 - **`--by-title` flag removed** from every task-referencing command. Task identifiers are now auto-detected: numeric forms (`1`, `task-0001`, `#1`) resolve as IDs; everything else is looked up as a title on the active workspace. Affects `task show/edit/mv/transfer/archive/log`, `task meta ls/get/set/del`, `dep create/archive`, `group assign/unassign`. Breaking for scripts that passed `--by-title` explicitly. A task whose title literally matches `task-NNNN` would be resolved as an ID — avoid such titles.
+- **`todo task mv` status argument is now a required flag** (`--status` / `-S`) instead of a second positional. Matches the `task create` / `task transfer` shape. Optional `position` remains a positional integer after the task identifier. Breaking.
 
 ## [0.7.0] — 2026-04-10
 

@@ -19,7 +19,7 @@ description: Use when the user wants to persist a kanban board, todo list, or mu
 
 3. **Move tasks as work progresses** — the status must exist by name:
    ```sh
-   todo task mv task-0001 "In Progress"
+   todo task mv task-0001 -S "In Progress"
    ```
 
 4. **Check workspace state** at any point:

@@ -380,12 +380,12 @@ class TestTaskCommands:
 
     def test_mv(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "mv", "1", "in progress")
+        out, _ = cli("task", "mv", "1", "-S", "in progress")
         assert "moved task-0001 -> in progress" in out
 
     def test_mv_case_insensitive(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "mv", "1", "In Progress")
+        out, _ = cli("task", "mv", "1", "-S", "In Progress")
         assert "moved task-0001 -> in progress" in out
 
     def test_archive(self, cli):
@@ -1320,7 +1320,7 @@ class TestJsonOutput:
         cli("status", "create", "Todo")
         cli("status", "create", "Done")
         cli("task", "create", "T1", "-S", "todo")
-        data = self._json(cli, "task", "mv", "1", "Done")
+        data = self._json(cli, "task", "mv", "1", "-S", "Done")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
 
@@ -2110,7 +2110,7 @@ class TestEndToEndSmoke:
 
     def test_task_edit_and_move(self):
         self.cli("task", "edit", "5", "--title", "Cleanup v2", "--priority", "3")
-        self.cli("task", "mv", "5", "in-progress")
+        self.cli("task", "mv", "5", "-S", "in-progress")
         out, _ = self.cli("task", "show", "5")
         assert "Cleanup v2" in out
         assert "in-progress" in out

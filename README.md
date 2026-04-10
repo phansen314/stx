@@ -26,8 +26,8 @@ todo workspace create work --statuses "To Do","In Progress","Done"
 # Add and manage tasks
 todo task create "Write README" -S "To Do"
 todo task ls
-todo task mv task-0001 "In Progress"
-todo task mv task-0001 "Done"
+todo task mv task-0001 -S "In Progress"
+todo task mv task-0001 -S "Done"
 
 # Launch the TUI
 todo tui
@@ -49,7 +49,7 @@ Entry point: `todo`
 | `todo task ls` | List tasks on the active workspace |
 | `todo task show <task>` | Show task detail with history, dependencies, and metadata |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
+| `todo task mv <task> -S <status> [pos]` | Move task to a status (within-workspace only) |
 | `todo task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
 | `todo task log <task>` | Show task change history |
 | `todo task meta ls\|get\|set\|del <task> ...` | JSON key/value metadata CRUD (lowercase-normalized keys; workspaces, projects, and groups expose the same four verbs) |

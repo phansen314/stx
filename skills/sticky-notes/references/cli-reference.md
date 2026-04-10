@@ -113,23 +113,23 @@ todo task edit task-0003 --tag urgent --untag backend
 
 ---
 
-### `todo task mv <task_num> <status> [position] [flags]`
+### `todo task mv <task> --status <status> [position] [flags]`
 
 **Within-workspace only.** Use `todo task transfer` for cross-workspace moves.
 
 | Arg/Flag | Description |
 |---|---|
-| `status` (positional) | Target status name |
+| `--status` / `-S` | Target status name (**required**) |
 | `position` (optional positional) | Integer position within status (default: `0` = top) |
 | `--project` / `-p` | Also change the task's project |
 
 ```sh
-todo task mv task-0001 "In Progress"
-todo task mv task-0001 Done 2          # position 2 within Done status
-todo task mv task-0001 Backlog --project "Next sprint"
+todo task mv task-0001 --status "In Progress"
+todo task mv task-0001 -S Done 2          # position 2 within Done status
+todo task mv task-0001 -S Backlog --project "Next sprint"
 ```
 
-**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> Done` (requires a status literally named "Done").
+**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> -S Done` (requires a status literally named "Done").
 
 ---
 
