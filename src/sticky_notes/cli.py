@@ -43,8 +43,12 @@ type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, Path], C
 # ---- Error types ----
 
 
-class NoActiveWorkspaceError(LookupError):
-    """Raised when no active workspace is set."""
+class NoActiveWorkspaceError(Exception):
+    """Raised when no active workspace is set.
+
+    Intentionally not a LookupError subclass — generic except LookupError
+    sites elsewhere should not swallow this control-flow signal.
+    """
 
 
 # ---- JSON serialisation ----
