@@ -114,6 +114,10 @@ def _text_err(message: str, code: str) -> None:
 def _confirm_archive(preview: ArchivePreview, *, json_mode: bool) -> bool:
     if json_mode:
         return True
+    if not sys.stdin.isatty():
+        raise ValueError(
+            "non-interactive stdin — pass --force to skip confirmation or --dry-run to preview"
+        )
     print(presenters.format_archive_preview(preview), file=sys.stderr)
     answer = input("proceed? [y/N] ")
     return answer.strip().lower() in ("y", "yes")

@@ -545,6 +545,15 @@ class TestErrorHandling:
         _, err = cli("status", "archive", "todo", expect_exit=4)
         assert "active task" in err
 
+    def test_archive_without_tty_requires_force(self, cli, monkeypatch):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task", "-S", "todo")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        _, err = cli("task", "archive", "1", expect_exit=4)
+        assert "non-interactive" in err
+        assert "--force" in err
+
 
 # ---- Workspace flag override ----
 
@@ -1717,8 +1726,9 @@ class TestArchiveCascade:
 
 class TestArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
 
@@ -1779,8 +1789,9 @@ class TestStatusTagDryRun:
 
 class TestStatusArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
@@ -1815,8 +1826,9 @@ class TestStatusArchiveConfirmation:
 
 class TestTagArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("tag", "create", "bug")

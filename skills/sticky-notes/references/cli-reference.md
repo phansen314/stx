@@ -137,7 +137,7 @@ todo task mv task-0001 Backlog --project "Next sprint"
 
 ### `todo task archive <task_num> [--by-title] [--force] [--dry-run]`
 
-Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Tasks remain queryable with `--all` or `--archived`.
+Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Non-interactive stdin (pipes, CI) requires `--force` or `--dry-run` — the command fails fast rather than hang on `input()`. Tasks remain queryable with `--all` or `--archived`.
 
 ---
 
