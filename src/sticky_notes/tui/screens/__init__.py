@@ -6,4 +6,5 @@ from .project_create import ProjectCreateModal
 from .project_edit import ProjectEditModal
 from .task_create import TaskCreateModal
 from .task_edit import TaskEditModal
+from .task_metadata import TaskMetadataModal
 from .workspace_edit import WorkspaceEditModal

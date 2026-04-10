@@ -2198,6 +2198,90 @@ class TestTaskMeta:
         assert service.get_task(conn, tid).metadata == {"branch": "new"}
 
 
+class TestReplaceTaskMetadata:
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int]:
+        bid = insert_workspace(conn, "w")
+        sid = insert_status(conn, bid, "todo")
+        tid = insert_task(conn, bid, "task1", sid)
+        return bid, tid
+
+    def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        task = service.replace_task_metadata(
+            conn, tid, {"a": "1", "b": "2"}, source="test",
+        )
+        assert task.metadata == {"a": "1", "b": "2"}
+
+    def test_replace_clears_all_with_empty_dict(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "a", "1")
+        service.set_task_meta(conn, tid, "b", "2")
+        task = service.replace_task_metadata(conn, tid, {}, source="test")
+        assert task.metadata == {}
+
+    def test_replace_overwrites_existing(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "a", "1")
+        task = service.replace_task_metadata(
+            conn, tid, {"a": "2", "b": "3"}, source="test",
+        )
+        assert task.metadata == {"a": "2", "b": "3"}
+
+    def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        task = service.replace_task_metadata(
+            conn, tid, {"Foo": "bar"}, source="test",
+        )
+        assert task.metadata == {"foo": "bar"}
+
+    def test_replace_rejects_bad_key_shape(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.replace_task_metadata(
+                conn, tid, {"has space": "v"}, source="test",
+            )
+
+    def test_replace_rejects_empty_key(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="1-64 characters"):
+            service.replace_task_metadata(
+                conn, tid, {"": "v"}, source="test",
+            )
+
+    def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="500"):
+            service.replace_task_metadata(
+                conn, tid, {"k": "x" * 501}, source="test",
+            )
+
+    def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        with pytest.raises(ValueError, match="duplicate metadata key"):
+            service.replace_task_metadata(
+                conn, tid, {"foo": "1", "FOO": "2"}, source="test",
+            )
+
+    def test_replace_missing_task_raises_lookup(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError):
+            service.replace_task_metadata(conn, 999, {"k": "v"}, source="test")
+
+    def test_replace_does_not_record_history(self, conn: sqlite3.Connection) -> None:
+        _, tid = self._setup(conn)
+        service.set_task_meta(conn, tid, "a", "1")
+        before = conn.execute(
+            "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
+        ).fetchone()[0]
+        service.replace_task_metadata(
+            conn, tid, {"a": "2", "b": "3"}, source="test",
+        )
+        after = conn.execute(
+            "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
+        ).fetchone()[0]
+        assert before == after
+
+
 # ---- Workspace / Project / Group metadata ----
 
 

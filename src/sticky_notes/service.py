@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from collections.abc import Callable
@@ -943,6 +944,38 @@ def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> Task:
         fetcher=get_task,
         entity_name="task",
     )
+
+
+def replace_task_metadata(
+    conn: sqlite3.Connection,
+    task_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Task:
+    """Atomically replace a task's entire metadata blob.
+
+    Validates every key/value the same way `set_task_meta` validates one pair,
+    then writes the whole dict in a single UPDATE. No task_history entry is
+    recorded — consistent with per-key `set_task_meta` / `remove_task_meta`,
+    which also bypass history. `source` is accepted for signature parity with
+    `update_task` so future history tracking can land without breaking callers.
+    """
+    del source  # not tracked today; see docstring
+    normalized: dict[str, str] = {}
+    for raw_key, value in new_metadata.items():
+        key = _normalize_meta_key(raw_key)
+        if key in normalized:
+            raise ValueError(f"duplicate metadata key after normalization: {key!r}")
+        if len(value) > _META_VALUE_MAX:
+            raise ValueError(
+                f"metadata value for key {key!r} must be \u2264 {_META_VALUE_MAX} characters"
+            )
+        normalized[key] = value
+    with transaction(conn), _friendly_errors():
+        get_task(conn, task_id)
+        repo.replace_task_metadata(conn, task_id, json.dumps(normalized))
+        return get_task(conn, task_id)
 
 
 # ---- Workspace metadata ----

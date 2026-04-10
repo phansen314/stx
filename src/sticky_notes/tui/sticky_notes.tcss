@@ -154,3 +154,41 @@ BaseEditModal {
 MarkdownEditor {
     height: 1fr;
 }
+
+/* ---- Task metadata modal ---- */
+
+#metadata-rows {
+    height: auto;
+    max-height: 20;
+    margin-bottom: 1;
+}
+
+.metadata-row {
+    height: 3;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+.metadata-key {
+    width: 30%;
+    margin-right: 1;
+    margin-bottom: 0;
+}
+
+.metadata-value {
+    width: 1fr;
+    margin-right: 1;
+    margin-bottom: 0;
+}
+
+.metadata-delete {
+    width: 5;
+    min-width: 5;
+}
+
+.metadata-add-row {
+    width: 100%;
+    height: 3;
+    align: left middle;
+    margin-bottom: 1;
+}

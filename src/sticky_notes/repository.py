@@ -480,6 +480,15 @@ def copy_task_metadata(conn: sqlite3.Connection, src_task_id: int, dst_task_id: 
     _copy_metadata(conn, "tasks", src_task_id, dst_task_id)
 
 
+def replace_task_metadata(conn: sqlite3.Connection, task_id: int, metadata_json: str) -> None:
+    cur = conn.execute(
+        "UPDATE tasks SET metadata = ? WHERE id = ?",
+        (metadata_json, task_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"task {task_id} not found")
+
+
 def set_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> None:
     _set_metadata_key(conn, "workspaces", workspace_id, key, value)
 
