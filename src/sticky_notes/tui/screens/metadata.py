@@ -5,31 +5,39 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Footer, Input, Static
 
-from sticky_notes.formatting import format_task_num
-from sticky_notes.service_models import TaskDetail
-from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.screens.base_edit import BaseEditModal, ModalScroll
 
 
-class TaskMetadataModal(BaseEditModal):
+class MetadataModal(BaseEditModal):
+    """Generic key/value metadata editor. Used for tasks, workspaces,
+    projects, and groups — the caller supplies an already-formatted header
+    label, the initial metadata dict, and the result-payload key to identify
+    which entity kind dismissed the modal.
+    """
 
-    def __init__(self, detail: TaskDetail) -> None:
-        self.detail = detail
+    def __init__(
+        self,
+        *,
+        display_title: str,
+        metadata: dict[str, str],
+        result_key: str,
+        entity_id: int,
+    ) -> None:
+        self._display_title = display_title
+        self._original_metadata = dict(metadata)
+        self._result_key = result_key
+        self._entity_id = entity_id
         self._row_counter = 0
         super().__init__()
 
     def compose(self) -> ComposeResult:
         with ModalScroll(classes="modal-container"):
-            title = escape_markup(self.detail.title)
-            yield Static(
-                f"Metadata: {format_task_num(self.detail.id)} \u2014 {title}",
-                classes="modal-id",
-            )
+            yield Static(self._display_title, classes="modal-id")
 
             with VerticalScroll(id="metadata-rows"):
-                for key, value in sorted(self.detail.metadata.items()):
+                for key, value in sorted(self._original_metadata.items()):
                     yield self._build_row(key, value)
-                if not self.detail.metadata:
+                if not self._original_metadata:
                     yield self._build_row("", "")
 
             with Horizontal(classes="metadata-add-row"):
@@ -107,7 +115,11 @@ class TaskMetadataModal(BaseEditModal):
             seen_normalized.add(normalized)
             new_metadata[key] = value
 
-        if new_metadata == self.detail.metadata:
+        # Compare normalized forms: the stored metadata is already lowercase
+        # (service normalizes on write), so retyping a key in a different
+        # case shouldn't count as a change.
+        new_normalized = {k.lower(): v for k, v in new_metadata.items()}
+        if new_normalized == self._original_metadata:
             self.dismiss(None)
             return
-        self.dismiss({"task_id": self.detail.id, "metadata": new_metadata})
+        self.dismiss({self._result_key: self._entity_id, "metadata": new_metadata})

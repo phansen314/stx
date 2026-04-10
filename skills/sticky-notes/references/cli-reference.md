@@ -468,6 +468,8 @@ todo backup /tmp/sticky-notes-backup.db --overwrite
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
 
+**Keybindings** (selected): `w` focus tree, `b` focus board, `e` edit selected entity, `m` edit metadata on selected entity (task/workspace/project/group), `n` new resource, `s` switch workspace, `[`/`]` move task across statuses, `r` refresh, `ctrl+q` quit. The metadata editor is reached by pressing `m` on a focused kanban task card or any entity node in the workspace tree; it presents editable key/value rows with add/delete buttons and atomically bulk-replaces the entity's metadata blob on save via `service.replace_*_metadata`. Keys are normalized to lowercase before comparison so retyping a key's case is a no-op.
+
 ---
 
 ## `--by-title` Flag

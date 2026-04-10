@@ -462,6 +462,25 @@ def _copy_metadata(
         raise LookupError(f"{_METADATA_TABLES[table]} {dst_id} not found")
 
 
+def _replace_metadata(
+    conn: sqlite3.Connection,
+    table: str,
+    entity_id: int,
+    metadata_json: str,
+) -> None:
+    """Atomically replace the entire metadata blob. Caller must supply a
+    pre-serialized JSON object string; validity is enforced by the column's
+    CHECK (json_valid(metadata)) constraint."""
+    if table not in _METADATA_TABLES:
+        raise ValueError(f"invalid metadata table: {table!r}")
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = ? WHERE id = ?",
+        (metadata_json, entity_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_METADATA_TABLES[table]} {entity_id} not found")
+
+
 # ---- Per-entity public wrappers ----
 
 
@@ -481,12 +500,7 @@ def copy_task_metadata(conn: sqlite3.Connection, src_task_id: int, dst_task_id: 
 
 
 def replace_task_metadata(conn: sqlite3.Connection, task_id: int, metadata_json: str) -> None:
-    cur = conn.execute(
-        "UPDATE tasks SET metadata = ? WHERE id = ?",
-        (metadata_json, task_id),
-    )
-    if cur.rowcount == 0:
-        raise LookupError(f"task {task_id} not found")
+    _replace_metadata(conn, "tasks", task_id, metadata_json)
 
 
 def set_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> None:
@@ -497,6 +511,10 @@ def remove_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, k
     _remove_metadata_key(conn, "workspaces", workspace_id, key)
 
 
+def replace_workspace_metadata(conn: sqlite3.Connection, workspace_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "workspaces", workspace_id, metadata_json)
+
+
 def set_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> None:
     _set_metadata_key(conn, "projects", project_id, key, value)
 
@@ -505,12 +523,20 @@ def remove_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: 
     _remove_metadata_key(conn, "projects", project_id, key)
 
 
+def replace_project_metadata(conn: sqlite3.Connection, project_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "projects", project_id, metadata_json)
+
+
 def set_group_metadata_key(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> None:
     _set_metadata_key(conn, "groups", group_id, key, value)
 
 
 def remove_group_metadata_key(conn: sqlite3.Connection, group_id: int, key: str) -> None:
     _remove_metadata_key(conn, "groups", group_id, key)
+
+
+def replace_group_metadata(conn: sqlite3.Connection, group_id: int, metadata_json: str) -> None:
+    _replace_metadata(conn, "groups", group_id, metadata_json)
 
 
 # ---- Task dependency functions ----

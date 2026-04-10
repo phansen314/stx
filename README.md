@@ -114,6 +114,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 
 - **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right). Diff-based kanban sync with coalescing refresh.
 - **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing. The task modal has a Group selector that filters by the selected Project and updates reactively.
+- **Metadata editor**: Press `m` on any tree node (task, workspace, project, group) or kanban card to view/edit the entity's JSON key/value metadata blob. Dynamic rows with add/delete, client-side duplicate-key detection, and bulk-replace on save via `service.replace_*_metadata`.
 - **Create modals**: Press `n` to create new tasks, projects, or groups via a resource type selector. The task-create modal exposes the same project-scoped Group selector.
 - **Workspace switching**: Press `s` to switch between workspaces.
 - **Config**: `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds)
@@ -126,6 +127,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 | `b` | Focus kanban board |
 | `r` | Refresh |
 | `e` | Edit selected entity |
+| `m` | Edit metadata on selected entity |
 | `n` | Create new (task/group/project) |
 | `s` | Switch workspace |
 | `[` / `]` | Move task left/right across statuses |

@@ -2282,6 +2282,192 @@ class TestReplaceTaskMetadata:
         assert before == after
 
 
+class TestReplaceWorkspaceMetadata:
+    def _setup(self, conn: sqlite3.Connection) -> int:
+        return insert_workspace(conn, "w")
+
+    def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        ws = service.replace_workspace_metadata(
+            conn, wid, {"a": "1", "b": "2"}, source="test",
+        )
+        assert ws.metadata == {"a": "1", "b": "2"}
+
+    def test_replace_clears_all_with_empty_dict(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        service.set_workspace_meta(conn, wid, "a", "1")
+        ws = service.replace_workspace_metadata(conn, wid, {}, source="test")
+        assert ws.metadata == {}
+
+    def test_replace_overwrites_existing(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        service.set_workspace_meta(conn, wid, "a", "1")
+        ws = service.replace_workspace_metadata(
+            conn, wid, {"a": "2", "b": "3"}, source="test",
+        )
+        assert ws.metadata == {"a": "2", "b": "3"}
+
+    def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        ws = service.replace_workspace_metadata(
+            conn, wid, {"Foo": "bar"}, source="test",
+        )
+        assert ws.metadata == {"foo": "bar"}
+
+    def test_replace_rejects_bad_key_shape(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.replace_workspace_metadata(
+                conn, wid, {"has space": "v"}, source="test",
+            )
+
+    def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        with pytest.raises(ValueError, match="500"):
+            service.replace_workspace_metadata(
+                conn, wid, {"k": "x" * 501}, source="test",
+            )
+
+    def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        with pytest.raises(ValueError, match="duplicate metadata key"):
+            service.replace_workspace_metadata(
+                conn, wid, {"foo": "1", "FOO": "2"}, source="test",
+            )
+
+    def test_replace_missing_workspace_raises_lookup(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError):
+            service.replace_workspace_metadata(
+                conn, 999, {"k": "v"}, source="test",
+            )
+
+
+class TestReplaceProjectMetadata:
+    def _setup(self, conn: sqlite3.Connection) -> int:
+        wid = insert_workspace(conn, "w")
+        return insert_project(conn, wid, "p")
+
+    def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        p = service.replace_project_metadata(
+            conn, pid, {"a": "1", "b": "2"}, source="test",
+        )
+        assert p.metadata == {"a": "1", "b": "2"}
+
+    def test_replace_clears_all_with_empty_dict(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        service.set_project_meta(conn, pid, "a", "1")
+        p = service.replace_project_metadata(conn, pid, {}, source="test")
+        assert p.metadata == {}
+
+    def test_replace_overwrites_existing(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        service.set_project_meta(conn, pid, "a", "1")
+        p = service.replace_project_metadata(
+            conn, pid, {"a": "2", "b": "3"}, source="test",
+        )
+        assert p.metadata == {"a": "2", "b": "3"}
+
+    def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        p = service.replace_project_metadata(
+            conn, pid, {"Foo": "bar"}, source="test",
+        )
+        assert p.metadata == {"foo": "bar"}
+
+    def test_replace_rejects_bad_key_shape(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.replace_project_metadata(
+                conn, pid, {"has space": "v"}, source="test",
+            )
+
+    def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        with pytest.raises(ValueError, match="500"):
+            service.replace_project_metadata(
+                conn, pid, {"k": "x" * 501}, source="test",
+            )
+
+    def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
+        pid = self._setup(conn)
+        with pytest.raises(ValueError, match="duplicate metadata key"):
+            service.replace_project_metadata(
+                conn, pid, {"foo": "1", "FOO": "2"}, source="test",
+            )
+
+    def test_replace_missing_project_raises_lookup(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError):
+            service.replace_project_metadata(
+                conn, 999, {"k": "v"}, source="test",
+            )
+
+
+class TestReplaceGroupMetadata:
+    def _setup(self, conn: sqlite3.Connection) -> int:
+        wid = insert_workspace(conn, "w")
+        pid = insert_project(conn, wid, "p")
+        return insert_group(conn, pid, "g")
+
+    def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        g = service.replace_group_metadata(
+            conn, gid, {"a": "1", "b": "2"}, source="test",
+        )
+        assert g.metadata == {"a": "1", "b": "2"}
+
+    def test_replace_clears_all_with_empty_dict(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        service.set_group_meta(conn, gid, "a", "1")
+        g = service.replace_group_metadata(conn, gid, {}, source="test")
+        assert g.metadata == {}
+
+    def test_replace_overwrites_existing(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        service.set_group_meta(conn, gid, "a", "1")
+        g = service.replace_group_metadata(
+            conn, gid, {"a": "2", "b": "3"}, source="test",
+        )
+        assert g.metadata == {"a": "2", "b": "3"}
+
+    def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        g = service.replace_group_metadata(
+            conn, gid, {"Foo": "bar"}, source="test",
+        )
+        assert g.metadata == {"foo": "bar"}
+
+    def test_replace_rejects_bad_key_shape(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        with pytest.raises(ValueError, match="must match"):
+            service.replace_group_metadata(
+                conn, gid, {"has space": "v"}, source="test",
+            )
+
+    def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        with pytest.raises(ValueError, match="500"):
+            service.replace_group_metadata(
+                conn, gid, {"k": "x" * 501}, source="test",
+            )
+
+    def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
+        gid = self._setup(conn)
+        with pytest.raises(ValueError, match="duplicate metadata key"):
+            service.replace_group_metadata(
+                conn, gid, {"foo": "1", "FOO": "2"}, source="test",
+            )
+
+    def test_replace_missing_group_raises_lookup(self, conn: sqlite3.Connection) -> None:
+        self._setup(conn)
+        with pytest.raises(LookupError):
+            service.replace_group_metadata(
+                conn, 999, {"k": "v"}, source="test",
+            )
+
+
 # ---- Workspace / Project / Group metadata ----
 
 

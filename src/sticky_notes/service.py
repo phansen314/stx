@@ -922,6 +922,37 @@ def _remove_entity_meta(
         return fetcher(conn, entity_id)
 
 
+def _replace_entity_metadata(
+    conn: sqlite3.Connection,
+    entity_id: int,
+    new_metadata: dict[str, str],
+    *,
+    writer: Callable[[sqlite3.Connection, int, str], None],
+    fetcher: Callable[[sqlite3.Connection, int], Any],
+) -> Any:
+    """Generic bulk-replace for an entity's metadata blob.
+
+    Normalizes every key, rejects duplicates after normalization, enforces
+    the per-value length cap, then writes the whole dict in one UPDATE and
+    returns the refreshed entity. No history is recorded — consistent with
+    per-key set/remove helpers which also bypass history.
+    """
+    normalized: dict[str, str] = {}
+    for raw_key, value in new_metadata.items():
+        key = _normalize_meta_key(raw_key)
+        if key in normalized:
+            raise ValueError(f"duplicate metadata key after normalization: {key!r}")
+        if len(value) > _META_VALUE_MAX:
+            raise ValueError(
+                f"metadata value for key {key!r} must be \u2264 {_META_VALUE_MAX} characters"
+            )
+        normalized[key] = value
+    with transaction(conn), _friendly_errors():
+        fetcher(conn, entity_id)  # existence check
+        writer(conn, entity_id, json.dumps(normalized))
+        return fetcher(conn, entity_id)
+
+
 # ---- Task metadata ----
 
 
@@ -953,29 +984,16 @@ def replace_task_metadata(
     *,
     source: str,
 ) -> Task:
-    """Atomically replace a task's entire metadata blob.
-
-    Validates every key/value the same way `set_task_meta` validates one pair,
-    then writes the whole dict in a single UPDATE. No task_history entry is
-    recorded — consistent with per-key `set_task_meta` / `remove_task_meta`,
-    which also bypass history. `source` is accepted for signature parity with
-    `update_task` so future history tracking can land without breaking callers.
+    """Atomically replace a task's entire metadata blob. `source` is accepted
+    for signature parity with `update_task`; metadata writes don't record
+    history today (consistent with per-key `set_task_meta` / `remove_task_meta`).
     """
     del source  # not tracked today; see docstring
-    normalized: dict[str, str] = {}
-    for raw_key, value in new_metadata.items():
-        key = _normalize_meta_key(raw_key)
-        if key in normalized:
-            raise ValueError(f"duplicate metadata key after normalization: {key!r}")
-        if len(value) > _META_VALUE_MAX:
-            raise ValueError(
-                f"metadata value for key {key!r} must be \u2264 {_META_VALUE_MAX} characters"
-            )
-        normalized[key] = value
-    with transaction(conn), _friendly_errors():
-        get_task(conn, task_id)
-        repo.replace_task_metadata(conn, task_id, json.dumps(normalized))
-        return get_task(conn, task_id)
+    return _replace_entity_metadata(
+        conn, task_id, new_metadata,
+        writer=repo.replace_task_metadata,
+        fetcher=get_task,
+    )
 
 
 # ---- Workspace metadata ----
@@ -999,6 +1017,24 @@ def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str)
         remover=repo.remove_workspace_metadata_key,
         fetcher=get_workspace,
         entity_name="workspace",
+    )
+
+
+def replace_workspace_metadata(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Workspace:
+    """Atomically replace a workspace's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, workspace_id, new_metadata,
+        writer=repo.replace_workspace_metadata,
+        fetcher=get_workspace,
     )
 
 
@@ -1026,6 +1062,24 @@ def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> 
     )
 
 
+def replace_project_metadata(
+    conn: sqlite3.Connection,
+    project_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Project:
+    """Atomically replace a project's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, project_id, new_metadata,
+        writer=repo.replace_project_metadata,
+        fetcher=get_project,
+    )
+
+
 # ---- Group metadata ----
 
 
@@ -1047,6 +1101,24 @@ def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> Grou
         remover=repo.remove_group_metadata_key,
         fetcher=get_group,
         entity_name="group",
+    )
+
+
+def replace_group_metadata(
+    conn: sqlite3.Connection,
+    group_id: int,
+    new_metadata: dict[str, str],
+    *,
+    source: str,
+) -> Group:
+    """Atomically replace a group's entire metadata blob. See
+    `replace_task_metadata` for the `source` parameter rationale.
+    """
+    del source
+    return _replace_entity_metadata(
+        conn, group_id, new_metadata,
+        writer=repo.replace_group_metadata,
+        fetcher=get_group,
     )
 
 
