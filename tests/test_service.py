@@ -630,6 +630,16 @@ class TestTaskService:
         with pytest.raises(ValueError, match="priority"):
             service.preview_update_task(conn, task.id, {"priority": "high"})  # type: ignore[dict-item]
 
+    def test_diff_fields_rejects_unknown_key(self, conn: sqlite3.Connection) -> None:
+        """_diff_fields must raise AttributeError on typo'd change keys
+        rather than silently producing a bogus None-valued entry.
+        """
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        task = service.create_task(conn, bid, "t", cid)
+        with pytest.raises(AttributeError):
+            service._diff_fields(task, {"nonexistent_field": "x"})
+
     def test_preview_update_task_after_matches_real_update(self, conn: sqlite3.Connection) -> None:
         """Drift guard: preview's `after` dict must equal the actual field
         values written by update_task for the same changes.

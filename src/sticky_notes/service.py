@@ -1836,11 +1836,15 @@ def preview_update_group(
 def _diff_fields(entity: Any, changes: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (before, after) dicts containing only fields in `changes`
     whose new value differs from the entity's current value.
+
+    Raises AttributeError if a key in `changes` doesn't exist on the
+    entity — surfaces caller typos loudly instead of silently producing
+    a bogus None-valued diff entry.
     """
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     for key, new_value in changes.items():
-        current = getattr(entity, key, None)
+        current = getattr(entity, key)
         if current != new_value:
             before[key] = current
             after[key] = new_value
