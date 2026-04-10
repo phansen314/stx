@@ -317,9 +317,14 @@ def cmd_workspace_archive(conn: sqlite3.Connection, args: argparse.Namespace, db
         if not _confirm_archive(preview, json_mode=args.json):
             return Ok(data=None, text="aborted")
     archived = service.cascade_archive_workspace(conn, workspace.id, source="cli")
-    if get_active_workspace_id(db_path) == workspace.id:
+    was_active = get_active_workspace_id(db_path) == workspace.id
+    if was_active:
         clear_active_workspace_id(db_path)
-    return Ok(data=archived, text=f"archived workspace '{workspace.name}' and all descendants")
+    suffix = " (active pointer cleared)" if was_active else ""
+    return Ok(
+        data={"workspace": archived, "active_cleared": was_active},
+        text=f"archived workspace '{workspace.name}' and all descendants{suffix}",
+    )
 
 
 # ---- Status subcommands ----

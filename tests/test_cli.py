@@ -163,6 +163,23 @@ class TestWorkspaceCommands:
         cli("-w", "ops", "workspace", "archive", "--force")
         assert get_active_workspace_id(db_path) is not None
 
+    def test_archive_json_shape_includes_active_cleared(self, cli):
+        cli("workspace", "create", "dev")
+        out, _ = cli("--json", "workspace", "archive", "--force")
+        data = json.loads(out)["data"]
+        assert data["active_cleared"] is True
+        assert data["workspace"]["name"] == "dev"
+        assert data["workspace"]["archived"] is True
+
+    def test_archive_json_shape_active_cleared_false_for_inactive(self, cli):
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
+        out, _ = cli("-w", "ops", "--json", "workspace", "archive", "--force")
+        data = json.loads(out)["data"]
+        assert data["active_cleared"] is False
+        assert data["workspace"]["name"] == "ops"
+
     def test_use_nonexistent(self, cli):
         _, err = cli("workspace", "use", "nope", expect_exit=3)
         assert "error:" in err
