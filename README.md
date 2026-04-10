@@ -65,7 +65,7 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 | `--archived {hide,include,only}` | Archived visibility (default `hide`) |
 | `--status` / `-S` | Filter by status name |
 | `--project` / `-p` | Filter by project name |
-| `--priority` | Filter by priority (1-5) |
+| `--priority` | Filter by priority integer |
 | `--search` | Search by title substring |
 | `--group` / `-g` | Filter by group title |
 | `--tag` / `-t` | Filter by tag name |

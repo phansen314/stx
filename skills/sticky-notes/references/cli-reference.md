@@ -43,7 +43,7 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | `--status` | `-S` | **required** | Target status name |
 | `--desc` | `-d` | — | Description |
 | `--project` | `-p` | — | Project name |
-| `--priority` | — | `1` | Priority 1–5 (convention: 1=lowest; range only is enforced) |
+| `--priority` | — | `1` | Priority (free-form integer; interpretation is user-defined — use metadata for labeled schemes) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
 | `--tag` | `-t` | — | Tag name (repeatable) |
 | `--group` | `-g` | — | Group title (infers project from group if `--project` not given) |
@@ -66,7 +66,7 @@ The JSON response is a full `TaskDetail` (same shape as `todo task show`), inclu
 | `--archived` | — | `hide` | Archived visibility: `hide` (default), `include` (active + archived), `only` (archived only) |
 | `--status` | `-S` | — | Filter by status name |
 | `--project` | `-p` | — | Filter by project name |
-| `--priority` | — | — | Filter by priority (1–5) |
+| `--priority` | — | — | Filter by priority integer |
 | `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
 | `--tag` | `-t` | — | Filter by tag name |
@@ -99,7 +99,7 @@ All flags are optional; only provided fields are updated.
 |---|---|---|---|
 | `--title` | — | — | New title |
 | `--desc` | `-d` | — | New description |
-| `--priority` | — | — | New priority (1–5) |
+| `--priority` | — | — | New priority integer |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
 | `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |

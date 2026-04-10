@@ -1014,7 +1014,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--archived", choices=["hide", "include", "only"], default="hide", help="archived visibility: hide (default), include, or only")
     p_ls.add_argument("--status", "-S", default=None, help="filter by status name")
     p_ls.add_argument("--project", "-p", default=None, help="filter by project name")
-    p_ls.add_argument("--priority", type=int, default=None, help="filter by priority (1-5)")
+    p_ls.add_argument("--priority", type=int, default=None, help="filter by priority integer")
     p_ls.add_argument("--search", default=None, help="search title substring")
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
     p_ls.add_argument("--tag", "-t", default=None, help="filter by tag name")

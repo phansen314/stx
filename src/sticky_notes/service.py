@@ -121,8 +121,8 @@ def _validate_task_fields(
 ) -> None:
     if "priority" in changes:
         p = changes["priority"]
-        if not isinstance(p, int) or not 1 <= p <= 5:
-            raise ValueError(f"priority must be between 1 and 5, got {p}")
+        if not isinstance(p, int):
+            raise ValueError(f"priority must be an integer, got {p!r}")
     if "position" in changes:
         pos = changes["position"]
         if not isinstance(pos, int) or pos < 0:

@@ -550,17 +550,19 @@ class TestTaskService:
 
     # ---- Pre-validation ----
 
-    def test_create_priority_too_low(self, conn: sqlite3.Connection) -> None:
+    def test_create_priority_unbounded_round_trip(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
-        with pytest.raises(ValueError, match="priority"):
-            service.create_task(conn, bid, "t", cid, priority=0)
+        t_low = service.create_task(conn, bid, "t-low", cid, priority=-1)
+        t_high = service.create_task(conn, bid, "t-high", cid, priority=42)
+        assert t_low.priority == -1
+        assert t_high.priority == 42
 
-    def test_create_priority_too_high(self, conn: sqlite3.Connection) -> None:
+    def test_create_priority_non_int_rejected(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         with pytest.raises(ValueError, match="priority"):
-            service.create_task(conn, bid, "t", cid, priority=6)
+            service.create_task(conn, bid, "t", cid, priority="high")  # type: ignore[arg-type]
 
     def test_create_negative_position(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -574,12 +576,12 @@ class TestTaskService:
         with pytest.raises(ValueError, match="finish date"):
             service.create_task(conn, bid, "t", cid, start_date=200, finish_date=100)
 
-    def test_update_priority_out_of_range(self, conn: sqlite3.Connection) -> None:
+    def test_update_priority_unbounded(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
-        with pytest.raises(ValueError, match="priority"):
-            service.update_task(conn, task.id, {"priority": 0}, "test")
+        updated = service.update_task(conn, task.id, {"priority": 99}, "test")
+        assert updated.priority == 99
 
     def test_update_negative_position(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)

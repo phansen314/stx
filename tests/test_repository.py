@@ -485,19 +485,16 @@ class TestTaskRepository:
         )
         assert task.priority == 5
 
-    def test_priority_below_lower_bound_rejected(self, conn: sqlite3.Connection) -> None:
+    def test_priority_accepts_unbounded_integers(self, conn: sqlite3.Connection) -> None:
         workspace, col = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_task(
-                conn, NewTask(workspace_id=workspace.id, title="bad", status_id=col.id, priority=0)
-            )
-
-    def test_priority_above_upper_bound_rejected(self, conn: sqlite3.Connection) -> None:
-        workspace, col = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_task(
-                conn, NewTask(workspace_id=workspace.id, title="bad", status_id=col.id, priority=6)
-            )
+        task_low = insert_task(
+            conn, NewTask(workspace_id=workspace.id, title="t-low", status_id=col.id, priority=-1)
+        )
+        task_high = insert_task(
+            conn, NewTask(workspace_id=workspace.id, title="t-high", status_id=col.id, priority=42)
+        )
+        assert task_low.priority == -1
+        assert task_high.priority == 42
 
     def test_empty_title_allowed(self, conn: sqlite3.Connection) -> None:
         workspace, col = self._setup(conn)

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`--by-title` flag removed** from every task-referencing command. Task identifiers are now auto-detected: numeric forms (`1`, `task-0001`, `#1`) resolve as IDs; everything else is looked up as a title on the active workspace. Affects `task show/edit/mv/transfer/archive/log`, `task meta ls/get/set/del`, `dep create/archive`, `group assign/unassign`. Breaking for scripts that passed `--by-title` explicitly. A task whose title literally matches `task-NNNN` would be resolved as an ID — avoid such titles.
 - **`todo task mv` status argument is now a required flag** (`--status` / `-S`) instead of a second positional. Matches the `task create` / `task transfer` shape. Optional `position` remains a positional integer after the task identifier. Breaking.
 - **`task ls`, `workspace ls`, and `tag ls` replace `--all`/`--archived` booleans with a single tri-state `--archived {hide,include,only}`** (default `hide`). `--all`/`-a` is gone; the previous boolean `--archived` meaning "only archived" now requires `--archived only`. Breaking.
+- **Priority is now an unconstrained integer.** Migration 012 drops the `CHECK (priority BETWEEN 1 AND 5)` constraint on `tasks.priority`; service-layer range validation is gone. Interpretation (direction, labels) is the user's concern — use entity metadata if a fixed scheme is needed. Default stays at `1`. Behaviour relaxation rather than a breaking change: inputs that used to error now succeed.
 
 ## [0.7.0] — 2026-04-10
 

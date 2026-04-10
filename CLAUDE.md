@@ -32,7 +32,7 @@ src/sticky_notes/
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
-  migrations/        # numbered SQL migration files (001_*.sql ... 011_*.sql)
+  migrations/        # numbered SQL migration files (001_*.sql ... 012_*.sql)
   tui/
     app.py           # StickyNotesApp — main Textual app, two-panel layout, keybindings, modal dispatch
     model.py         # WorkspaceModel — loads workspace hierarchy via service, builds tree
