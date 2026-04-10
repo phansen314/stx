@@ -146,6 +146,42 @@ Shows the full audit trail of field changes (TaskHistory).
 
 ---
 
+### `todo task meta` — Task Metadata Key/Value Store
+
+Each task carries a JSON key/value blob for arbitrary metadata (external IDs, branch names, JIRA tickets, etc.). Keys are **case-insensitive** (normalized to lowercase on write); lookups with any casing resolve to the stored lowercase form.
+
+**Key rules:** charset `[a-z0-9_.-]+` after lowercase-normalization, 1–64 characters.
+**Value rules:** free-form text, up to 500 characters.
+
+| Command | Args | Description |
+|---|---|---|
+| `task meta ls` | `task_num` | List all metadata entries; empty → `"no metadata"` |
+| `task meta get` | `task_num key` | Get the value for a key. `LookupError` if key not set. |
+| `task meta set` | `task_num key value` | Set (create or overwrite) a key's value |
+| `task meta del` | `task_num key` | Remove a key. `LookupError` if key not set. |
+
+All four accept `--by-title` to resolve the task by title.
+
+**JSON `data` shape** — uniform across all four commands:
+
+- `task meta ls` → `[{"key": "...", "value": "..."}]` (sorted by key; empty list if no metadata)
+- `task meta get` → `{"key": "...", "value": "..."}`
+- `task meta set` → `{"key": "...", "value": "..."}` (the just-set record; key is the lowercase-normalized form)
+- `task meta del` → `{"key": "...", "value": "..."}` (the just-removed record)
+
+```sh
+todo task meta set task-0001 branch feat/kv
+todo task meta set task-0001 jira PROJ-123
+todo task meta set task-0001 BRANCH feat/kv-v2   # "BRANCH" normalizes to "branch"; overwrites
+todo task meta ls task-0001
+todo task meta get task-0001 branch
+todo task meta del task-0001 jira
+```
+
+Metadata is also shown by `todo task show` and included in `todo export --md` (dedicated "Metadata" section per task) and `todo export` (JSON `tasks[].metadata` object). Cross-workspace `todo task transfer` copies metadata verbatim to the new task.
+
+---
+
 ### `todo context`
 
 Single-call workspace snapshot. No arguments. Outputs: statuses with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions.
@@ -345,7 +381,7 @@ todo info
 todo --json info
 ```
 
-JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...], "reset_command": "python scripts/wipe_db.py"}`
+JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...]}`
 
 ---
 
@@ -370,7 +406,7 @@ Launches the Textual TUI interface. No JSON output. Useful for interactive explo
 
 Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
-`task show` · `task edit` · `task mv` · `task transfer` · `task archive` · `task log` · `dep create` · `dep archive` · `group assign` · `group unassign`
+`task show` · `task edit` · `task mv` · `task transfer` · `task archive` · `task log` · `task meta ls` · `task meta get` · `task meta set` · `task meta del` · `dep create` · `dep archive` · `group assign` · `group unassign`
 
 ---
 
@@ -395,13 +431,15 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
 | `group ls` | array of GroupRef objects |
-| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`) |
+| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
 | `project show` | ProjectDetail with `tasks` array |
 | `group show` | GroupDetail with `tasks` and `children` arrays |
 | `task log` | array of TaskHistory objects |
 | `context` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 | `backup` | `{"source": "...", "dest": "...", "bytes": N}` |
-| `info` | `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...], "reset_command": "..."}` |
+| `info` | `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...]}` |
+| `task meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
+| `task meta get`, `task meta set`, `task meta del` | `{"key": "...", "value": "..."}` |
 
 > **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "statuses": [...]}` directly at the top level. `context` wraps the same workspace+statuses shape inside a `"view"` key — they are **not** interchangeable payloads.

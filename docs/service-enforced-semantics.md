@@ -91,13 +91,18 @@ is permitted. This supports fixing metadata before unarchiving.
 ### Cross-workspace move side effects
 
 A cross-workspace move creates a new task on the target workspace and archives the
-original. The following are NOT carried over:
+original. Carried over:
 
 - **Tags** — migrated by name: active tags from the original task are re-applied
   to the new task using the target workspace's tags (created on the target workspace if
-  they don't exist yet).
-- **group_id** — not carried over; groups are project-scoped and the task may
-  have a new or no project on the target workspace.
+  they don't exist yet). Archived source tags are not resurrected.
+- **Metadata** — copied verbatim via `repo.copy_task_metadata` (one-shot
+  JSON-blob copy; keys retain their lowercase-normalized form).
+
+NOT carried over:
+
+- **group_id** — groups are project-scoped and the task may have a new or no
+  project on the target workspace.
 - **History** — the original task retains its history; the new task starts fresh.
 
 ## Automatic Behaviors (service-only)
@@ -106,7 +111,42 @@ original. The following are NOT carried over:
   then applies it to the task. Calling `tag_task` is the only way to tag a task;
   it never fails with "tag not found."
 - **Assigning a task to a group auto-sets the task's project** if the task has no
-  project. If the task already has a different project, the assignment is rejected.
+  project. This convenience lives in the `assign_task_to_group` wrapper (used by
+  `todo group assign`) — the underlying `update_task` is strict and requires the
+  caller to supply a consistent `project_id` alongside `group_id` when the task
+  has none.
+
+## Group–Project Consistency (service-only)
+
+- **A task's group must belong to the same project as the task.** Enforced by
+  `_validate_group_project_consistency()` on every `update_task` call that
+  touches `project_id` or `group_id`. The check uses the *effective* project
+  and group (pending change or current value), catching both directions:
+  - Assigning/changing a group whose project doesn't match the task's project.
+  - Changing the task's project out from under an existing group — the caller
+    must also clear or re-point `group_id` in the same update.
+- **Archived-group gating:** if a task's existing group was archived after
+  assignment, any subsequent `update_task` that touches `project_id` or
+  `group_id` will surface the "group is archived" error. The user must first
+  clear or reassign the group. Updates that don't touch those fields are
+  unaffected.
+- **`update_task` accepts `group_id` directly.** There is no second code path:
+  `assign_task_to_group` and `unassign_task_from_group` are thin wrappers over
+  `update_task` (via an inner `_update_task_body` so they can hold their own
+  outer transaction without tripping the transaction manager's nesting guard).
+
+## Task Metadata (service-only)
+
+- **Metadata keys are normalized to lowercase** on write, read, and removal
+  (`_normalize_meta_key()`). This matches the codebase's case-insensitive naming
+  convention (`COLLATE NOCASE`), which can't be applied directly to JSON keys.
+- **Key charset:** `[a-z0-9_.-]+` after normalization; max 64 characters.
+- **Value length cap:** 500 characters. Values are otherwise free-form text.
+- **Keys are stored lowercase:** `task meta set X branch feat/kv` and
+  `task meta get X BRANCH` resolve to the same entry.
+- **Removing a missing key raises `LookupError`** with a "not found" message.
+- **Cross-workspace move preserves metadata** — copied verbatim via
+  `repo.copy_task_metadata` as part of `move_task_to_workspace`.
 
 ## Audit Trail (service-only logic, DB-enforced schema)
 

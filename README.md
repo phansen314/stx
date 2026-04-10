@@ -45,13 +45,14 @@ Entry point: `todo`
 
 | Command | Description |
 |---------|-------------|
-| `todo task create <title> -S <status>` | Create a task in the named status (required) |
+| `todo task create <title> -S <status>` | Create a task in the named status (required); accepts `--group/-g` |
 | `todo task ls` | List tasks on the active workspace |
-| `todo task show <task>` | Show task detail with history and dependencies |
+| `todo task show <task>` | Show task detail with history, dependencies, and metadata |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
 | `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
 | `todo task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
 | `todo task log <task>` | Show task change history |
+| `todo task meta ls\|get\|set\|del <task> ...` | JSON key/value metadata CRUD (lowercase-normalized keys) |
 
 Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
 
@@ -76,11 +77,11 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 |---------|-------------|
 | `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `archive [--force\|--dry-run]` |
 | `todo status ...` | `create`, `ls`, `rename`, `archive [--reassign-to STATUS\|--force]` |
-| `todo project ...` | `create`, `ls`, `show`, `archive [--force\|--dry-run]` |
+| `todo project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc\|--name]`, `archive [--force\|--dry-run]` |
 | `todo dep ...` | `create`, `archive` |
 | `todo group-dep ...` | `create`, `archive` (group-level dependencies) |
 | `todo tag ...` | `create`, `ls`, `archive [--unassign\|--force\|--dry-run]` |
-| `todo group ...` | `create`, `ls [--tree]`, `show`, `rename`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign` |
+| `todo group ...` | `create [--desc]`, `ls [--tree]`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign` |
 | `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
 | `todo export` | Export database as JSON (default) or Markdown (`--md`) |
 | `todo info` | Show sticky-notes file locations |
@@ -112,8 +113,8 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 ```
 
 - **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right). Diff-based kanban sync with coalescing refresh.
-- **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing.
-- **Create modals**: Press `Alt+N` to create new tasks, projects, or groups via a resource type selector.
+- **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing. The task modal has a Group selector that filters by the selected Project and updates reactively.
+- **Create modals**: Press `n` to create new tasks, projects, or groups via a resource type selector. The task-create modal exposes the same project-scoped Group selector.
 - **Workspace switching**: Press `s` to switch between workspaces.
 - **Config**: `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds)
 

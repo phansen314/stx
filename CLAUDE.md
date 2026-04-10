@@ -32,7 +32,7 @@ src/sticky_notes/
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
-  migrations/        # numbered SQL migration files (001_*.sql ... 009_*.sql)
+  migrations/        # numbered SQL migration files (001_*.sql ... 010_*.sql)
   tui/
     app.py           # StickyNotesApp — main Textual app, two-panel layout, keybindings, modal dispatch
     model.py         # WorkspaceModel — loads workspace hierarchy via service, builds tree
@@ -85,6 +85,7 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 
 **Command structure:**
 - Task subcommands: `todo task create|ls|show|edit|mv|transfer|archive|log` (`create` accepts `--group/-g`)
+- Task metadata: `todo task meta ls|get|set|del` (JSON key/value blob on each task)
 - Project subcommands: `todo project create|ls|show|edit|archive`
 - Group subcommands: `todo group create|ls|show|rename|edit|archive|mv|assign|unassign`
 - Other subcommand groups: `workspace`, `status`, `dep`, `group-dep`, `tag`
@@ -131,7 +132,8 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - **Active workspace file** — persisted at `~/.local/share/sticky-notes/active-workspace`. CLI resolves workspace from `--workspace` flag or this file.
 - **Tags** — workspace-scoped, many-to-many with tasks via `task_tags` junction table. `tag_task` auto-creates the tag if it doesn't exist. Composite FKs enforce same-workspace scoping at the DB level.
 - **Error translation** — `_friendly_errors()` context manager in the service layer catches `IntegrityError` and translates to `ValueError` with human-readable messages. `_UNIQUE_MESSAGES` dict maps constraint patterns to messages.
-- **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (status/project exists, on correct workspace, not archived) before hitting the DB.
+- **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (status/project exists, on correct workspace, not archived) before hitting the DB. `_validate_group_project_consistency()` separately enforces the (project_id, group_id) invariant whenever either field is in an update's `changes` dict — catches both "assign a group to a task in the wrong project" and "change project out from under an existing group". `update_task` is split into an outer public entry point that owns the transaction and an inner `_update_task_body` that can be called from service functions already holding a transaction (e.g. the `assign_task_to_group` wrapper).
+- **Task metadata** — each task carries a JSON key/value blob (`tasks.metadata`, `CHECK (json_valid(metadata))`). Keys are normalized to lowercase on write/read via `_normalize_meta_key()` in service (matching the codebase's `COLLATE NOCASE` convention, which doesn't apply to JSON fields directly). Key charset: `[a-z0-9_.-]+`, max 64 chars. Values are free-form text up to 500 chars. CLI CRUD via `todo task meta ls|get|set|del`; all four commands return a uniform `{key, value}` shape in `--json` mode.
 - **Migrations** — numbered SQL files in `src/sticky_notes/migrations/` (e.g., `004_column_to_status.sql`). `_run_migrations()` discovers files by version prefix, wraps each in FK-off + transaction + FK-revalidate. SQL files contain only DDL/DML — no PRAGMAs, no transaction control. `SCHEMA_VERSION` is explicit; a test asserts it matches the highest migration file number. Fresh databases skip migrations entirely (`init_db` runs `schema.sql` and stamps `SCHEMA_VERSION`). When recreating tables with FK deps (e.g. `tasks`), cascade-recreate dependent tables (`task_dependencies`, `task_tags`, `task_history`); use `CASE` in INSERT to transform field values rather than UPDATE before recreate (avoids violating the old CHECK constraint). Note: `task_history` must be recreated whenever `tasks` is renamed, because SQLite automatically redirects its FK reference to the renamed table.
 - **BaseEditModal pattern** — shared TUI modal base class providing save/cancel buttons, error display, `ctrl+n`/`ctrl+b` field navigation, `_do_save` (subclass hook), `_diff_and_dismiss` (edit modals), and `_parse_date_field` (date input validation). `_dismiss_callback` on `StickyNotesApp` wraps the null-check → try/except ValueError → notify → refresh pattern used by all modal callbacks.
 - **Export** — `export.py` renders the full database to Markdown with Mermaid dependency graphs.

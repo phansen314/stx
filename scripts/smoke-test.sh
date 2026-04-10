@@ -81,7 +81,7 @@ run "Switch back to 'Personal'" \
     $CMD workspace use Personal
 
 run "Archive 'Personal'" \
-    $CMD workspace rm Personal
+    $CMD workspace archive Personal --force
 
 run "List workspaces (archived hidden)" \
     $CMD workspace ls
@@ -122,7 +122,7 @@ run "List statuses (verify rename)" \
     $CMD status ls
 
 run "Archive status 'Todo'" \
-    $CMD status rm Todo
+    bash -c "echo y | $CMD status archive Todo --force"
 
 run "List statuses (after archive)" \
     $CMD status ls
@@ -145,7 +145,7 @@ run "Show project 'Backend'" \
     $CMD project show Backend
 
 run "Archive project 'Frontend'" \
-    $CMD project rm Frontend
+    $CMD project archive Frontend --force
 
 run "List projects (after archive)" \
     $CMD project ls
@@ -207,10 +207,10 @@ run "List tasks (verify move)" \
     $CMD task ls
 
 # ────────────────────────────────────────────────────────────────────
-section "Task: rm"
+section "Task: archive"
 
 run "Archive task 2" \
-    $CMD task rm task-0002
+    $CMD task archive task-0002 --force
 
 run "List tasks (task 2 hidden)" \
     $CMD task ls
@@ -242,7 +242,7 @@ run "Show task 3 (verify tag)" \
     $CMD task show task-0003
 
 run "Archive tag 'urgent'" \
-    $CMD tag rm urgent --unassign
+    $CMD tag archive urgent --unassign --force
 
 # ════════════════════════════════════════════════════════════════════
 #  GROUPS
@@ -265,7 +265,7 @@ run "Unassign task 1 from group" \
     $CMD group unassign task-0001
 
 run "Archive group 'Sprint 1'" \
-    $CMD group rm "Sprint 1" --project Backend
+    $CMD group archive "Sprint 1" --project Backend --force
 
 # ════════════════════════════════════════════════════════════════════
 #  DEPENDENCIES
@@ -291,7 +291,7 @@ run "Export database to markdown" \
 echo -e "  Export written to: ${BOLD}${EXPORT_PATH}${RESET}"
 
 run "Remove dep: task 3 no longer depends on task 1" \
-    $CMD dep rm task-0003 task-0001
+    $CMD dep archive task-0003 task-0001
 
 run "Show task 3 (dep removed)" \
     $CMD task show task-0003

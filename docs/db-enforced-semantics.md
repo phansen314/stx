@@ -29,6 +29,7 @@ interface (CLI, TUI) or code path is used.
 - **If both start and finish dates are set, finish must be on or after start.**
 - **A task cannot depend on itself.**
 - **A dependency relationship between two tasks is unique** — you cannot create the same dependency twice.
+- **Task metadata is a JSON object.** The `tasks.metadata` column has `CHECK (json_valid(metadata))` and defaults to `'{}'`. The schema does not constrain keys or values beyond valid JSON — key normalization and length limits are enforced by the service layer.
 
 ## Tags
 
