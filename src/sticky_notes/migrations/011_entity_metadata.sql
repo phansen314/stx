@@ -79,14 +79,20 @@ DROP TABLE task_tags;
 ALTER TABLE task_tags_new RENAME TO task_tags;
 CREATE INDEX idx_task_tags_tag_id ON task_tags(tag_id);
 
--- task_history: recreate for FK to tasks_new. Preserves existing columns.
--- Does not introduce a CHECK on `field` (that asymmetry between migrated
--- and fresh DBs predates this migration and is out of scope).
+-- task_history: recreate for FK to tasks_new. Since the recreate cost is
+-- already sunk, also add the CHECK (field IN (...)) constraint that
+-- schema.sql has on fresh DBs but migrated DBs lost in migration 008.
+-- Values are hardcoded (not templated through read_schema) because migration
+-- files are historical records of schema state at time-of-writing. A future
+-- TaskField addition requires a new migration to extend the CHECK.
 CREATE TABLE task_history_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks_new(id) ON DELETE CASCADE,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-    field TEXT NOT NULL,
+    field TEXT NOT NULL CHECK (field IN (
+        'title', 'description', 'status_id', 'project_id', 'priority',
+        'due_date', 'position', 'archived', 'start_date', 'finish_date', 'group_id'
+    )),
     old_value TEXT,
     new_value TEXT,
     source TEXT NOT NULL,

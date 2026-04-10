@@ -616,6 +616,335 @@ class TestMigrations:
             )
         conn.close()
 
+    def _bootstrap_v10_schema(self, conn: sqlite3.Connection) -> None:
+        """Recreate the schema as it existed at SCHEMA_VERSION = 10.
+
+        Used by migration 011 tests to exercise the cascade-recreate path.
+        Matches the accumulated output of migrations 001-010:
+        - workspaces / projects / groups without metadata columns
+        - tasks with metadata column (from migration 010) but NO CHECK
+        - task_dependencies / task_tags / task_history as of migration 008
+        - groups.description column (from migration 009)
+        """
+        conn.executescript("""
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE statuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+                parent_id INTEGER,
+                title TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, project_id),
+                FOREIGN KEY (parent_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT
+            );
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                project_id INTEGER,
+                title TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                status_id INTEGER NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 5),
+                due_date INTEGER,
+                position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                start_date INTEGER,
+                finish_date INTEGER,
+                group_id INTEGER,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                CHECK (start_date IS NULL OR finish_date IS NULL OR finish_date >= start_date),
+                CHECK (group_id IS NULL OR project_id IS NOT NULL),
+                FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id) ON DELETE RESTRICT,
+                FOREIGN KEY (project_id, workspace_id) REFERENCES projects(id, workspace_id) ON DELETE RESTRICT,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT,
+                FOREIGN KEY (group_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT,
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE task_dependencies (
+                task_id INTEGER NOT NULL,
+                depends_on_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                PRIMARY KEY (task_id, depends_on_id),
+                CHECK (task_id != depends_on_id),
+                FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE
+            );
+            CREATE TABLE group_dependencies (
+                group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                depends_on_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                PRIMARY KEY (group_id, depends_on_id),
+                CHECK (group_id != depends_on_id)
+            );
+            CREATE TABLE tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE task_tags (
+                task_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                PRIMARY KEY (task_id, tag_id),
+                FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id, workspace_id) REFERENCES tags(id, workspace_id) ON DELETE CASCADE
+            );
+            CREATE TABLE task_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                source TEXT NOT NULL,
+                changed_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+
+            -- Accumulated indexes from migrations 001..010
+            CREATE UNIQUE INDEX uq_workspaces_name_active ON workspaces(name) WHERE archived = 0;
+            CREATE UNIQUE INDEX uq_projects_workspace_name_active ON projects(workspace_id, name) WHERE archived = 0;
+            CREATE UNIQUE INDEX uq_statuses_workspace_name_active ON statuses(workspace_id, name) WHERE archived = 0;
+            CREATE UNIQUE INDEX uq_tags_workspace_name_active ON tags(workspace_id, name) WHERE archived = 0;
+            CREATE UNIQUE INDEX uq_groups_project_title_active ON groups(project_id, title) WHERE archived = 0;
+            CREATE UNIQUE INDEX uq_tasks_workspace_title_active ON tasks(workspace_id, title) WHERE archived = 0;
+            CREATE INDEX idx_tasks_status_archived_position ON tasks(status_id, archived, position, id);
+            CREATE INDEX idx_tasks_workspace_archived_position ON tasks(workspace_id, archived, position, id);
+            CREATE INDEX idx_tasks_project_archived_position ON tasks(project_id, archived, position, id);
+            CREATE INDEX idx_statuses_workspace_archived_name ON statuses(workspace_id, archived, name, id);
+            CREATE INDEX idx_groups_parent_archived_position ON groups(parent_id, archived, position, id);
+            CREATE INDEX idx_groups_project_archived_position ON groups(project_id, archived, position, id);
+            CREATE INDEX idx_tags_workspace_archived_name ON tags(workspace_id, archived, name);
+            CREATE INDEX idx_task_history_task_changed ON task_history(task_id, changed_at DESC, id DESC);
+            CREATE INDEX idx_tasks_project_archived_group ON tasks(project_id, archived, group_id);
+            CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id);
+            CREATE INDEX idx_group_dependencies_depends_on_id ON group_dependencies(depends_on_id);
+            CREATE INDEX idx_task_tags_tag_id ON task_tags(tag_id);
+            CREATE INDEX idx_tasks_group_id ON tasks(group_id);
+        """)
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+
+    def test_migration_011_adds_entity_metadata_and_tightens_task_check(
+        self, tmp_path: Path,
+    ) -> None:
+        """Cascade-recreate path: metadata columns on wsp/proj/grp, CHECK on
+        tasks.metadata, task_history field CHECK, dependent data preserved."""
+        import json as _json
+
+        db_path = tmp_path / "v10.db"
+        conn = get_connection(db_path)
+        self._bootstrap_v10_schema(conn)
+
+        # Seed a row in every cascade-recreated table so we can verify
+        # preservation after the DROP + RENAME dance.
+        conn.execute("INSERT INTO workspaces (name) VALUES ('w')")
+        conn.execute("INSERT INTO statuses (workspace_id, name) VALUES (1, 'todo')")
+        conn.execute("INSERT INTO projects (workspace_id, name) VALUES (1, 'p')")
+        conn.execute(
+            "INSERT INTO groups (workspace_id, project_id, title) VALUES (1, 1, 'g')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (workspace_id, title, status_id, metadata) "
+            "VALUES (1, 't1', 1, '{\"branch\":\"feat\"}')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (workspace_id, title, status_id) VALUES (1, 't2', 1)"
+        )
+        conn.execute(
+            "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
+            "VALUES (2, 1, 1)"
+        )
+        conn.execute("INSERT INTO tags (workspace_id, name) VALUES (1, 'bug')")
+        conn.execute(
+            "INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (1, 1, 1)"
+        )
+        conn.execute(
+            "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+            "VALUES (1, 1, 'title', 'updated', 'test')"
+        )
+        conn.commit()
+
+        _run_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+        # Metadata columns added to the three entities with default '{}'
+        for table in ("workspaces", "projects", "groups"):
+            row = conn.execute(f"SELECT metadata FROM {table}").fetchone()
+            assert row[0] == "{}"
+
+        # Task metadata preserved byte-for-byte
+        t1 = conn.execute("SELECT metadata FROM tasks WHERE id=1").fetchone()
+        assert _json.loads(t1[0]) == {"branch": "feat"}
+
+        # json_valid CHECK is now enforced on all four entity tables
+        for sql in (
+            "UPDATE workspaces SET metadata = 'not json' WHERE id = 1",
+            "UPDATE projects SET metadata = 'not json' WHERE id = 1",
+            "UPDATE groups SET metadata = 'not json' WHERE id = 1",
+            "UPDATE tasks SET metadata = 'not json' WHERE id = 1",
+        ):
+            with pytest.raises(sqlite3.IntegrityError, match="json_valid"):
+                conn.execute(sql)
+
+        # task_history.field CHECK added alongside the recreate
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+                "VALUES (1, 1, 'bogus_field', 'x', 'test')"
+            )
+
+        # Dependent rows preserved
+        assert conn.execute("SELECT COUNT(*) FROM task_dependencies").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM task_tags").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM task_history").fetchone()[0] == 1
+
+        # Cascade FKs still fire after the recreate
+        conn.execute("DELETE FROM tasks WHERE id = 1")
+        assert conn.execute("SELECT COUNT(*) FROM task_tags WHERE task_id = 1").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM task_history WHERE task_id = 1").fetchone()[0] == 0
+        conn.close()
+
+    def test_migration_011_fails_fast_on_invalid_task_metadata(
+        self, tmp_path: Path,
+    ) -> None:
+        """Pre-flight check in _pre_migration_check should surface a clear
+        error before the destructive recreate runs, leaving the DB at v10."""
+        db_path = tmp_path / "v10_bad.db"
+        conn = get_connection(db_path)
+        self._bootstrap_v10_schema(conn)
+
+        conn.execute("INSERT INTO workspaces (name) VALUES ('w')")
+        conn.execute("INSERT INTO statuses (workspace_id, name) VALUES (1, 'todo')")
+        conn.execute(
+            "INSERT INTO tasks (workspace_id, title, status_id, metadata) "
+            "VALUES (1, 't', 1, 'not json at all')"
+        )
+        conn.commit()
+
+        with pytest.raises(RuntimeError, match="invalid JSON"):
+            _run_migrations(conn)
+
+        # DB stays at v10 (no partial-migration state)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        # And the tasks table still has no json_valid CHECK (rollback held)
+        conn.execute("UPDATE tasks SET metadata = 'still not json' WHERE id = 1")
+        conn.close()
+
+    def test_migration_011_fails_fast_on_off_allowlist_task_history_field(
+        self, tmp_path: Path,
+    ) -> None:
+        """Pre-flight check should also surface off-allowlist task_history.field
+        values before the recreate adds the CHECK constraint."""
+        db_path = tmp_path / "v10_badhist.db"
+        conn = get_connection(db_path)
+        self._bootstrap_v10_schema(conn)
+
+        conn.execute("INSERT INTO workspaces (name) VALUES ('w')")
+        conn.execute("INSERT INTO statuses (workspace_id, name) VALUES (1, 'todo')")
+        conn.execute("INSERT INTO tasks (workspace_id, title, status_id) VALUES (1, 't', 1)")
+        conn.execute(
+            "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
+            "VALUES (1, 1, 'bogus_field', 'x', 'raw')"
+        )
+        conn.commit()
+
+        with pytest.raises(RuntimeError, match="off-allowlist field value 'bogus_field'"):
+            _run_migrations(conn)
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        conn.close()
+
+    def test_migration_011_yields_schema_shape_matching_fresh(
+        self, tmp_path: Path,
+    ) -> None:
+        """After migration 011, the migrated DB's table/column/index shape
+        should match a fresh init_db DB. Catches any drift between the
+        migration file and schema.sql."""
+        def snapshot(c: sqlite3.Connection) -> dict:
+            result: dict = {"tables": {}, "indexes": {}}
+            table_names = sorted(
+                r[0] for r in c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%' AND name != '_user_migrations'"
+                )
+            )
+            for t in table_names:
+                cols = [
+                    (r["name"], r["type"], bool(r["notnull"]), r["dflt_value"], bool(r["pk"]))
+                    for r in c.execute(f"PRAGMA table_info({t})")
+                ]
+                fks = sorted(
+                    (r["from"], r["table"], r["to"], r["on_delete"])
+                    for r in c.execute(f"PRAGMA foreign_key_list({t})")
+                )
+                result["tables"][t] = {"columns": cols, "fks": fks}
+            index_names = sorted(
+                r[0] for r in c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                )
+            )
+            for name in index_names:
+                cols = [r["name"] for r in c.execute(f"PRAGMA index_info({name})")]
+                result["indexes"][name] = cols
+            return result
+
+        fresh_path = tmp_path / "fresh.db"
+        fresh = get_connection(fresh_path)
+        init_db(fresh)
+        fresh_shape = snapshot(fresh)
+        fresh.close()
+
+        migrated_path = tmp_path / "migrated.db"
+        migrated = get_connection(migrated_path)
+        self._bootstrap_v10_schema(migrated)
+        _run_migrations(migrated)
+        migrated_shape = snapshot(migrated)
+        migrated.close()
+
+        assert fresh_shape["tables"] == migrated_shape["tables"], (
+            f"table shape differs:\n"
+            f"  fresh-only tables: {set(fresh_shape['tables']) - set(migrated_shape['tables'])}\n"
+            f"  migrated-only:     {set(migrated_shape['tables']) - set(fresh_shape['tables'])}"
+        )
+        assert fresh_shape["indexes"] == migrated_shape["indexes"], (
+            f"index shape differs:\n"
+            f"  fresh-only indexes: {set(fresh_shape['indexes']) - set(migrated_shape['indexes'])}\n"
+            f"  migrated-only:      {set(migrated_shape['indexes']) - set(fresh_shape['indexes'])}"
+        )
+
     def test_migration_skips_when_already_current(self, conn: sqlite3.Connection) -> None:
         """Fresh DB is already at current version — migrations are no-ops."""
         version_before = conn.execute("PRAGMA user_version").fetchone()[0]
