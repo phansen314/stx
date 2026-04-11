@@ -1128,6 +1128,37 @@ class TestActiveWorkspaceInvariant:
                 )
 
 
+    async def test_active_workspace_survives_refresh(self, multi_workspace_tui_db, tmp_path):
+        """_active_workspace_id must not be clobbered by NodeHighlighted(ws1) fired during
+        the tree.load in _rerender when the user is on workspace 2."""
+        db_path, ids = multi_workspace_tui_db
+        ws1_id = ids["ws1"]["workspace_id"]
+        ws2_id = ids["ws2"]["workspace_id"]
+
+        cfg_path = tmp_path / "tui.toml"
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
+        async with app.run_test() as pilot:
+            # Navigate tree to workspace 2
+            tree = app.query_one("#workspaces-tree")
+            ws2_node = [n for n in tree.root.children if isinstance(n.data, Workspace) and n.data.id == ws2_id][0]
+            tree.select_node(ws2_node)
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_workspace_id == ws2_id, "should be on ws2 after navigation"
+
+            # Trigger a refresh — this calls _rerender → tree.load, which may queue
+            # NodeHighlighted(ws1) and spuriously fire WorkspaceChanged(ws1).
+            app.request_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app._active_workspace_id == ws2_id, (
+                "_active_workspace_id must not be clobbered by spurious WorkspaceChanged "
+                "fired during tree.load in _rerender"
+            )
+
+
 class TestConfigModal:
     @pytest.fixture
     def app(self, seeded_tui_db, tmp_path):

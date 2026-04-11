@@ -1,3 +1,4 @@
+from .archive_confirm import ArchiveConfirmModal
 from .base_edit import BaseEditModal, ModalScroll
 from .config_modal import ConfigModal
 from .group_create import GroupCreateModal
