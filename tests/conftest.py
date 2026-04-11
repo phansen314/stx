@@ -11,15 +11,9 @@ from sticky_notes.connection import get_connection, init_db
 from tests.seed import seed_multi_workspace, seed_workspace
 
 
-@pytest.fixture(autouse=True)
-def isolated_tui_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect DEFAULT_CONFIG_PATH to a per-test tmp file.
-
-    Prevents tui.toml reads/writes from bleeding across tests now that
-    set_active_workspace_id persists to tui.toml instead of the legacy file.
-    """
-    cfg_path = tmp_path / "tui.toml"
-    monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+@pytest.fixture
+def config_path(tmp_path: Path) -> Path:
+    return tmp_path / "tui.toml"
 
 
 @pytest.fixture

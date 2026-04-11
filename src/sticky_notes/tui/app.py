@@ -18,7 +18,7 @@ from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
 from sticky_notes.formatting import format_task_num
 from sticky_notes.service import create_group, create_project, create_task, get_group, get_group_detail, get_project, get_project_detail, get_task_detail, get_workspace, list_workspaces, replace_group_metadata, replace_project_metadata, replace_task_metadata, replace_workspace_metadata, update_group, update_project, update_task, update_workspace
-from sticky_notes.tui.config import TuiConfig, load_config, save_config
+from sticky_notes.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
 from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
@@ -67,12 +67,13 @@ class StickyNotesApp(App):
             return None
         return self._models.get(self._active_workspace_id)
 
-    def __init__(self, db_path: Path | None = None, config: TuiConfig | None = None):
+    def __init__(self, db_path: Path | None = None, config_path: Path | None = None, config: TuiConfig | None = None):
         super().__init__()
         self.db_path = db_path or DEFAULT_DB_PATH
+        self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.conn = get_connection(self.db_path)
         init_db(self.conn)
-        self.config = config or load_config()
+        self.config = config or load_config(self.config_path)
         self._models = {}
 
     def compose(self) -> ComposeResult:
@@ -103,7 +104,7 @@ class StickyNotesApp(App):
             tree.show_empty("No workspaces")
             return
         # Use active-workspace file as initial-focus hint
-        hint_id = get_active_workspace_id(self.db_path)
+        hint_id = get_active_workspace_id(self.config_path, self.db_path)
         if hint_id not in self._models:
             hint_id = workspaces[0].id
         self._active_workspace_id = hint_id
@@ -244,7 +245,7 @@ class StickyNotesApp(App):
             return
         ids[i], ids[j] = ids[j], ids[i]
         self.config.status_order[self._active_workspace_id] = ids
-        save_config(self.config)
+        save_config(self.config, self.config_path)
         new_statuses = self._order_statuses(model.statuses, self._active_workspace_id)
         self._models[self._active_workspace_id] = replace(model, statuses=new_statuses)
         await self.query_one(KanbanBoard).sync(self._models[self._active_workspace_id])

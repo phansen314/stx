@@ -62,7 +62,8 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     service.add_dependency(conn, t4.id, t3.id)
 
     if db_path is not None:
-        set_active_workspace_id(db_path, workspace.id)
+        config_path = db_path.parent / "tui.toml"
+        set_active_workspace_id(config_path, workspace.id)
 
     return {
         "workspace_id": workspace.id,

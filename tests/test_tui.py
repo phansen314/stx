@@ -112,7 +112,7 @@ class TestTreeNoWorkspaces:
         good = service.create_workspace(conn, "Good")
         service.create_status(conn, good.id, "Todo")
         bad = service.create_workspace(conn, "Bad")
-        set_active_workspace_id(db_path, good.id)
+        set_active_workspace_id(db_path.parent / "tui.toml", good.id)
         conn.close()
 
         from sticky_notes.tui import model as tui_model
@@ -154,7 +154,7 @@ class TestTreeWithGroups:
         service.assign_task_to_group(conn, t1.id, child_grp.id, source="test")
         # Ungrouped task in project
         service.create_task(conn, ws.id, "ungrouped-task", status.id, project_id=proj.id)
-        set_active_workspace_id(db_path, ws.id)
+        set_active_workspace_id(db_path.parent / "tui.toml", ws.id)
         conn.close()
         return db_path
 
@@ -953,11 +953,15 @@ class TestColumnFocus:
             order_after = [s.id for s in app._active_model.statuses]
             assert order_after == order_before
 
-    async def test_column_reorder_persists_to_tui_toml(self, app, monkeypatch, tmp_path):
+    async def test_column_reorder_persists_to_tui_toml(self, seeded_tui_db, tmp_path):
         import tomllib
-        app, ids = app
+        db_path, ids = seeded_tui_db
         toml_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", toml_path)
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        app = StickyNotesApp(db_path=db_path, config=config, config_path=toml_path)
         async with app.run_test() as pilot:
             sids = ids["status_ids"]
             ws_id = ids["workspace_id"]
@@ -975,13 +979,12 @@ class TestColumnFocus:
             assert saved_order[0] == order_before[1]
             assert saved_order[1] == order_before[0]
 
-    async def test_materializes_full_order_on_first_move(self, seeded_tui_db, monkeypatch, tmp_path):
+    async def test_materializes_full_order_on_first_move(self, seeded_tui_db, tmp_path):
         import tomllib
         db_path, ids = seeded_tui_db
         toml_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", toml_path)
         # Start with empty status_order so _reorder_column must materialize all IDs
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
         sids = ids["status_ids"]
         ws_id = ids["workspace_id"]
         async with app.run_test() as pilot:
@@ -1034,31 +1037,22 @@ class TestActiveWorkspaceInvariant:
     """TUI tree-switch must be an in-memory focus change only — no disk writes."""
 
     async def test_tui_tree_switch_does_not_write_active_workspace(
-        self, multi_workspace_tui_db, monkeypatch
+        self, multi_workspace_tui_db, tmp_path
     ):
         """Navigating to a different workspace in the tree must not update tui.toml."""
-        from unittest.mock import MagicMock
-        from sticky_notes.tui.config import load_config, save_config, DEFAULT_CONFIG_PATH
+        from sticky_notes.tui.config import load_config, save_config
 
         db_path, ids = multi_workspace_tui_db
         ws1_id = ids["ws1"]["workspace_id"]
         ws2_id = ids["ws2"]["workspace_id"]
 
-        # Isolate config path to a tmp file seeded with ws1 as active
-        cfg_path = db_path.parent / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
-
+        cfg_path = tmp_path / "tui.toml"
         initial_cfg = load_config(cfg_path)
         initial_cfg.active_workspace = ws1_id
-        from sticky_notes.tui.config import save_config as _save_cfg
-        _save_cfg(initial_cfg, cfg_path)
+        save_config(initial_cfg, cfg_path)
         assert load_config(cfg_path).active_workspace == ws1_id
 
-        # Monkeypatch set_active_workspace_id to detect unwanted calls
-        spy = MagicMock()
-        monkeypatch.setattr("sticky_notes.tui.app.get_active_workspace_id", lambda db: ws1_id)
-
-        app = StickyNotesApp(db_path=db_path, config=initial_cfg)
+        app = StickyNotesApp(db_path=db_path, config=initial_cfg, config_path=cfg_path)
         async with app.run_test() as pilot:
             assert app._active_workspace_id == ws1_id
             # Navigate tree to workspace 2
@@ -1074,22 +1068,18 @@ class TestActiveWorkspaceInvariant:
         assert load_config(cfg_path).active_workspace == ws1_id
 
     async def test_tui_save_config_not_called_on_workspace_switch(
-        self, multi_workspace_tui_db, monkeypatch
+        self, multi_workspace_tui_db, monkeypatch, tmp_path
     ):
         """save_config must not be called during workspace tree navigation."""
         from unittest.mock import MagicMock
 
         db_path, ids = multi_workspace_tui_db
-        ws1_id = ids["ws1"]["workspace_id"]
-
-        cfg_path = db_path.parent / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
 
         save_config_mock = MagicMock()
         monkeypatch.setattr("sticky_notes.tui.app.save_config", save_config_mock)
-        monkeypatch.setattr("sticky_notes.tui.app.get_active_workspace_id", lambda db: ws1_id)
 
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        cfg_path = tmp_path / "tui.toml"
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
         async with app.run_test() as pilot:
             # Drive a workspace tree switch
             tree = app.query_one("#workspaces-tree")

@@ -43,6 +43,7 @@ type CmdResult = Ok
 class RunContext:
     """Per-invocation CLI context threaded through every handler."""
     db_path: Path
+    config_path: Path
 
 
 type CommandHandler = Callable[[sqlite3.Connection, argparse.Namespace, RunContext], CmdResult]
@@ -91,7 +92,7 @@ def _resolve_workspace(conn: sqlite3.Connection, args: argparse.Namespace, ctx: 
     Stays in the CLI layer rather than the service layer."""
     if args.workspace:
         return service.get_workspace_by_name(conn, args.workspace)
-    workspace_id = get_active_workspace_id(ctx.db_path)
+    workspace_id = get_active_workspace_id(ctx.config_path, ctx.db_path)
     if workspace_id is None:
         raise NoActiveWorkspaceError(
             "no active workspace — use 'todo workspace create <name>' or 'todo workspace use <name>'"
@@ -324,7 +325,7 @@ def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCon
 
 def cmd_workspace_create(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = service.create_workspace(conn, args.name)
-    set_active_workspace_id(ctx.db_path, workspace.id)
+    set_active_workspace_id(ctx.config_path, workspace.id)
     if args.statuses:
         for name in [s.strip() for s in args.statuses.split(",") if s.strip()]:
             service.create_status(conn, workspace.id, name)
@@ -337,14 +338,14 @@ def cmd_workspace_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: Ru
     workspaces = service.list_workspaces(
         conn, include_archived=include_archived, only_archived=only_archived,
     )
-    active_id = get_active_workspace_id(ctx.db_path)
+    active_id = get_active_workspace_id(ctx.config_path, ctx.db_path)
     payload = [{**to_dict(w), "active": w.id == active_id} for w in workspaces]
     return Ok(data=payload, text=presenters.format_workspace_list(workspaces, active_id))
 
 
 def cmd_workspace_use(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = service.get_workspace_by_name(conn, args.name)
-    set_active_workspace_id(ctx.db_path, workspace.id)
+    set_active_workspace_id(ctx.config_path, workspace.id)
     return Ok(data=workspace, text=f"switched to workspace '{workspace.name}'")
 
 
@@ -367,9 +368,9 @@ def cmd_workspace_archive(conn: sqlite3.Connection, args: argparse.Namespace, ct
         if not _confirm_archive(preview):
             return Ok(data=None, text="aborted")
     archived = service.cascade_archive_workspace(conn, workspace.id, source="cli")
-    was_active = get_active_workspace_id(ctx.db_path) == workspace.id
+    was_active = get_active_workspace_id(ctx.config_path, ctx.db_path) == workspace.id
     if was_active:
-        clear_active_workspace_id(ctx.db_path)
+        clear_active_workspace_id(ctx.config_path)
     suffix = " (active pointer cleared)" if was_active else ""
     return Ok(
         data={"workspace": archived, "active_cleared": was_active},
@@ -404,7 +405,7 @@ def cmd_status_rename(conn: sqlite3.Connection, args: argparse.Namespace, ctx: R
 
 
 def cmd_status_order(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
-    from .tui.config import DEFAULT_CONFIG_PATH, load_config, save_config
+    from .tui.config import load_config, save_config
 
     workspace = _resolve_workspace(conn, args, ctx)
     seen: set[str] = set()
@@ -416,9 +417,9 @@ def cmd_status_order(conn: sqlite3.Connection, args: argparse.Namespace, ctx: Ru
         seen.add(key)
         status = service.get_status_by_name(conn, workspace.id, name)
         statuses.append({"id": status.id, "name": name})
-    config = load_config()
+    config = load_config(ctx.config_path)
     config.status_order[workspace.id] = [s["id"] for s in statuses]
-    save_config(config)
+    save_config(config, ctx.config_path)
     return Ok(
         data={
             "workspace_id": workspace.id,
@@ -1001,7 +1002,12 @@ def cmd_group_meta_del(conn: sqlite3.Connection, args: argparse.Namespace, ctx: 
 def cmd_tui(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     conn.close()
     from sticky_notes.tui import main as tui_main
-    tui_argv = ["--db", str(ctx.db_path)] if ctx.db_path != DEFAULT_DB_PATH else []
+    from .tui.config import DEFAULT_CONFIG_PATH
+    tui_argv: list[str] = []
+    if ctx.db_path != DEFAULT_DB_PATH:
+        tui_argv += ["--db", str(ctx.db_path)]
+    if ctx.config_path != DEFAULT_CONFIG_PATH:
+        tui_argv += ["--config", str(ctx.config_path)]
     tui_main(tui_argv)
     raise SystemExit(0)
 
@@ -1040,7 +1046,7 @@ _CONFIG_VALIDATORS: dict[str, Callable[[sqlite3.Connection, str], Any]] = {
 
 def cmd_config_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     from .tui.config import load_config
-    config = load_config()
+    config = load_config(ctx.config_path)
     return Ok(data=to_dict(config), text=presenters.format_config(config))
 
 
@@ -1050,7 +1056,7 @@ def cmd_config_get(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunC
     all_keys = {f.name for f in fields(TuiConfig)}
     if args.key not in all_keys:
         raise LookupError(f"unknown config key: {args.key!r}")
-    config = load_config()
+    config = load_config(ctx.config_path)
     value = getattr(config, args.key)
     return Ok(data={"key": args.key, "value": value}, text=str(value))
 
@@ -1060,9 +1066,9 @@ def cmd_config_set(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunC
     if args.key not in _CONFIG_EDITABLE:
         raise ValueError(f"config key {args.key!r} is not editable via CLI (editable: {', '.join(sorted(_CONFIG_EDITABLE))})")
     new_value = _CONFIG_VALIDATORS[args.key](conn, args.value)
-    config = load_config()
+    config = load_config(ctx.config_path)
     setattr(config, args.key, new_value)
-    save_config(config)
+    save_config(config, ctx.config_path)
     return Ok(data={"key": args.key, "value": new_value}, text=f"set {args.key} = {new_value}")
 
 
@@ -1074,9 +1080,9 @@ def cmd_config_unset(conn: sqlite3.Connection, args: argparse.Namespace, ctx: Ru
     default_value = next(
         f.default for f in fields(TuiConfig) if f.name == args.key
     )
-    config = load_config()
+    config = load_config(ctx.config_path)
     setattr(config, args.key, default_value)
-    save_config(config)
+    save_config(config, ctx.config_path)
     return Ok(data={"key": args.key, "value": default_value}, text=f"unset {args.key} (reset to {default_value!r})")
 
 
@@ -1156,6 +1162,7 @@ HANDLERS: dict[str, CommandHandler] = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="todo", description="Sticky Notes — local kanban CLI")
     parser.add_argument("--db", type=Path, help="path to SQLite database file")
+    parser.add_argument("--config", type=Path, help="path to tui.toml (default: ~/.config/sticky-notes/tui.toml)")
     parser.add_argument("--workspace", "-w", help="workspace name (overrides active workspace)")
     fmt_group = parser.add_mutually_exclusive_group()
     fmt_group.add_argument("--json", action="store_true", help="output JSON (default when piped)")
@@ -1599,7 +1606,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.command is None:
         parser.print_help()
         raise SystemExit(0)
-    ctx = RunContext(db_path=args.db or DEFAULT_DB_PATH)
+    from .tui.config import DEFAULT_CONFIG_PATH
+    ctx = RunContext(db_path=args.db or DEFAULT_DB_PATH, config_path=args.config or DEFAULT_CONFIG_PATH)
     json_mode = args.json or (not args.text and not _stdout_is_tty())
     conn = get_connection(ctx.db_path)
     try:
