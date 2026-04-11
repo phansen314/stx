@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from textual import events
 from textual.message import Message
 from textual.widgets import Static
 
@@ -30,5 +31,7 @@ class TaskCard(Static):
         content = f"{task.id:d}: {escape_markup(task.title)}"
         super().__init__(content, id=id, classes=classes)
 
-    def on_click(self) -> None:
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.focus()
         self.post_message(self.Activated(self.task_data))
