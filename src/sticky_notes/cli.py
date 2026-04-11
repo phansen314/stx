@@ -626,13 +626,13 @@ def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: 
 
 def cmd_group_rename(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
     workspace = _resolve_workspace(conn, args, db_path)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.old_title, project_name=args.project)
     changes = {"title": args.new_title}
     if args.dry_run:
         preview = service.preview_update_group(conn, grp.id, changes)
         return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     updated = service.update_group(conn, grp.id, changes)
-    return Ok(data=updated, text=f"renamed group '{args.title}' -> '{args.new_title}'")
+    return Ok(data=updated, text=f"renamed group '{args.old_title}' -> '{args.new_title}'")
 
 
 def cmd_group_edit(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -1340,8 +1340,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_grn = grp_sub.add_parser("rename", help="rename a group")
     p_grn.set_defaults(command="group_rename")
-    p_grn.add_argument("title")
-    p_grn.add_argument("new_title")
+    p_grn.add_argument("old_title", help="current group title")
+    p_grn.add_argument("new_title", help="new group title")
     p_grn.add_argument("--project", "-p", default=None, help="disambiguate by project")
     p_grn.add_argument("--dry-run", action="store_true", help="preview rename without writing")
 
