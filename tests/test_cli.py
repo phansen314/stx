@@ -458,17 +458,17 @@ class TestTaskCommands:
         assert "Task A" in out2
         assert "Task A" in out3
 
-    def test_show_by_title(self, cli):
+    def test_show_resolves_title(self, cli):
         cli("task", "create", "Fix login bug", "-S", "todo")
         out, _ = cli("task", "show", "Fix login bug")
         assert "task-0001" in out
         assert "Fix login bug" in out
 
-    def test_show_by_title_not_found(self, cli):
+    def test_show_title_not_found(self, cli):
         _, err = cli("task", "show", "nonexistent title", expect_exit=3)
         assert "error:" in err
 
-    def test_dep_create_by_title(self, cli):
+    def test_dep_create_resolves_title(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
         out, _ = cli("dep", "create", "--task", "Task B", "--blocked-by", "Task A")
@@ -2370,7 +2370,7 @@ class TestTaskMetaCommands:
         out, _ = self.cli("task", "meta", "ls", "1")
         assert "no metadata" in out
 
-    def test_meta_by_title(self):
+    def test_meta_resolves_title(self):
         self.cli("task", "meta", "set", "My task", "branch", "feat/kv")
         out, _ = self.cli("task", "meta", "get", "My task", "branch")
         assert "feat/kv" in out
