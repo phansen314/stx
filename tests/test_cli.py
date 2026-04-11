@@ -441,12 +441,12 @@ class TestTaskCommands:
     def test_mv(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "mv", "1", "-S", "in progress")
-        assert "moved task-0001 -> in progress" in out
+        assert "moved task-0001: todo -> in progress" in out
 
     def test_mv_case_insensitive(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         out, _ = cli("task", "mv", "1", "-S", "In Progress")
-        assert "moved task-0001 -> in progress" in out
+        assert "moved task-0001: todo -> in progress" in out
 
     def test_archive(self, cli):
         cli("task", "create", "Task A", "-S", "todo")

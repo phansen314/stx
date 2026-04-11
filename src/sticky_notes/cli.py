@@ -234,6 +234,8 @@ def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
         service.get_project_by_name(conn, workspace.id, args.project).id
         if change_project else None
     )
+    pre = service.get_task_detail(conn, task_id)
+    from_status = pre.status.name
     if args.dry_run:
         preview = service.preview_move_task(
             conn, task_id, col.id, position,
@@ -245,7 +247,7 @@ def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
     else:
         service.move_task(conn, task_id, col.id, position, source="cli")
     detail = service.get_task_detail(conn, task_id)
-    return Ok(data=detail, text=f"moved {format_task_num(task_id)} -> {col.name}")
+    return Ok(data=detail, text=f"moved {format_task_num(task_id)}: {from_status} -> {col.name}")
 
 
 def cmd_task_transfer(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
