@@ -8,3 +8,4 @@ build/
 tmp/
 .coverage
 settings.local.json
+/.claude/

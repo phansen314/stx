@@ -20,7 +20,9 @@ class TuiConfig:
     status_order: dict[int, list[int]] = field(default_factory=dict)
 
 
-def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TuiConfig:
+def load_config(path: Path | None = None) -> TuiConfig:
+    if path is None:
+        path = DEFAULT_CONFIG_PATH
     config = TuiConfig()
     if not path.exists():
         return config
@@ -38,7 +40,9 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TuiConfig:
     return config
 
 
-def save_config(config: TuiConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
+def save_config(config: TuiConfig, path: Path | None = None) -> None:
+    if path is None:
+        path = DEFAULT_CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     for field in fields(config):

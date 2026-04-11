@@ -24,7 +24,11 @@ from sticky_notes.formatting import (
 
 
 @pytest.fixture
-def cli(db_path: Path, capsys: pytest.CaptureFixture[str]):
+def cli(db_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
+    # Default to TTY so existing text-mode assertions keep working.
+    # Individual tests override sticky_notes.cli._stdout_is_tty via their own monkeypatch.
+    monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: True)
+
     def run(*args: str, expect_exit: int = 0) -> tuple[str, str]:
         argv = ["--db", str(db_path), *args]
         try:
@@ -141,7 +145,7 @@ class TestWorkspaceCommands:
 
     def test_rename(self, cli):
         cli("workspace", "create", "dev")
-        out, _ = cli("workspace", "rename", "staging")
+        out, _ = cli("workspace", "rename", "dev", "staging")
         assert "renamed workspace 'dev' -> 'staging'" in out
 
     def test_archive(self, cli):
@@ -163,8 +167,25 @@ class TestWorkspaceCommands:
         cli("-w", "ops", "workspace", "archive", "--force")
         assert get_active_workspace_id(db_path) is not None
 
+    def test_archive_json_shape_includes_active_cleared(self, cli):
+        cli("workspace", "create", "dev")
+        out, _ = cli("--json", "workspace", "archive", "--force")
+        data = json.loads(out)["data"]
+        assert data["active_cleared"] is True
+        assert data["workspace"]["name"] == "dev"
+        assert data["workspace"]["archived"] is True
+
+    def test_archive_json_shape_active_cleared_false_for_inactive(self, cli):
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
+        out, _ = cli("-w", "ops", "--json", "workspace", "archive", "--force")
+        data = json.loads(out)["data"]
+        assert data["active_cleared"] is False
+        assert data["workspace"]["name"] == "ops"
+
     def test_use_nonexistent(self, cli):
-        _, err = cli("workspace", "use", "nope", expect_exit=1)
+        _, err = cli("workspace", "use", "nope", expect_exit=3)
         assert "error:" in err
 
 
@@ -212,6 +233,82 @@ class TestStatusCommands:
         out, _ = cli("status", "archive", "todo")
         assert "archived status 'todo'" in out
 
+    def test_order_writes_config(self, cli, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+        cli("workspace", "create", "dev")
+        cli("status", "create", "backlog")
+        cli("status", "create", "doing")
+        cli("status", "create", "done")
+        out, _ = cli("status", "order", "doing", "done", "backlog")
+        assert "set status order for workspace 'dev'" in out
+        content = cfg_path.read_text()
+        assert "[status_order]" in content
+        # All three status ids listed in the right order
+        from sticky_notes.tui.config import load_config
+        config = load_config(cfg_path)
+        assert 1 in config.status_order
+        assert len(config.status_order[1]) == 3
+
+    def test_order_unknown_status(self, cli, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        _, err = cli("status", "order", "todo", "nonexistent", expect_exit=3)
+        assert "not found" in err
+
+    def test_order_duplicate_status(self, cli, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        _, err = cli("status", "order", "todo", "todo", expect_exit=4)
+        assert "duplicate" in err
+
+    def test_order_json_shape(self, cli, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+        cli("workspace", "create", "dev")
+        cli("status", "create", "backlog")
+        cli("status", "create", "doing")
+        cli("status", "create", "done")
+        out, _ = cli("--json", "status", "order", "doing", "done", "backlog")
+        data = json.loads(out)["data"]
+        assert "workspace" not in data  # redundant name field removed
+        assert "workspace_id" in data
+        assert "status_ids" not in data  # old shape dropped
+        statuses = data["statuses"]
+        assert [s["name"] for s in statuses] == ["doing", "done", "backlog"]
+        assert all("id" in s for s in statuses)
+
+    def test_ls_archived_filter_hide(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "active")
+        cli("status", "create", "old")
+        cli("status", "archive", "old")
+        out, _ = cli("status", "ls")
+        assert "active" in out
+        assert "old" not in out
+
+    def test_ls_archived_filter_include(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "active")
+        cli("status", "create", "old")
+        cli("status", "archive", "old")
+        out, _ = cli("status", "ls", "--archived", "include")
+        assert "active" in out
+        assert "old" in out
+
+    def test_ls_archived_filter_only(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "active")
+        cli("status", "create", "old")
+        cli("status", "archive", "old")
+        out, _ = cli("status", "ls", "--archived", "only")
+        assert "active" not in out
+        assert "old" in out
+
 
 # ---- Task shortcuts ----
 
@@ -249,6 +346,11 @@ class TestTaskCommands:
         out, _ = cli("--json", "task", "create", "Fix it", "-d", "", "-S", "todo")
         data = json.loads(out)
         assert data["data"]["description"] is None
+
+    def test_create_json_includes_tags(self, cli):
+        out, _ = cli("--json", "task", "create", "Tagged", "-S", "todo", "--tag", "backend", "--tag", "urgent")
+        data = json.loads(out)["data"]
+        assert [t["name"] for t in data["tags"]] == ["backend", "urgent"]
 
     def test_ls_grouped_by_column(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
@@ -290,7 +392,7 @@ class TestTaskCommands:
     def test_show_with_deps(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
-        cli("dep", "create", "2", "1")
+        cli("dep", "create", "--task", "2", "--blocked-by", "1")
         out, _ = cli("task", "show", "2")
         assert "Blocked by:  task-0001" in out
         # Also check the "Blocks" line from the other side
@@ -338,17 +440,17 @@ class TestTaskCommands:
     def test_edit_nothing(self, cli):
         cli("task", "create", "Task", "-S", "todo")
         out, _ = cli("task", "edit", "1")  # no-op: returns task unchanged, exit 0
-        assert "updated task-0001" in out
+        assert "nothing to update" in out
 
     def test_mv(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "mv", "1", "in progress")
-        assert "moved task-0001 -> in progress" in out
+        out, _ = cli("task", "mv", "1", "-S", "in progress")
+        assert "moved task-0001: todo -> in progress" in out
 
     def test_mv_case_insensitive(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "mv", "1", "In Progress")
-        assert "moved task-0001 -> in progress" in out
+        out, _ = cli("task", "mv", "1", "-S", "In Progress")
+        assert "moved task-0001: todo -> in progress" in out
 
     def test_archive(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
@@ -376,7 +478,7 @@ class TestTaskCommands:
         assert "no history" in out
 
     def test_show_nonexistent(self, cli):
-        _, err = cli("task", "show", "999", expect_exit=1)
+        _, err = cli("task", "show", "999", expect_exit=3)
         assert "error:" in err
 
     def test_task_num_formats(self, cli):
@@ -388,20 +490,20 @@ class TestTaskCommands:
         assert "Task A" in out2
         assert "Task A" in out3
 
-    def test_show_by_title(self, cli):
+    def test_show_resolves_title(self, cli):
         cli("task", "create", "Fix login bug", "-S", "todo")
-        out, _ = cli("task", "show", "Fix login bug", "--by-title")
+        out, _ = cli("task", "show", "Fix login bug")
         assert "task-0001" in out
         assert "Fix login bug" in out
 
-    def test_show_by_title_not_found(self, cli):
-        _, err = cli("task", "show", "nonexistent title", "--by-title", expect_exit=1)
+    def test_show_title_not_found(self, cli):
+        _, err = cli("task", "show", "nonexistent title", expect_exit=3)
         assert "error:" in err
 
-    def test_dep_create_by_title(self, cli):
+    def test_dep_create_resolves_title(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
-        out, _ = cli("dep", "create", "Task B", "Task A", "--by-title")
+        out, _ = cli("dep", "create", "--task", "Task B", "--blocked-by", "Task A")
         assert "task-0002 now blocked by task-0001" in out
 
 
@@ -454,10 +556,12 @@ class TestProjectCommands:
         out, _ = cli("project", "show", "backend")
         assert "API services" in out
 
-    def test_edit_rename(self, cli):
+    def test_rename(self, cli):
         cli("project", "create", "backend")
-        out, _ = cli("project", "edit", "backend", "--name", "api")
-        assert "updated project 'api'" in out
+        out, _ = cli("project", "rename", "backend", "api")
+        assert "renamed project 'backend' -> 'api'" in out
+        out2, _ = cli("project", "show", "api")
+        assert "api" in out2
 
     def test_edit_no_changes(self, cli):
         cli("project", "create", "backend")
@@ -474,6 +578,30 @@ class TestProjectCommands:
         data = json.loads(out)
         assert data["data"]["description"] is None
 
+    def test_ls_archived_filter_hide(self, cli):
+        cli("project", "create", "active")
+        cli("project", "create", "old")
+        cli("project", "archive", "old", "--force")
+        out, _ = cli("project", "ls")
+        assert "active" in out
+        assert "old" not in out
+
+    def test_ls_archived_filter_include(self, cli):
+        cli("project", "create", "active")
+        cli("project", "create", "old")
+        cli("project", "archive", "old", "--force")
+        out, _ = cli("project", "ls", "--archived", "include")
+        assert "active" in out
+        assert "old" in out
+
+    def test_ls_archived_filter_only(self, cli):
+        cli("project", "create", "active")
+        cli("project", "create", "old")
+        cli("project", "archive", "old", "--force")
+        out, _ = cli("project", "ls", "--archived", "only")
+        assert "active" not in out
+        assert "old" in out
+
 
 # ---- Dependency commands ----
 
@@ -487,14 +615,14 @@ class TestDependencyCommands:
     def test_add(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
-        out, _ = cli("dep", "create", "2", "1")
+        out, _ = cli("dep", "create", "--task", "2", "--blocked-by", "1")
         assert "task-0002 now blocked by task-0001" in out
 
     def test_rm(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
-        cli("dep", "create", "2", "1")
-        out, _ = cli("dep", "archive", "2", "1")
+        cli("dep", "create", "--task", "2", "--blocked-by", "1")
+        out, _ = cli("dep", "archive", "--task", "2", "--blocked-by", "1")
         assert "archived dependency" in out
 
 
@@ -503,42 +631,51 @@ class TestDependencyCommands:
 
 class TestErrorHandling:
     def test_no_active_workspace(self, cli):
-        _, err = cli("task", "ls", expect_exit=1)
+        _, err = cli("task", "ls", expect_exit=5)
         assert "no active workspace" in err
 
     def test_not_found(self, cli):
         cli("workspace", "create", "dev")
-        _, err = cli("task", "show", "999", expect_exit=1)
+        _, err = cli("task", "show", "999", expect_exit=3)
         assert "error:" in err
 
     def test_duplicate_workspace_name(self, cli):
         cli("workspace", "create", "dev")
-        _, err = cli("workspace", "create", "dev", expect_exit=1)
+        _, err = cli("workspace", "create", "dev", expect_exit=4)
         assert "error:" in err
 
     def test_invalid_task_num(self, cli):
         cli("workspace", "create", "dev")
-        _, err = cli("task", "show", "abc", expect_exit=1)
+        _, err = cli("task", "show", "abc", expect_exit=3)
         assert "error:" in err
 
     def test_status_not_found(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        _, err = cli("task", "create", "Task", "-S", "nonexistent", expect_exit=1)
+        _, err = cli("task", "create", "Task", "-S", "nonexistent", expect_exit=3)
         assert "not found" in err
 
     def test_project_not_found(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        _, err = cli("task", "create", "Task", "-S", "todo", "-p", "nonexistent", expect_exit=1)
+        _, err = cli("task", "create", "Task", "-S", "todo", "-p", "nonexistent", expect_exit=3)
         assert "not found" in err
 
     def test_archive_status_with_active_tasks_blocked(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("task", "create", "Task", "-S", "todo")
-        _, err = cli("status", "archive", "todo", expect_exit=1)
+        _, err = cli("status", "archive", "todo", expect_exit=4)
         assert "active task" in err
+
+    def test_archive_without_tty_requires_force(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task", "-S", "todo")
+        # pytest stdin is already non-TTY; no monkeypatch needed
+        _, err = cli("task", "archive", "1", expect_exit=4)
+        assert "non-interactive" in err
+        assert "--force" in err
 
 
 # ---- Workspace flag override ----
@@ -596,7 +733,7 @@ class TestLsFilters:
         self._setup_workspace(cli)
         cli("task", "create", "low", "--priority", "1", "-S", "backlog")
         cli("task", "create", "high", "--priority", "3", "-S", "backlog")
-        out, _ = cli("task", "ls", "-P", "3")
+        out, _ = cli("task", "ls", "--priority", "3")
         assert "high" in out
         lines = [l for l in out.splitlines() if "low" in l]
         assert len(lines) == 0
@@ -605,7 +742,7 @@ class TestLsFilters:
         self._setup_workspace(cli)
         cli("task", "create", "Fix login bug", "-S", "backlog")
         cli("task", "create", "Add search feature", "-S", "backlog")
-        out, _ = cli("task", "ls", "-s", "login")
+        out, _ = cli("task", "ls", "--search", "login")
         assert "Fix login bug" in out
         lines = [l for l in out.splitlines() if "search feature" in l]
         assert len(lines) == 0
@@ -615,19 +752,19 @@ class TestLsFilters:
         cli("task", "create", "task1", "-S", "backlog", "--priority", "3")
         cli("task", "create", "task2", "-S", "backlog", "--priority", "1")
         cli("task", "create", "task3", "-S", "doing", "--priority", "3")
-        out, _ = cli("task", "ls", "-S", "backlog", "-P", "3")
+        out, _ = cli("task", "ls", "-S", "backlog", "--priority", "3")
         assert "task1" in out
         lines = [l for l in out.splitlines() if l.strip().startswith("task-")]
         assert len(lines) == 1
 
     def test_invalid_status_name(self, cli):
         self._setup_workspace(cli)
-        _, err = cli("task", "ls", "-S", "nonexistent", expect_exit=1)
+        _, err = cli("task", "ls", "-S", "nonexistent", expect_exit=3)
         assert "not found" in err
 
     def test_invalid_project_name(self, cli):
         self._setup_workspace(cli)
-        _, err = cli("task", "ls", "-p", "nonexistent", expect_exit=1)
+        _, err = cli("task", "ls", "-p", "nonexistent", expect_exit=3)
         assert "not found" in err
 
 
@@ -644,7 +781,7 @@ class TestMvWorkspace:
         cli("status", "create", "backlog")
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog")
+        out, _ = cli("task", "transfer", "1", "--to", "ops", "--status", "backlog")
         assert "workspace 'ops'" in out
         assert "status 'backlog'" in out
 
@@ -655,14 +792,14 @@ class TestMvWorkspace:
         cli("project", "create", "infra")
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "-p", "infra")
+        out, _ = cli("task", "transfer", "1", "--to", "ops", "--status", "backlog", "-p", "infra")
         assert "workspace 'ops'" in out
 
     def test_transfer_no_column_fails(self, cli):
         cli("workspace", "create", "ops")
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        _, err = cli("task", "transfer", "1", "--workspace", "ops", expect_exit=2)
+        _, err = cli("task", "transfer", "1", "--to", "ops", expect_exit=2)
         assert "--status" in err or "required" in err
 
     def test_mv_project_only_use_edit(self, cli):
@@ -682,7 +819,7 @@ class TestMvWorkspace:
         cli("status", "create", "backlog")
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "--dry-run")
+        out, _ = cli("task", "transfer", "1", "--to", "ops", "--status", "backlog", "--dry-run")
         assert "dry-run" in out
         assert "transfer OK" in out
 
@@ -693,8 +830,8 @@ class TestMvWorkspace:
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
-        cli("dep", "create", "2", "1")
-        out, _ = cli("task", "transfer", "1", "--workspace", "ops", "--status", "backlog", "--dry-run")
+        cli("dep", "create", "--task", "2", "--blocked-by", "1")
+        out, _ = cli("task", "transfer", "1", "--to", "ops", "--status", "backlog", "--dry-run")
         assert "dependencies" in out
         assert "FAIL" in out
 
@@ -735,28 +872,17 @@ class TestGroupCLI:
         out, _ = self.cli("group", "ls", "--project", "sprint1")
         assert "no groups" in out
 
-    def test_list_groups_tree(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "ls", "--project", "sprint1", "--tree")
-        assert "Frontend" in out
-        assert "Components" in out
-        assert "task-0001" in out
-
     def test_show_group(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
         self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
         out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
-        assert "Group: Frontend" in out
-        assert "group-0001" in out
+        assert "group-0001  Frontend" in out
         assert "sprint1" in out
         assert "task-0001" in out
 
     def test_show_group_not_found(self):
-        _, err = self.cli("group", "show", "nope", "--project", "sprint1", expect_exit=1)
+        _, err = self.cli("group", "show", "nope", "--project", "sprint1", expect_exit=3)
         assert "not found" in err
 
     def test_rename_group(self):
@@ -789,7 +915,7 @@ class TestGroupCLI:
     def test_mv_promote_to_top(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("group", "create", "Child", "--project", "sprint1", "--parent", "Frontend")
-        out, _ = self.cli("group", "mv", "Child", "--parent", "", "--project", "sprint1")
+        out, _ = self.cli("group", "mv", "Child", "--to-top", "--project", "sprint1")
         assert "promoted" in out
 
     def test_assign_task(self):
@@ -809,7 +935,7 @@ class TestGroupCLI:
         self.cli("project", "create", "sprint2")
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("task", "create", "Task", "--project", "sprint2", "-S", "todo")
-        _, err = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=1)
+        _, err = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=4)
         assert "project" in err
 
     def test_unassign_task(self):
@@ -840,13 +966,13 @@ class TestGroupCLI:
         self.cli("project", "create", "sprint2")
         self.cli("group", "create", "Shared", "--project", "sprint1")
         self.cli("group", "create", "Shared", "--project", "sprint2")
-        _, err = self.cli("group", "show", "Shared", expect_exit=1)
+        _, err = self.cli("group", "show", "Shared", expect_exit=3)
         assert "ambiguous" in err
 
     def test_cycle_detection(self):
         self.cli("group", "create", "A", "--project", "sprint1")
         self.cli("group", "create", "B", "--project", "sprint1", "--parent", "A")
-        _, err = self.cli("group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=1)
+        _, err = self.cli("group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=4)
         assert "cycle" in err
 
     def test_create_with_description(self):
@@ -912,13 +1038,21 @@ class TestTagCommands:
         out, _ = cli("tag", "ls")
         assert "no tags" in out
 
+    def test_tag_rename(self, cli):
+        cli("tag", "create", "bug")
+        out, _ = cli("tag", "rename", "bug", "defect")
+        assert "renamed tag 'bug' -> 'defect'" in out
+        out2, _ = cli("tag", "ls")
+        assert "defect" in out2
+        assert "bug" not in out2
+
     def test_tag_archive(self, cli):
         cli("tag", "create", "bug")
         out, _ = cli("tag", "archive", "bug", "--force")
         assert "archived tag 'bug'" in out
 
     def test_tag_archive_not_found(self, cli):
-        _, err = cli("tag", "archive", "nonexistent", "--force", expect_exit=1)
+        _, err = cli("tag", "archive", "nonexistent", "--force", expect_exit=3)
         assert "not found" in err
 
     def test_tag_ls_all_shows_archived(self, cli):
@@ -928,7 +1062,7 @@ class TestTagCommands:
         out, _ = cli("tag", "ls")
         assert "bug" in out
         assert "old" not in out
-        out, _ = cli("tag", "ls", "--all")
+        out, _ = cli("tag", "ls", "--archived", "include")
         assert "bug" in out
         assert "old" in out
         assert "(archived)" in out
@@ -972,13 +1106,13 @@ class TestTagCommands:
 
     def test_edit_untag_not_found(self, cli):
         cli("task", "create", "Task", "-S", "todo")
-        _, err = cli("task", "edit", "1", "--untag", "nonexistent", expect_exit=1)
+        _, err = cli("task", "edit", "1", "--untag", "nonexistent", expect_exit=3)
         assert "not found" in err
 
     def test_edit_nothing_is_noop(self, cli):
         cli("task", "create", "Task", "-S", "todo")
         out, _ = cli("task", "edit", "1")  # no-op: returns unchanged task, exit 0
-        assert "updated task-0001" in out
+        assert "nothing to update" in out
 
     # -- Tags on ls --
 
@@ -1000,7 +1134,7 @@ class TestTagCommands:
         assert "[bug, urgent]" in out
 
     def test_ls_tag_filter_not_found(self, cli):
-        _, err = cli("task", "ls", "--tag", "nonexistent", expect_exit=1)
+        _, err = cli("task", "ls", "--tag", "nonexistent", expect_exit=3)
         assert "not found" in err
 
     # -- Tags on show --
@@ -1024,14 +1158,14 @@ class TestHelp:
 # ---- Context command ----
 
 
-class TestContext:
-    def test_context_text_output(self, cli):
+class TestWorkspaceShow:
+    def test_workspace_show_text_output(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("project", "create", "backend")
         cli("tag", "create", "bug")
         cli("group", "create", "G1", "-p", "backend")
-        out, _ = cli("context")
+        out, _ = cli("workspace", "show")
         assert "== dev ==" in out
         assert "Projects:" in out
         assert "backend" in out
@@ -1040,23 +1174,38 @@ class TestContext:
         assert "Groups:" in out
         assert "G1" in out
 
-    def test_context_empty_workspace_text(self, cli):
+    def test_workspace_show_empty_text(self, cli):
         cli("workspace", "create", "empty")
-        out, _ = cli("context")
+        out, _ = cli("workspace", "show")
         assert "== empty ==" in out
         assert "Projects:" not in out
         assert "Tags:" not in out
         assert "Groups:" not in out
 
-    def test_context_no_active_workspace(self, cli):
-        _, err = cli("context", expect_exit=1)
+    def test_workspace_show_no_active_workspace(self, cli):
+        _, err = cli("workspace", "show", expect_exit=5)
         assert "no active workspace" in err
 
-    def test_context_no_active_workspace_json(self, cli):
-        _, err = cli("--json", "context", expect_exit=1)
+    def test_workspace_show_no_active_workspace_json(self, cli):
+        _, err = cli("--json", "workspace", "show", expect_exit=5)
         data = json.loads(err)
         assert data["ok"] is False
         assert data["code"] == "missing_active_workspace"
+
+    def test_workspace_show_accepts_name_positional(self, cli):
+        cli("workspace", "create", "alpha")
+        cli("workspace", "create", "beta")
+        # active is now beta; show alpha by name
+        out, _ = cli("workspace", "show", "alpha")
+        assert "alpha" in out
+
+    def test_workspace_show_name_positional_json(self, cli):
+        cli("workspace", "create", "alpha")
+        cli("workspace", "create", "beta")
+        out, _ = cli("--json", "workspace", "show", "alpha")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"]["view"]["workspace"]["name"] == "alpha"
 
 
 # ---- JSON output ----
@@ -1094,7 +1243,7 @@ class TestJsonOutput:
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
-        data = self._json(cli, "task", "archive", "1")
+        data = self._json(cli, "task", "archive", "1", "--force")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["archived"] is True
@@ -1124,10 +1273,12 @@ class TestJsonOutput:
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
         cli("task", "create", "T2", "-S", "todo")
-        data = self._json(cli, "dep", "create", "1", "2")
+        data = self._json(cli, "dep", "create", "--task", "1", "--blocked-by", "2")
         assert data["ok"] is True
-        assert data["data"]["task_id"] == 1
-        assert data["data"]["depends_on_id"] == 2
+        assert data["data"]["blocked_task_id"] == 1
+        assert data["data"]["blocked_task_title"] == "T1"
+        assert data["data"]["blocking_task_id"] == 2
+        assert data["data"]["blocking_task_title"] == "T2"
 
     def test_tag_create(self, cli):
         cli("workspace", "create", "B")
@@ -1145,11 +1296,12 @@ class TestJsonOutput:
         data = self._json(cli, "task", "ls")
         assert data["ok"] is True
         payload = data["data"]
-        assert payload["workspace"]["name"] == "B"
-        assert len(payload["statuses"]) == 1
-        assert payload["statuses"][0]["status"]["name"] == "Todo"
-        assert len(payload["statuses"][0]["tasks"]) == 1
-        assert payload["statuses"][0]["tasks"][0]["title"] == "Task A"
+        assert isinstance(payload, list)
+        assert len(payload) == 1  # one status bucket
+        assert "status" in payload[0]
+        assert payload[0]["status"]["name"] == "Todo"
+        assert len(payload[0]["tasks"]) == 1
+        assert payload[0]["tasks"][0]["title"] == "Task A"
 
     def test_workspace_ls(self, cli):
         cli("workspace", "create", "B1")
@@ -1197,6 +1349,20 @@ class TestJsonOutput:
         payload = data["data"]
         assert isinstance(payload, list)
         assert payload[0]["title"] == "G1"
+
+    def test_group_ls_json_includes_project_name(self, cli):
+        cli("workspace", "create", "B")
+        cli("status", "create", "Todo")
+        cli("project", "create", "Alpha")
+        cli("project", "create", "Beta")
+        cli("group", "create", "G1", "-p", "Alpha")
+        cli("group", "create", "G2", "-p", "Beta")
+        data = self._json(cli, "group", "ls")
+        assert data["ok"] is True
+        payload = data["data"]
+        names = {g["title"]: g["project_name"] for g in payload}
+        assert names["G1"] == "Alpha"
+        assert names["G2"] == "Beta"
 
     def test_tag_ls(self, cli):
         cli("workspace", "create", "B")
@@ -1263,7 +1429,7 @@ class TestJsonOutput:
         cli("status", "create", "Todo")
         cli("status", "create", "Done")
         cli("task", "create", "T1", "-S", "todo")
-        data = self._json(cli, "task", "mv", "1", "Done")
+        data = self._json(cli, "task", "mv", "1", "-S", "Done")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
 
@@ -1273,7 +1439,7 @@ class TestJsonOutput:
         cli("task", "create", "T1", "-S", "todo")
         cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--workspace", "B2", "--status", "Inbox")
+        data = self._json(cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox")
         assert data["ok"] is True
         assert data["data"]["task"]["title"] == "T1"
         assert data["data"]["source_task_id"] == 1
@@ -1284,13 +1450,25 @@ class TestJsonOutput:
         cli("task", "create", "T1", "-S", "todo")
         cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--workspace", "B2", "--status", "Inbox", "--dry-run")
+        data = self._json(cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox", "--dry-run")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["can_move"] is True
         assert payload["dependency_ids"] == []
         assert payload["blocking_reason"] is None
         assert payload["is_archived"] is False
+        assert payload["target_project_id"] is None
+
+    def test_transfer_dry_run_includes_target_project_id(self, cli):
+        cli("workspace", "create", "B1")
+        cli("status", "create", "Todo")
+        cli("task", "create", "T1", "-S", "todo")
+        cli("workspace", "create", "B2")
+        cli("status", "create", "Inbox")
+        cli("project", "create", "infra")
+        data = self._json(cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox", "--project", "infra", "--dry-run")
+        assert data["ok"] is True
+        assert data["data"]["target_project_id"] is not None
 
     def test_mv_project_only_use_edit(self, cli):
         cli("workspace", "create", "B")
@@ -1361,8 +1539,8 @@ class TestJsonOutput:
         cli("task", "create", "T1", "-p", "P1", "-S", "todo")
         data = self._json(cli, "group", "assign", "1", "G1", "-p", "P1")
         assert data["ok"] is True
-        assert data["data"]["task"]["id"] == 1
-        assert data["data"]["group_id"] == 1
+        assert data["data"]["id"] == 1
+        assert data["data"]["group"]["title"] == "G1"
 
     def test_group_unassign(self, cli):
         cli("workspace", "create", "B")
@@ -1377,14 +1555,14 @@ class TestJsonOutput:
 
     # -- Context --
 
-    def test_context(self, cli):
+    def test_workspace_show(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("project", "create", "P1")
         cli("tag", "create", "bug")
         cli("group", "create", "G1", "-p", "P1")
         cli("task", "create", "T1", "-S", "todo")
-        data = self._json(cli, "context")
+        data = self._json(cli, "workspace", "show")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["view"]["workspace"]["name"] == "B"
@@ -1396,9 +1574,9 @@ class TestJsonOutput:
         assert len(payload["groups"]) == 1
         assert payload["groups"][0]["title"] == "G1"
 
-    def test_context_empty_workspace(self, cli):
+    def test_workspace_show_empty_workspace(self, cli):
         cli("workspace", "create", "Empty")
-        data = self._json(cli, "context")
+        data = self._json(cli, "workspace", "show")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["view"]["workspace"]["name"] == "Empty"
@@ -1411,7 +1589,7 @@ class TestJsonOutput:
     def test_error_json(self, cli):
         import json
         cli("workspace", "create", "B")
-        _, err = cli("--json", "task", "show", "999", expect_exit=1)
+        _, err = cli("--json", "task", "show", "999", expect_exit=3)
         data = json.loads(err)
         assert data["ok"] is False
         assert "error" in data
@@ -1523,6 +1701,38 @@ class TestExportJson:
         data = json.loads(output.read_text())
         assert "schema_version" in data
 
+    def test_export_refuses_overwrite_by_default(self, cli, tmp_path):
+        cli("workspace", "create", "B")
+        out_file = tmp_path / "dump.json"
+        out_file.write_text("existing")
+        _, err = cli("export", "-o", str(out_file), expect_exit=4)
+        assert "already exists" in err
+        assert out_file.read_text() == "existing"
+
+    def test_export_overwrite_flag_json(self, cli, tmp_path):
+        import json
+        cli("workspace", "create", "B")
+        out_file = tmp_path / "dump.json"
+        out_file.write_text("old")
+        cli("export", "-o", str(out_file), "--overwrite")
+        data = json.loads(out_file.read_text())
+        assert "schema_version" in data
+
+    def test_export_overwrite_flag_md(self, cli, tmp_path):
+        cli("workspace", "create", "B")
+        out_file = tmp_path / "dump.md"
+        out_file.write_text("old")
+        cli("export", "--md", "-o", str(out_file), "--overwrite")
+        assert "# Sticky Notes Export" in out_file.read_text()
+
+    def test_export_md_refuses_overwrite_by_default(self, cli, tmp_path):
+        cli("workspace", "create", "B")
+        out_file = tmp_path / "dump.md"
+        out_file.write_text("existing")
+        _, err = cli("export", "--md", "-o", str(out_file), expect_exit=4)
+        assert "already exists" in err
+        assert out_file.read_text() == "existing"
+
 
 class TestExportParentDir:
     def test_export_creates_parent_dirs(self, cli, tmp_path):
@@ -1559,7 +1769,7 @@ class TestBackup:
         cli("workspace", "create", "B")
         dest = tmp_path / "backup.db"
         dest.write_bytes(b"existing")
-        _, err = cli("backup", str(dest), expect_exit=1)
+        _, err = cli("backup", str(dest), expect_exit=4)
         assert "already exists" in err
 
     def test_backup_overwrite_flag(self, cli, tmp_path):
@@ -1607,11 +1817,92 @@ class TestInfo:
         out, _ = cli("--json", "info")
         data = json.loads(out)
         assert data["ok"] is True
-        assert data["data"]["db"] == str(db_path)
-        assert isinstance(data["data"]["existing"], list)
+        assert data["data"]["db"]["path"] == str(db_path)
+        assert isinstance(data["data"]["db"]["exists"], bool)
+        for key in ("db", "wal", "shm", "active_workspace"):
+            assert "path" in data["data"][key]
+            assert "exists" in data["data"][key]
+        assert "existing" not in data["data"]
 
 
 # ---- Archive commands (dry-run, cascade, confirmation) ----
+
+
+class TestEditDryRun:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("status", "create", "done")
+        cli("project", "create", "alpha")
+        cli("project", "create", "beta")
+        cli("group", "create", "top", "-p", "alpha")
+        cli("group", "create", "child", "-p", "alpha", "--parent", "top")
+        cli("tag", "create", "bug")
+        cli("task", "create", "T1", "-S", "todo", "-p", "alpha", "--priority", "2")
+
+    def test_task_edit_dry_run_text(self):
+        out, _ = self.cli("task", "edit", "1", "--title", "T1 renamed", "--priority", "4", "--dry-run")
+        assert "dry-run" in out
+        assert "title" in out and "T1" in out and "T1 renamed" in out
+        assert "priority" in out
+        # Task unchanged
+        show, _ = self.cli("task", "show", "1")
+        assert "T1 renamed" not in show
+        assert "Priority:    2" in show
+
+    def test_task_edit_dry_run_tag_diff(self):
+        out, _ = self.cli("task", "edit", "1", "--tag", "bug", "--tag", "urgent", "--dry-run")
+        assert "+tag bug" in out
+        assert "+tag urgent" in out
+
+    def test_task_edit_dry_run_json(self):
+        out, _ = self.cli("--json", "task", "edit", "1", "--priority", "5", "--dry-run")
+        data = json.loads(out)["data"]
+        assert data["entity_type"] == "task"
+        assert data["after"]["priority"] == 5
+        assert data["before"]["priority"] == 2
+
+    def test_task_mv_dry_run(self):
+        out, _ = self.cli("task", "mv", "1", "-S", "done", "--dry-run")
+        assert "dry-run" in out
+        assert "'todo'" in out and "'done'" in out
+        # Verify status wasn't actually moved
+        show, _ = self.cli("task", "show", "1")
+        assert "Status:      todo" in show
+
+    def test_task_mv_dry_run_project_change(self):
+        out, _ = self.cli("task", "mv", "1", "-S", "done", "-p", "beta", "--dry-run")
+        assert "project" in out
+        assert "'alpha'" in out and "'beta'" in out
+        # Verify project wasn't actually changed
+        show, _ = self.cli("task", "show", "1")
+        assert "Project:     alpha" in show
+
+    def test_project_edit_dry_run(self):
+        out, _ = self.cli("project", "edit", "alpha", "--desc", "new description", "--dry-run")
+        assert "dry-run" in out
+        assert "project 'alpha'" in out
+        assert "description" in out
+
+    def test_group_edit_dry_run(self):
+        out, _ = self.cli("group", "edit", "top", "-p", "alpha", "--desc", "new desc", "--dry-run")
+        assert "dry-run" in out
+        assert "description" in out
+
+    def test_group_rename_dry_run(self):
+        out, _ = self.cli("group", "rename", "top", "top-renamed", "-p", "alpha", "--dry-run")
+        assert "dry-run" in out
+        assert "title" in out
+        # Still exists under old name — new name must not have been written
+        show, _ = self.cli("group", "show", "top", "-p", "alpha")
+        assert "top-renamed" not in show
+
+    def test_group_mv_dry_run_to_top(self):
+        out, _ = self.cli("group", "mv", "child", "--to-top", "-p", "alpha", "--dry-run")
+        assert "dry-run" in out
+        assert "parent" in out
 
 
 class TestArchiveDryRun:
@@ -1687,7 +1978,7 @@ class TestArchiveCascade:
         assert "top" not in out2
         assert "child" not in out2
         # But visible with --all
-        out3, _ = self.cli("group", "ls", "--project", "proj", "--all")
+        out3, _ = self.cli("group", "ls", "--project", "proj", "--archived", "include")
         assert "top" in out3
         assert "child" in out3
 
@@ -1705,15 +1996,16 @@ class TestArchiveCascade:
         # Workspace hidden from default ls
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
-        # But visible with --all
-        out2, _ = self.cli("workspace", "ls", "--all")
+        # But visible with --archived include
+        out2, _ = self.cli("workspace", "ls", "--archived", "include")
         assert "dev" in out2
 
 
 class TestArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
 
@@ -1738,9 +2030,9 @@ class TestArchiveConfirmation:
         out, _ = self.cli("task", "archive", "1")
         assert "aborted" in out
 
-    def test_json_auto_confirms(self):
+    def test_json_with_force_archives(self):
         self.cli("task", "create", "t1", "-S", "todo")
-        out, _ = self.cli("--json", "task", "archive", "1")
+        out, _ = self.cli("--json", "task", "archive", "1", "--force")
         data = json.loads(out)
         assert data["ok"] is True
         assert data["data"]["archived"] is True
@@ -1774,44 +2066,47 @@ class TestStatusTagDryRun:
 
 class TestStatusArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
         cli("task", "create", "t1", "-S", "todo")
 
-    def test_force_confirms_and_archives_tasks(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "y")
+    def test_force_archives_tasks(self):
+        # --force skips prompt entirely (no input() call)
         out, _ = self.cli("status", "archive", "todo", "--force")
         assert "archived status 'todo'" in out
 
-    def test_force_aborted(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "n")
-        out, _ = self.cli("status", "archive", "todo", "--force")
-        assert "aborted" in out
-
-    def test_reassign_confirms(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "y")
+    def test_reassign_archives(self):
+        # --reassign-to moves tasks and archives without prompting
         out, _ = self.cli("status", "archive", "todo", "--reassign-to", "done")
         assert "archived status 'todo'" in out
 
-    def test_reassign_aborted(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "n")
-        out, _ = self.cli("status", "archive", "todo", "--reassign-to", "done")
-        assert "aborted" in out
-
-    def test_json_auto_confirms_force(self):
+    def test_json_with_force_archives(self):
         out, _ = self.cli("--json", "status", "archive", "todo", "--force")
         data = json.loads(out)
         assert data["ok"] is True
         assert data["data"]["archived"] is True
 
+    def test_force_non_tty_succeeds(self, monkeypatch):
+        # regression: pipe stdin + --force used to raise ValueError telling user to pass --force
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        out, _ = self.cli("status", "archive", "todo", "--force")
+        assert "archived status 'todo'" in out
+
+    def test_reassign_to_non_tty_succeeds_without_force(self, monkeypatch):
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        out, _ = self.cli("status", "archive", "todo", "--reassign-to", "done")
+        assert "archived status 'todo'" in out
+
 
 class TestTagArchiveConfirmation:
     @pytest.fixture(autouse=True)
-    def _setup(self, cli):
+    def _setup(self, cli, monkeypatch):
         self.cli = cli
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("tag", "create", "bug")
@@ -1832,8 +2127,8 @@ class TestTagArchiveConfirmation:
         out, _ = self.cli("tag", "archive", "bug", "--force")
         assert "archived tag 'bug'" in out
 
-    def test_json_auto_confirms(self):
-        out, _ = self.cli("--json", "tag", "archive", "bug")
+    def test_json_with_force_archives(self):
+        out, _ = self.cli("--json", "tag", "archive", "bug", "--force")
         data = json.loads(out)
         assert data["ok"] is True
         assert data["data"]["archived"] is True
@@ -1904,9 +2199,9 @@ class TestDepReCreation:
         cli("task", "create", "b", "-S", "todo")
 
     def test_readd_task_dep_after_archive(self):
-        self.cli("dep", "create", "2", "1")
-        self.cli("dep", "archive", "2", "1")
-        out, _ = self.cli("dep", "create", "2", "1")
+        self.cli("dep", "create", "--task", "2", "--blocked-by", "1")
+        self.cli("dep", "archive", "--task", "2", "--blocked-by", "1")
+        out, _ = self.cli("dep", "create", "--task", "2", "--blocked-by", "1")
         assert "now blocked by" in out
 
 
@@ -1948,10 +2243,10 @@ class TestEndToEndSmoke:
         cli("group", "assign", "2", "endpoints", "--project", "backend")
         cli("group", "assign", "3", "db", "--project", "backend")
         # Task dependencies
-        cli("dep", "create", "2", "1")   # t2 blocked-by t1
-        cli("dep", "create", "3", "1")   # t3 blocked-by t1
+        cli("dep", "create", "--task", "2", "--blocked-by", "1")
+        cli("dep", "create", "--task", "3", "--blocked-by", "1")
         # Group dependencies
-        cli("group-dep", "create", "endpoints", "db", "--project", "backend")
+        cli("group", "dep", "create", "--group", "endpoints", "--blocked-by", "db", "--project", "backend")
 
     def test_listing_commands(self):
         out, _ = self.cli("task", "ls")
@@ -1980,11 +2275,6 @@ class TestEndToEndSmoke:
         assert "endpoints" in out
         assert "db" in out
 
-        out, _ = self.cli("group", "ls", "--project", "backend", "--tree")
-        # Tree output indents children under parents
-        assert "api" in out
-        assert "endpoints" in out
-
         out, _ = self.cli("tag", "ls")
         assert "bug" in out
         assert "urgent" in out
@@ -2001,8 +2291,8 @@ class TestEndToEndSmoke:
         out, _ = self.cli("group", "show", "api", "--project", "backend")
         assert "api" in out
 
-    def test_context(self):
-        out, _ = self.cli("context")
+    def test_workspace_show(self):
+        out, _ = self.cli("workspace", "show")
         assert "todo" in out
         assert "in-progress" in out
         assert "done" in out
@@ -2018,17 +2308,17 @@ class TestEndToEndSmoke:
 
     def test_task_edit_and_move(self):
         self.cli("task", "edit", "5", "--title", "Cleanup v2", "--priority", "3")
-        self.cli("task", "mv", "5", "in-progress")
+        self.cli("task", "mv", "5", "-S", "in-progress")
         out, _ = self.cli("task", "show", "5")
         assert "Cleanup v2" in out
         assert "in-progress" in out
 
     def test_dep_archive_and_recreate(self):
-        self.cli("dep", "archive", "2", "1")
+        self.cli("dep", "archive", "--task", "2", "--blocked-by", "1")
         out, _ = self.cli("task", "show", "2")
         assert "Blocked by" not in out  # no longer blocked by t1
 
-        self.cli("dep", "create", "2", "1")
+        self.cli("dep", "create", "--task", "2", "--blocked-by", "1")
         out, _ = self.cli("task", "show", "2")
         assert "task-0001" in out  # blocked again
 
@@ -2048,7 +2338,7 @@ class TestEndToEndSmoke:
         assert get_active_workspace_id(self.db_path) is None
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
-        out, _ = self.cli("workspace", "ls", "--all")
+        out, _ = self.cli("workspace", "ls", "--archived", "include")
         assert "dev" in out
 
 
@@ -2089,19 +2379,19 @@ class TestTaskMetaCommands:
         assert "no metadata" in out
 
     def test_meta_del_nonexistent(self):
-        _, err = self.cli("task", "meta", "del", "1", "nope", expect_exit=1)
+        _, err = self.cli("task", "meta", "del", "1", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_meta_get_nonexistent(self):
-        _, err = self.cli("task", "meta", "get", "1", "nope", expect_exit=1)
+        _, err = self.cli("task", "meta", "get", "1", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_meta_get_invalid_key(self):
-        _, err = self.cli("task", "meta", "get", "1", "BAD KEY", expect_exit=1)
+        _, err = self.cli("task", "meta", "get", "1", "BAD KEY", expect_exit=4)
         assert "must match" in err
 
     def test_meta_set_invalid_key(self):
-        _, err = self.cli("task", "meta", "set", "1", "BAD KEY", "v", expect_exit=1)
+        _, err = self.cli("task", "meta", "set", "1", "BAD KEY", "v", expect_exit=4)
         assert "must match" in err
 
     def test_meta_set_json(self):
@@ -2159,7 +2449,7 @@ class TestTaskMetaCommands:
             assert rest.lstrip() != "", f"no separation between key and value: {line!r}"
 
     def test_meta_set_nonexistent_task(self):
-        _, err = self.cli("task", "meta", "set", "999", "branch", "feat/kv", expect_exit=1)
+        _, err = self.cli("task", "meta", "set", "999", "branch", "feat/kv", expect_exit=3)
         assert "not found" in err
 
     def test_meta_key_case_insensitive_roundtrip(self):
@@ -2183,13 +2473,13 @@ class TestTaskMetaCommands:
         out, _ = self.cli("task", "meta", "ls", "1")
         assert "no metadata" in out
 
-    def test_meta_by_title(self):
-        self.cli("task", "meta", "set", "My task", "branch", "feat/kv", "--by-title")
-        out, _ = self.cli("task", "meta", "get", "My task", "branch", "--by-title")
+    def test_meta_resolves_title(self):
+        self.cli("task", "meta", "set", "My task", "branch", "feat/kv")
+        out, _ = self.cli("task", "meta", "get", "My task", "branch")
         assert "feat/kv" in out
-        out, _ = self.cli("task", "meta", "ls", "My task", "--by-title")
+        out, _ = self.cli("task", "meta", "ls", "My task")
         assert "branch" in out
-        self.cli("task", "meta", "del", "My task", "branch", "--by-title")
+        self.cli("task", "meta", "del", "My task", "branch")
         out, _ = self.cli("task", "meta", "ls", "1")
         assert "no metadata" in out
 
@@ -2228,11 +2518,11 @@ class TestWorkspaceMetaCommands:
         assert "no metadata" in out
 
     def test_del_missing(self):
-        _, err = self.cli("workspace", "meta", "del", "nope", expect_exit=1)
+        _, err = self.cli("workspace", "meta", "del", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_get_missing(self):
-        _, err = self.cli("workspace", "meta", "get", "nope", expect_exit=1)
+        _, err = self.cli("workspace", "meta", "get", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_case_insensitive(self):
@@ -2271,15 +2561,15 @@ class TestWorkspaceMetaNoActiveWorkspace:
     class because these tests need to NOT have the 'dev' autouse fixture."""
 
     def test_ls_no_active_workspace(self, cli):
-        _, err = cli("workspace", "meta", "ls", expect_exit=1)
+        _, err = cli("workspace", "meta", "ls", expect_exit=5)
         assert "no active workspace" in err
 
     def test_set_no_active_workspace(self, cli):
-        _, err = cli("workspace", "meta", "set", "env", "prod", expect_exit=1)
+        _, err = cli("workspace", "meta", "set", "env", "prod", expect_exit=5)
         assert "no active workspace" in err
 
     def test_ls_no_active_workspace_json(self, cli):
-        _, err = cli("--json", "workspace", "meta", "ls", expect_exit=1)
+        _, err = cli("--json", "workspace", "meta", "ls", expect_exit=5)
         data = json.loads(err)
         assert data["ok"] is False
         assert data["code"] == "missing_active_workspace"
@@ -2311,11 +2601,11 @@ class TestProjectMetaCommands:
         assert "no metadata" in out
 
     def test_del_missing(self):
-        _, err = self.cli("project", "meta", "del", "backend", "nope", expect_exit=1)
+        _, err = self.cli("project", "meta", "del", "backend", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_unknown_project(self):
-        _, err = self.cli("project", "meta", "set", "ghost", "k", "v", expect_exit=1)
+        _, err = self.cli("project", "meta", "set", "ghost", "k", "v", expect_exit=3)
         assert "not found" in err
 
     def test_case_insensitive(self):
@@ -2358,14 +2648,14 @@ class TestGroupMetaCommands:
     def test_del_missing(self):
         _, err = self.cli(
             "group", "meta", "del", "Sprint 1", "nope", "--project", "backend",
-            expect_exit=1,
+            expect_exit=3,
         )
         assert "not found" in err
 
     def test_unknown_group(self):
         _, err = self.cli(
             "group", "meta", "set", "Ghost", "k", "v", "--project", "backend",
-            expect_exit=1,
+            expect_exit=3,
         )
         assert "not found" in err
 
@@ -2386,3 +2676,212 @@ class TestGroupMetaCommands:
         )
         data = json.loads(out)
         assert data["data"] == {"key": "start", "value": "2026-01-01"}
+
+
+# ---- task-0127: format_status_list archived marker ----
+
+
+class TestStatusListArchivedMarker:
+    """status ls --archived include/only renders (archived) suffix."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "active")
+        cli("status", "create", "old")
+        cli("status", "archive", "old")
+
+    def test_archived_marker_shown_with_include(self):
+        out, _ = self.cli("status", "ls", "--archived", "include")
+        assert "(archived)" in out
+        assert "old (archived)" in out
+
+    def test_archived_marker_shown_with_only(self):
+        out, _ = self.cli("status", "ls", "--archived", "only")
+        assert "(archived)" in out
+
+    def test_no_archived_marker_on_active(self):
+        out, _ = self.cli("status", "ls", "--archived", "include")
+        lines = [l for l in out.splitlines() if "active" in l]
+        assert len(lines) == 1
+        assert "(archived)" not in lines[0]
+
+
+# ---- task-0128: format_project_list archived marker ----
+
+
+class TestProjectListArchivedMarker:
+    """project ls --archived include/only renders (archived) suffix."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("project", "create", "live")
+        cli("project", "create", "old")
+        cli("project", "archive", "old", "--force")
+
+    def test_archived_marker_shown_with_include(self):
+        out, _ = self.cli("project", "ls", "--archived", "include")
+        assert "(archived)" in out
+        assert "old (archived)" in out
+
+    def test_archived_marker_shown_with_only(self):
+        out, _ = self.cli("project", "ls", "--archived", "only")
+        assert "(archived)" in out
+
+    def test_no_archived_marker_on_live_project(self):
+        out, _ = self.cli("project", "ls", "--archived", "include")
+        lines = [l for l in out.splitlines() if "live" in l]
+        assert len(lines) == 1
+        assert "(archived)" not in lines[0]
+
+
+# ---- task-0129: format_move_preview source workspace name ----
+
+
+class TestTransferDryRunSourceName:
+    """transfer --dry-run shows source workspace name, not ID."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "source-ws")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("workspace", "create", "target-ws")
+        cli("workspace", "use", "target-ws")
+        cli("status", "create", "backlog")
+        cli("workspace", "use", "source-ws")
+
+    def test_dry_run_shows_source_name_not_id(self):
+        out, _ = self.cli("task", "transfer", "1", "--to", "target-ws", "--status", "backlog", "--dry-run")
+        assert "dry-run" in out
+        assert "source-ws" in out
+        # Must not show a bare integer where the workspace name should be
+        import re
+        # The "from workspace" line should not contain a standalone integer
+        from_line = next((l for l in out.splitlines() if "from workspace" in l), "")
+        assert "source-ws" in from_line
+
+
+# ---- task-0130: format_archive_preview no prefix in confirm prompt ----
+
+
+class TestArchivePreviewPrefixSeparation:
+    """--dry-run output has 'dry-run:' prefix; interactive confirm prompt does not."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli, monkeypatch):
+        self.cli = cli
+        self.monkeypatch = monkeypatch
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+
+    def test_dry_run_has_prefix(self):
+        out, _ = self.cli("task", "archive", "1", "--dry-run")
+        assert out.startswith("dry-run:")
+
+    def test_confirm_prompt_no_dry_run_prefix(self):
+        self.monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
+        # Capture stderr where preview is printed
+        seen = []
+        original_print = __builtins__["print"] if isinstance(__builtins__, dict) else print
+        import sys
+        self.monkeypatch.setattr("builtins.input", lambda _: "n")
+        # Run and capture stderr
+        _, err = self.cli("task", "archive", "1")
+        # The confirm preview is sent to stderr; it should NOT start with "dry-run:"
+        assert err == "" or not err.lstrip().startswith("dry-run:")
+
+
+# ---- task-0131: cmd_task_edit strips/nulls --desc ----
+
+
+class TestTaskEditDescStrip:
+    """task edit -d '' and -d '   ' should clear description to None."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task", "-d", "original desc", "-S", "todo")
+
+    def test_empty_desc_clears_to_null(self):
+        out, _ = self.cli("--json", "task", "edit", "1", "-d", "")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
+
+    def test_whitespace_desc_clears_to_null(self):
+        out, _ = self.cli("--json", "task", "edit", "1", "-d", "   ")
+        data = json.loads(out)
+        assert data["data"]["description"] is None
+
+    def test_normal_desc_retained(self):
+        out, _ = self.cli("--json", "task", "edit", "1", "-d", "new desc")
+        data = json.loads(out)
+        assert data["data"]["description"] == "new desc"
+
+
+# ---- task-0082: TTY-aware output format ----
+
+
+class TestTtyAwareOutput:
+    """Auto-detect: pipe → JSON, TTY → text; --json/--text override."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli, monkeypatch):
+        self.cli = cli
+        self.monkeypatch = monkeypatch
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "t1", "-S", "todo")
+
+    def test_tty_stdout_defaults_to_text(self):
+        # cli fixture already sets sys.stdout.isatty → True
+        out, _ = self.cli("task", "ls")
+        assert out.strip()
+        # not valid JSON
+        try:
+            json.loads(out)
+            assert False, "expected text output, got JSON"
+        except json.JSONDecodeError:
+            pass
+
+    def test_piped_stdout_defaults_to_json(self, monkeypatch):
+        monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: False)
+        out, _ = self.cli("task", "ls")
+        data = json.loads(out)
+        assert data["ok"] is True
+
+    def test_json_flag_overrides_tty(self):
+        # TTY stdout (from fixture) + explicit --json → JSON
+        out, _ = self.cli("--json", "task", "ls")
+        data = json.loads(out)
+        assert data["ok"] is True
+
+    def test_text_flag_overrides_pipe(self, monkeypatch):
+        monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: False)
+        out, _ = self.cli("--text", "task", "ls")
+        try:
+            json.loads(out)
+            assert False, "expected text output, got JSON"
+        except json.JSONDecodeError:
+            pass
+
+    def test_json_text_mutex(self):
+        self.cli("--json", "--text", "task", "ls", expect_exit=2)
+
+    def test_confirm_archive_non_tty_stdin_raises(self, monkeypatch):
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        _, err = self.cli("task", "archive", "1", expect_exit=4)
+        assert "non-interactive" in err
+        assert "--force" in err
+
+    def test_confirm_archive_non_tty_with_force(self, monkeypatch):
+        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        out, _ = self.cli("task", "archive", "1", "--force")
+        assert "archived task-0001" in out

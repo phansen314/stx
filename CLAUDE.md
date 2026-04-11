@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A local todo/kanban app (`todo` CLI) with two interfaces: CLI (argparse) and TUI (Textual), backed by SQLite storage. All layers are fully implemented. Use `--json` flag for structured CLI output. See `skills/sticky-notes/references/cli-reference.md` for the full CLI reference.
+A local todo/kanban app (`todo` CLI) with two interfaces: CLI (argparse) and TUI (Textual), backed by SQLite storage. All layers are fully implemented. CLI auto-emits JSON when piped and text at a terminal (`--json`/`--text` override). See `skills/sticky-notes/references/cli-reference.md` for the full CLI reference and `skills/sticky-notes/references/json-schema.md` for JSON shapes.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ src/sticky_notes/
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
   schema.sql         # DDL (current schema, used for fresh databases)
-  migrations/        # numbered SQL migration files (001_*.sql ... 011_*.sql)
+  migrations/        # numbered SQL migration files (001_*.sql ... 012_*.sql)
   tui/
     app.py           # StickyNotesApp — main Textual app, two-panel layout, keybindings, modal dispatch
     model.py         # WorkspaceModel — loads workspace hierarchy via service, builds tree
@@ -91,10 +91,11 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 - Workspace metadata: `todo workspace meta ls|get|set|del` (operates on active workspace or `-w` override)
 - Project metadata: `todo project meta ls|get|set|del <project>`
 - Group metadata: `todo group meta ls|get|set|del <title> [--project]`
-- Project subcommands: `todo project create|ls|show|edit|archive`
-- Group subcommands: `todo group create|ls|show|rename|edit|archive|mv|assign|unassign`
-- Other subcommand groups: `workspace`, `status`, `dep`, `group-dep`, `tag`
-- Standalone commands: `context`, `export`, `info`, `backup`
+- Project subcommands: `todo project create|ls|show|edit|rename|archive`
+- Group subcommands: `todo group create|ls|show|rename|edit|archive|mv|assign|unassign|dep`
+- Workspace subcommands: `todo workspace create|ls|show|use|rename|archive`
+- Other subcommand groups: `workspace`, `status`, `dep`, `tag`
+- Standalone commands: `export`, `info`, `backup`
 
 ## TUI
 
@@ -119,12 +120,12 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 | `[` / `]` | Move task left/right across statuses |
 | `ctrl+q` | Quit |
 
-**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds. Loaded via `TuiConfig` dataclass in `tui/config.py`.
+**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds. Loaded via `TuiConfig` dataclass in `tui/config.py`. Status order is editable from the CLI via `todo status order <workspace> <status_1> <status_2> ...`.
 
 ## Key Design Conventions
 
 - **Separate pre-insert and persisted types** — `NewTask` (no `id`/`created_at`) vs `Task` (full row). Never use `None` as a stand-in for "not yet assigned."
-- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`status`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `build_group_tree` / `GroupTreeNode` to walk the hierarchy without hydrating every group. `WorkspaceListView` is the aggregate view model for `cmd_ls` — workspace + ordered statuses + TaskListItems. `WorkspaceContext` is the aggregate view model for `cmd_context` — `WorkspaceListView` + projects + tags + groups, for one-call AI session startup.
+- **ListItem vs Detail service models** — two tiers of denormalization for tasks. `TaskListItem` is a flat dataclass of Task fields plus resolved display names (`project_name`, `tag_names`) for list rendering without per-row lookups. `TaskDetail` is a flat dataclass of Task fields plus fully hydrated relationships (`status`, `project`, `group`, `blocked_by`, `blocks`, `history`, `tags`) for single-entity views. Both redeclare Task fields directly — they do not inherit from `Task`. `GroupRef` is the only surviving Ref type, used by `list_groups` to page through the hierarchy without hydrating every group. `WorkspaceListView` is the aggregate view model for `cmd_ls` — workspace + ordered statuses + TaskListItems. `WorkspaceContext` is the aggregate view model for `cmd_workspace_show` — `WorkspaceListView` + projects + tags + groups, for one-call AI session startup.
 - **All dataclasses are frozen** — immutability throughout. Changes produce new instances via DB.
 - **Defaults on pre-insert dataclasses** — optional/defaultable fields on `New*` types carry defaults directly. No factory layer needed.
 - **Service models are flat, not inherited** — `TaskListItem`, `TaskDetail`, `ProjectDetail`, and `GroupDetail` redeclare their parent entity's fields rather than inheriting from `Task` / `Project` / `Group`. Tradeoff: adding a column to `tasks` touches both `TaskListItem` and `TaskDetail` in addition to `Task` and `row_to_task`. The win is that hydrated fields can be plain required annotations (e.g. `status: Status` on `TaskDetail`) without dataclass field-ordering gymnastics. An earlier inheritance-based version required `status: Status = None  # type: ignore` with a runtime `__post_init__` check — flat redeclaration removes that hack.

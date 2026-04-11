@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sticky-notes"
-version = "0.6.0"
+version = "0.7.0"
 description = "A local todo/kanban app with CLI and TUI interfaces"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=6.0", "pytest-asyncio>=1.0"]
+dev = ["pytest>=8.0", "pytest-cov>=6.0", "pytest-asyncio>=1.0", "pytest-xdist>=3.0"]
 
 [project.scripts]
 todo = "sticky_notes.__main__:main"
@@ -21,6 +21,7 @@ todo-tui = "sticky_notes.tui:main"
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
 asyncio_mode = "auto"
+addopts = "-n auto"
 
 [tool.coverage.run]
 source = ["sticky_notes"]

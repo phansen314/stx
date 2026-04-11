@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     title TEXT NOT NULL COLLATE NOCASE,
     description TEXT,
     status_id INTEGER NOT NULL,
-    priority INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 5),
+    priority INTEGER NOT NULL DEFAULT 1,
     due_date INTEGER,
     position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),

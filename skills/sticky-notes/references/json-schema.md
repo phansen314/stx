@@ -1,0 +1,463 @@
+# sticky-notes JSON Schema Reference
+
+Documents the `--json` output shapes for every `todo` command. Shapes reflect current behavior and may evolve between releases — do not treat them as a frozen API contract.
+
+---
+
+## Envelope
+
+All JSON output follows a two-field top-level envelope:
+
+**Success** → stdout:
+```json
+{"ok": true, "data": <shape>}
+```
+
+**Error** → stderr:
+```json
+{"ok": false, "error": "<message>", "code": "<code>"}
+```
+
+Error codes and exit codes:
+
+| code | exit | meaning |
+|---|---|---|
+| `validation` | 4 | Bad input, constraint violation, or non-interactive stdin without `--force` |
+| `not_found` | 3 | Entity doesn't exist |
+| `missing_active_workspace` | 5 | No active workspace set and `-w` not provided |
+| `db_error` | 2 | SQLite error |
+
+---
+
+## Auto-detection
+
+By default the CLI emits **text** when stdout is a terminal and **JSON** when stdout is a pipe or redirected. Override with global flags:
+
+- `--json` — force JSON regardless of TTY
+- `--text` — force text even when piped
+
+---
+
+## Common Field Types
+
+These recur across shapes:
+
+| field | type | notes |
+|---|---|---|
+| `id` | int | autoincrement DB id |
+| `created_at` | int | Unix epoch seconds |
+| `archived` | bool | soft-delete flag |
+| `metadata` | object | `{key: value}` — lowercase-normalized string keys |
+| `priority` | int | 1 (highest) – 5 (lowest) |
+| `due_date` | int \| null | Unix epoch seconds |
+
+---
+
+## Task Commands
+
+### `task create` / `task edit` / `task mv` / `task archive`
+
+All mutation commands return a full **TaskDetail** object:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 1,
+    "title": "Fix login bug",
+    "archived": false,
+    "priority": 3,
+    "due_date": null,
+    "created_at": 1712700000,
+    "description": null,
+    "metadata": {},
+    "status": {"id": 2, "name": "In Progress", "archived": false, "workspace_id": 1},
+    "project": null,
+    "group": null,
+    "tags": [],
+    "blocked_by": [],
+    "blocks": [],
+    "history": []
+  }
+}
+```
+
+`project` and `group` are `null` when not assigned.  
+`tags`, `blocked_by`, `blocks`, `history` are arrays (empty when none).
+
+### `task ls`
+
+Returns a flat array of **TaskListItem** objects (status grouping is text-only):
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 1,
+      "title": "Fix login bug",
+      "archived": false,
+      "priority": 3,
+      "due_date": null,
+      "created_at": 1712700000,
+      "status_id": 2,
+      "project_id": null,
+      "project_name": null,
+      "tag_names": ["bug", "auth"]
+    }
+  ]
+}
+```
+
+### `task show` / `task log`
+
+`task show` returns the same **TaskDetail** shape as mutations.  
+`task log` returns an array of **TaskHistory** entries:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 1,
+      "task_id": 1,
+      "field": "status_id",
+      "old_value": "1",
+      "new_value": "2",
+      "changed_at": 1712700100,
+      "source": "cli"
+    }
+  ]
+}
+```
+
+### `task transfer` (live)
+
+Returns `{"task": TaskDetail, "source_task_id": N}`. `task` is the new TaskDetail on the target workspace; `source_task_id` is the archived source task's id:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "task": {
+      "id": 7,
+      "title": "Fix login bug",
+      "archived": false,
+      "priority": 3,
+      "due_date": null,
+      "created_at": 1712700000,
+      "description": null,
+      "metadata": {},
+      "status": {"id": 5, "name": "Backlog", "archived": false, "workspace_id": 2},
+      "project": null,
+      "group": null,
+      "tags": [],
+      "blocked_by": [],
+      "blocks": [],
+      "history": []
+    },
+    "source_task_id": 1
+  }
+}
+```
+
+### `task transfer --dry-run`
+
+Returns a **MoveToWorkspacePreview** object:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "task_id": 1,
+    "task_title": "Fix login bug",
+    "source_workspace_id": 1,
+    "target_workspace_id": 2,
+    "target_status_id": 5,
+    "target_project_id": null,
+    "can_move": true,
+    "dependency_ids": [],
+    "blocking_reason": null,
+    "is_archived": false
+  }
+}
+```
+
+### Task Metadata (`task meta ls|get|set|del`)
+
+`meta ls` — object of all key/value pairs:
+```json
+{"ok": true, "data": {"sprint": "2", "owner": "alice"}}
+```
+
+`meta get` — single value string:
+```json
+{"ok": true, "data": "alice"}
+```
+
+`meta set` / `meta del` — full updated metadata object:
+```json
+{"ok": true, "data": {"sprint": "2"}}
+```
+
+---
+
+## Workspace Commands
+
+### `workspace create` / `workspace rename`
+
+```json
+{
+  "ok": true,
+  "data": {"id": 1, "name": "dev", "archived": false, "metadata": {}}
+}
+```
+
+### `workspace ls`
+
+Array with injected `active` boolean:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {"id": 1, "name": "dev", "archived": false, "metadata": {}, "active": true}
+  ]
+}
+```
+
+### `workspace show`
+
+Full **WorkspaceContext** — grouped kanban view:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "view": {
+      "workspace": {"id": 1, "name": "dev", "archived": false, "metadata": {}},
+      "statuses": [
+        {
+          "status": {"id": 1, "name": "To Do", "archived": false, "workspace_id": 1},
+          "tasks": [<TaskListItem>, ...]
+        }
+      ]
+    },
+    "projects": [...],
+    "tags": [...],
+    "groups": [...]
+  }
+}
+```
+
+### `workspace archive`
+
+Unique shape — includes `active_cleared` side-effect flag:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "workspace": {"id": 1, "name": "dev", "archived": true, "metadata": {}},
+    "active_cleared": true
+  }
+}
+```
+
+### `workspace use`
+
+```json
+{"ok": true, "data": {"id": 2, "name": "ops", "archived": false, "metadata": {}}}
+```
+
+### Workspace Metadata
+
+Same four-verb pattern as task metadata; operates on active workspace (or `-w`).
+
+---
+
+## Status Commands
+
+### `status create` / `status rename` / `status archive`
+
+```json
+{"ok": true, "data": {"id": 3, "name": "Review", "archived": false, "workspace_id": 1}}
+```
+
+### `status ls`
+
+Array of Status objects.
+
+### `status order`
+
+```json
+{
+  "ok": true,
+  "data": {
+    "workspace_id": 1,
+    "workspace": "dev",
+    "statuses": [
+      {"id": 1, "name": "To Do"},
+      {"id": 2, "name": "In Progress"},
+      {"id": 3, "name": "Done"}
+    ]
+  }
+}
+```
+
+---
+
+## Project Commands
+
+### `project create` / `project edit` / `project rename` / `project archive`
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 1, "name": "backend", "description": null,
+    "archived": false, "workspace_id": 1, "metadata": {}
+  }
+}
+```
+
+### `project ls`
+
+Array of Project objects.
+
+### `project show`
+
+**ProjectDetail** — includes task list:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 1, "name": "backend", "description": null,
+    "archived": false, "workspace_id": 1, "metadata": {},
+    "tasks": [{"id": 1, "title": "Fix login bug"}]
+  }
+}
+```
+
+### Project Metadata
+
+Same four-verb pattern as task metadata.
+
+---
+
+## Group Commands
+
+### `group create` / `group edit` / `group rename` / `group mv` / `group archive`
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 1, "title": "Sprint 1", "description": null,
+    "project_id": 1, "parent_id": null,
+    "archived": false, "metadata": {}
+  }
+}
+```
+
+### `group ls`
+
+Array with injected `project_name`:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 1, "title": "Sprint 1", "description": null,
+      "project_id": 1, "parent_id": null,
+      "archived": false, "metadata": {},
+      "project_name": "backend",
+      "task_ids": [1, 2]
+    }
+  ]
+}
+```
+
+### `group show`
+
+**GroupDetail** — includes children and task list.
+
+### `group assign` / `group unassign`
+
+Returns full **TaskDetail** (same as `task show`).
+
+### Group Dependencies (`group dep create|archive`)
+
+```json
+{
+  "ok": true,
+  "data": {
+    "blocked_group_id": 2,
+    "blocking_group_id": 1
+  }
+}
+```
+
+### Group Metadata
+
+Same four-verb pattern as task metadata.
+
+---
+
+## Tag Commands
+
+### `tag create` / `tag rename` / `tag archive`
+
+```json
+{"ok": true, "data": {"id": 1, "name": "bug", "archived": false, "workspace_id": 1}}
+```
+
+### `tag ls`
+
+Array of Tag objects.
+
+---
+
+## Dependency Commands (`dep create|archive`)
+
+```json
+{
+  "ok": true,
+  "data": {
+    "blocked_task_id": 2,
+    "blocking_task_id": 1
+  }
+}
+```
+
+---
+
+## Standalone Commands
+
+### `export`
+
+```json
+null
+```
+(`export` writes Markdown/JSON to stdout directly; `--json` envelope is a no-op.)
+
+### `backup`
+
+```json
+{"ok": true, "data": {"path": "/path/to/backup.db"}}
+```
+
+### `info`
+
+```json
+{
+  "ok": true,
+  "data": {
+    "db_path": "~/.local/share/sticky-notes/sticky-notes.db",
+    "active_workspace_path": "~/.local/share/sticky-notes/active-workspace",
+    "schema_version": 12
+  }
+}
+```

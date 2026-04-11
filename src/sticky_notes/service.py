@@ -37,14 +37,14 @@ from .models import (
 )
 from .service_models import (
     ArchivePreview,
+    EntityUpdatePreview,
     GroupDetail,
     GroupRef,
-    GroupTreeNode,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
     TaskListItem,
+    TaskMovePreview,
     WorkspaceContext,
     WorkspaceListStatus,
     WorkspaceListView,
@@ -121,8 +121,8 @@ def _validate_task_fields(
 ) -> None:
     if "priority" in changes:
         p = changes["priority"]
-        if not isinstance(p, int) or not 1 <= p <= 5:
-            raise ValueError(f"priority must be between 1 and 5, got {p}")
+        if not isinstance(p, int):
+            raise ValueError(f"priority must be an integer, got {p!r}")
     if "position" in changes:
         pos = changes["position"]
         if not isinstance(pos, int) or pos < 0:
@@ -256,8 +256,11 @@ def list_workspaces(
     conn: sqlite3.Connection,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Workspace, ...]:
-    return repo.list_workspaces(conn, include_archived=include_archived)
+    return repo.list_workspaces(
+        conn, include_archived=include_archived, only_archived=only_archived,
+    )
 
 
 def update_workspace(
@@ -323,8 +326,9 @@ def list_statuses(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Status, ...]:
-    return repo.list_statuses(conn, workspace_id, include_archived=include_archived)
+    return repo.list_statuses(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
 
 
 def update_status(
@@ -412,8 +416,33 @@ def list_projects(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Project, ...]:
-    return repo.list_projects(conn, workspace_id, include_archived=include_archived)
+    return repo.list_projects(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
+
+
+def _validate_project_update(
+    conn: sqlite3.Connection,
+    project_id: int,
+    changes: dict[str, Any],
+) -> None:
+    """Shared validation for project updates. Currently enforces the
+    archive-cascade block: archiving a project with active tasks or
+    groups requires `project archive` instead of `project edit`.
+    """
+    if changes.get("archived") is True:
+        active_tasks = repo.list_tasks_by_project(conn, project_id)
+        if active_tasks:
+            raise ValueError(
+                f"project has {len(active_tasks)} active task(s); "
+                "use 'project archive' to cascade"
+            )
+        active_groups = repo.list_groups(conn, project_id)
+        if active_groups:
+            raise ValueError(
+                f"project has {len(active_groups)} active group(s); "
+                "use 'project archive' to cascade"
+            )
 
 
 def update_project(
@@ -422,19 +451,7 @@ def update_project(
     changes: dict[str, Any],
 ) -> Project:
     with transaction(conn), _friendly_errors():
-        if changes.get("archived") is True:
-            active_tasks = repo.list_tasks_by_project(conn, project_id)
-            if active_tasks:
-                raise ValueError(
-                    f"project has {len(active_tasks)} active task(s); "
-                    "use 'project archive' to cascade"
-                )
-            active_groups = repo.list_groups(conn, project_id)
-            if active_groups:
-                raise ValueError(
-                    f"project has {len(active_groups)} active group(s); "
-                    "use 'project archive' to cascade"
-                )
+        _validate_project_update(conn, project_id, changes)
         return repo.update_project(conn, project_id, changes)
 
 
@@ -517,21 +534,19 @@ def resolve_task_id(
     conn: sqlite3.Connection,
     workspace_id: int,
     raw: str,
-    *,
-    by_title: bool = False,
 ) -> int:
     """Resolve a task identifier to its ID.
 
-    By default only accepts numeric formats ('1', 'task-0001', '#1').
-    Pass by_title=True to also fall back to title lookup on this workspace.
+    Numeric forms ('1', 'task-0001', '#1') are tried first; anything else
+    falls back to a title lookup on this workspace. A task whose title
+    literally matches `task-NNNN` would be resolved as an ID, not a title —
+    avoid such titles.
     """
     try:
         return parse_task_num(raw)
     except ValueError:
         pass
-    if by_title:
-        return get_task_by_title(conn, workspace_id, raw).id
-    raise LookupError(f"invalid task number {raw!r}; use an integer, 'task-NNNN', or '#N'")
+    return get_task_by_title(conn, workspace_id, raw).id
 
 
 def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
@@ -660,6 +675,28 @@ def update_task(
         )
 
 
+def _validate_task_update(
+    conn: sqlite3.Connection,
+    old: Task,
+    changes: dict[str, Any],
+) -> None:
+    """Merge + validate changes against an existing task. Shared by
+    `_update_task_body` (write path) and `preview_update_task` (dry-run)
+    so both paths enforce identical constraints.
+
+    Mutates nothing on the DB. Raises ValueError on invalid input,
+    LookupError on missing referenced entities.
+    """
+    merged: dict[str, Any] = {}
+    if "start_date" in changes or "finish_date" in changes:
+        merged["start_date"] = changes.get("start_date", old.start_date)
+        merged["finish_date"] = changes.get("finish_date", old.finish_date)
+    merged.update(changes)
+    _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
+    if "group_id" in changes or "project_id" in changes:
+        _validate_group_project_consistency(conn, old, changes)
+
+
 def _update_task_body(
     conn: sqlite3.Connection,
     task_id: int,
@@ -676,14 +713,7 @@ def _update_task_body(
     triggering the transaction manager's anti-nesting guard.
     """
     old = get_task(conn, task_id)
-    merged: dict[str, Any] = {}
-    if "start_date" in changes or "finish_date" in changes:
-        merged["start_date"] = changes.get("start_date", old.start_date)
-        merged["finish_date"] = changes.get("finish_date", old.finish_date)
-    merged.update(changes)
-    _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
-    if "group_id" in changes or "project_id" in changes:
-        _validate_group_project_consistency(conn, old, changes)
+    _validate_task_update(conn, old, changes)
     if changes:
         updated = repo.update_task(conn, task_id, changes)
         _record_changes(conn, task_id, old, changes, source)
@@ -778,6 +808,7 @@ def preview_move_to_workspace(
         source_workspace_id=task.workspace_id,
         target_workspace_id=target_workspace_id,
         target_status_id=target_status_id,
+        target_project_id=project_id,
         can_move=can_move,
         blocking_reason=reason,
         dependency_ids=dep_ids,
@@ -909,17 +940,19 @@ def _remove_entity_meta(
     remover: Callable[[sqlite3.Connection, int, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
     entity_name: str,
-) -> Any:
+) -> str:
     """Generic entity-metadata removal. Raises ``LookupError`` if the key
-    isn't present on the entity.
+    isn't present on the entity. Returns the old value atomically so
+    callers don't need a separate read.
     """
     normalized = _normalize_meta_key(key)
     with transaction(conn), _friendly_errors():
         old = fetcher(conn, entity_id)
         if normalized not in old.metadata:
             raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
+        old_value = old.metadata[normalized]
         remover(conn, entity_id, normalized)
-        return fetcher(conn, entity_id)
+        return old_value
 
 
 def _replace_entity_metadata(
@@ -968,7 +1001,7 @@ def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) 
     )
 
 
-def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> Task:
+def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
     return _remove_entity_meta(
         conn, task_id, key,
         remover=repo.remove_task_metadata_key,
@@ -1011,7 +1044,7 @@ def set_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str, va
     )
 
 
-def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> Workspace:
+def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> str:
     return _remove_entity_meta(
         conn, workspace_id, key,
         remover=repo.remove_workspace_metadata_key,
@@ -1053,7 +1086,7 @@ def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value:
     )
 
 
-def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> Project:
+def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str:
     return _remove_entity_meta(
         conn, project_id, key,
         remover=repo.remove_project_metadata_key,
@@ -1095,7 +1128,7 @@ def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str
     )
 
 
-def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> Group:
+def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
     return _remove_entity_meta(
         conn, group_id, key,
         remover=repo.remove_group_metadata_key,
@@ -1373,8 +1406,12 @@ def list_groups(
     project_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[GroupRef, ...]:
-    groups = repo.list_groups(conn, project_id, include_archived=include_archived)
+    groups = repo.list_groups(
+        conn, project_id,
+        include_archived=include_archived, only_archived=only_archived,
+    )
     if not groups:
         return ()
     group_ids = tuple(g.id for g in groups)
@@ -1385,33 +1422,6 @@ def list_groups(
     return tuple(
         group_to_ref(g, task_ids=task_ids_map.get(g.id, ()), child_ids=child_ids_map.get(g.id, ()))
         for g in groups
-    )
-
-
-def build_group_tree(
-    conn: sqlite3.Connection,
-    project_id: int,
-    *,
-    include_archived: bool = False,
-) -> ProjectGroupTree:
-    """Assemble the group hierarchy for a project as a tree of GroupTreeNodes."""
-    refs = list_groups(conn, project_id, include_archived=include_archived)
-    children_map: dict[int | None, list[GroupRef]] = {}
-    for ref in refs:
-        children_map.setdefault(ref.parent_id, []).append(ref)
-
-    def _build(ref: GroupRef) -> GroupTreeNode:
-        return GroupTreeNode(
-            group=ref,
-            children=tuple(_build(c) for c in children_map.get(ref.id, [])),
-        )
-
-    roots = tuple(_build(r) for r in children_map.get(None, []))
-    ungrouped_count = len(repo.list_ungrouped_task_ids(conn, project_id))
-    return ProjectGroupTree(
-        project_id=project_id,
-        roots=roots,
-        ungrouped_task_count=ungrouped_count,
     )
 
 
@@ -1530,8 +1540,20 @@ def list_tags(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Tag, ...]:
-    return repo.list_tags(conn, workspace_id, include_archived=include_archived)
+    return repo.list_tags(
+        conn, workspace_id, include_archived=include_archived, only_archived=only_archived,
+    )
+
+
+def update_tag(
+    conn: sqlite3.Connection,
+    tag_id: int,
+    changes: dict[str, Any],
+) -> Tag:
+    with transaction(conn), _friendly_errors():
+        return repo.update_tag(conn, tag_id, changes)
 
 
 def archive_tag(conn: sqlite3.Connection, tag_id: int, *, unassign: bool = False) -> Tag:
@@ -1660,6 +1682,167 @@ def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview
         project_count=0,
         status_count=0,
     )
+
+
+def preview_update_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    changes: dict[str, Any],
+    *,
+    add_tags: tuple[str, ...] = (),
+    remove_tags: tuple[str, ...] = (),
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_task` without writing. Validates the
+    merged change set the same way `update_task` does so dry-run surfaces
+    validation errors before commit.
+    """
+    old = get_task(conn, task_id)
+    _validate_task_update(conn, old, changes)
+    before, after = _diff_fields(old, changes)
+    current_tag_names = tuple(t.name for t in repo.list_tags_by_task(conn, task_id))
+    added = tuple(t for t in add_tags if t.lower() not in {n.lower() for n in current_tag_names})
+    removed: list[str] = []
+    for t in remove_tags:
+        matches = [n for n in current_tag_names if n.lower() == t.lower()]
+        if not matches:
+            raise LookupError(f"task {task_id} is not tagged {t!r}")
+        removed.append(matches[0])
+    return EntityUpdatePreview(
+        entity_type="task",
+        entity_id=task_id,
+        label=old.title,
+        before=before,
+        after=after,
+        tags_added=added,
+        tags_removed=tuple(removed),
+    )
+
+
+def preview_move_task(
+    conn: sqlite3.Connection,
+    task_id: int,
+    status_id: int,
+    position: int,
+    *,
+    project_id: int | None = None,
+    change_project: bool = False,
+) -> TaskMovePreview:
+    """Compute a from/to snapshot for `move_task`. No DB writes.
+
+    Pass `change_project=True` to reassign the project; `project_id` is
+    then the new value (None means unassign). When `change_project=False`
+    the preview reports no project change.
+    """
+    task = get_task(conn, task_id)
+    from_status = get_status(conn, task.status_id)
+    to_status = get_status(conn, status_id)
+    from_project = (
+        repo.get_project(conn, task.project_id).name if task.project_id is not None else None
+    )
+    if change_project:
+        to_project_id = project_id
+        project_changed = to_project_id != task.project_id
+    else:
+        to_project_id = task.project_id
+        project_changed = False
+    to_project = (
+        repo.get_project(conn, to_project_id).name if to_project_id is not None else None
+    )
+    return TaskMovePreview(
+        task_id=task_id,
+        title=task.title,
+        from_status=from_status.name,
+        to_status=to_status.name,
+        from_position=task.position,
+        to_position=position,
+        from_project=from_project,
+        to_project=to_project,
+        project_changed=project_changed,
+    )
+
+
+def preview_update_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_project` without writing. Runs the same
+    validation as `update_project` so dry-run surfaces rejection errors.
+    """
+    old = get_project(conn, project_id)
+    _validate_project_update(conn, project_id, changes)
+    before, after = _diff_fields(old, changes)
+    return EntityUpdatePreview(
+        entity_type="project",
+        entity_id=project_id,
+        label=old.name,
+        before=before,
+        after=after,
+    )
+
+
+def preview_update_group(
+    conn: sqlite3.Connection,
+    group_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_group` without writing. For `parent_id`
+    changes, the diff renders parent group titles (or None) via a
+    resolver rather than exposing raw ids.
+    """
+    old = get_group(conn, group_id)
+    if "parent_id" in changes:
+        new_parent_id = changes["parent_id"]
+        if new_parent_id is not None and _would_create_cycle(conn, group_id, new_parent_id):
+            raise ValueError("reparenting would create a cycle")
+
+    def _resolve_parent(pid: int | None) -> str | None:
+        if pid is None:
+            return None
+        return get_group(conn, pid).title
+
+    before, after = _diff_fields(old, changes, resolvers={"parent_id": _resolve_parent})
+    return EntityUpdatePreview(
+        entity_type="group",
+        entity_id=group_id,
+        label=old.title,
+        before=before,
+        after=after,
+    )
+
+
+def _diff_fields(
+    entity: Any,
+    changes: dict[str, Any],
+    *,
+    resolvers: dict[str, Callable[[Any], Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (before, after) dicts containing only fields in `changes`
+    whose new value differs from the entity's current value.
+
+    Raises AttributeError if a key in `changes` doesn't exist on the
+    entity — surfaces caller typos loudly instead of silently producing
+    a bogus None-valued diff entry.
+
+    `resolvers` is an optional per-key mapping of callables applied to
+    both the before and after values before inclusion in the result.
+    Use for relational fields that store raw ids internally but should
+    render as display names in the diff (e.g. parent_id → parent title).
+    """
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    resolvers = resolvers or {}
+    for key, new_value in changes.items():
+        current = getattr(entity, key)
+        if current != new_value:
+            resolver = resolvers.get(key)
+            if resolver is not None:
+                before[key] = resolver(current)
+                after[key] = resolver(new_value)
+            else:
+                before[key] = current
+                after[key] = new_value
+    return before, after
 
 
 def archive_task(

@@ -152,6 +152,14 @@ class TestWorkspaceRepository:
         workspaces = list_workspaces(conn, include_archived=True)
         assert len(workspaces) == 2
 
+    def test_list_workspaces_only_archived(self, conn: sqlite3.Connection) -> None:
+        insert_workspace(conn, NewWorkspace(name="active"))
+        b2 = insert_workspace(conn, NewWorkspace(name="gone"))
+        update_workspace(conn, b2.id, {"archived": True})
+        workspaces = list_workspaces(conn, only_archived=True)
+        assert len(workspaces) == 1
+        assert workspaces[0].name == "gone"
+
     def test_update_workspace(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="old"))
         updated = update_workspace(conn, workspace.id, {"name": "new"})
@@ -220,6 +228,15 @@ class TestStatusRepository:
         assert len(list_statuses(conn, workspace.id)) == 1
         assert len(list_statuses(conn, workspace.id, include_archived=True)) == 2
 
+    def test_list_statuses_only_archived(self, conn: sqlite3.Connection) -> None:
+        workspace = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
+        c2 = insert_status(conn, NewStatus(workspace_id=workspace.id, name="done"))
+        update_status(conn, c2.id, {"archived": True})
+        result = list_statuses(conn, workspace.id, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "done"
+
     def test_update_status(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="old"))
@@ -281,6 +298,15 @@ class TestProjectRepository:
         update_project(conn, p2.id, {"archived": True})
         assert len(list_projects(conn, workspace.id)) == 1
         assert len(list_projects(conn, workspace.id, include_archived=True)) == 2
+
+    def test_list_projects_only_archived(self, conn: sqlite3.Connection) -> None:
+        workspace = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_project(conn, NewProject(workspace_id=workspace.id, name="p1"))
+        p2 = insert_project(conn, NewProject(workspace_id=workspace.id, name="p2"))
+        update_project(conn, p2.id, {"archived": True})
+        result = list_projects(conn, workspace.id, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "p2"
 
     def test_update_project(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
@@ -485,19 +511,16 @@ class TestTaskRepository:
         )
         assert task.priority == 5
 
-    def test_priority_below_lower_bound_rejected(self, conn: sqlite3.Connection) -> None:
+    def test_priority_accepts_unbounded_integers(self, conn: sqlite3.Connection) -> None:
         workspace, col = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_task(
-                conn, NewTask(workspace_id=workspace.id, title="bad", status_id=col.id, priority=0)
-            )
-
-    def test_priority_above_upper_bound_rejected(self, conn: sqlite3.Connection) -> None:
-        workspace, col = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_task(
-                conn, NewTask(workspace_id=workspace.id, title="bad", status_id=col.id, priority=6)
-            )
+        task_low = insert_task(
+            conn, NewTask(workspace_id=workspace.id, title="t-low", status_id=col.id, priority=-1)
+        )
+        task_high = insert_task(
+            conn, NewTask(workspace_id=workspace.id, title="t-high", status_id=col.id, priority=42)
+        )
+        assert task_low.priority == -1
+        assert task_high.priority == 42
 
     def test_empty_title_allowed(self, conn: sqlite3.Connection) -> None:
         workspace, col = self._setup(conn)
@@ -954,6 +977,15 @@ class TestTagRepository:
         assert len(list_tags(conn, workspace.id)) == 1
         assert len(list_tags(conn, workspace.id, include_archived=True)) == 2
 
+    def test_list_only_archived(self, conn: sqlite3.Connection) -> None:
+        workspace = self._setup(conn)
+        insert_tag(conn, NewTag(workspace_id=workspace.id, name="active"))
+        t2 = insert_tag(conn, NewTag(workspace_id=workspace.id, name="gone"))
+        update_tag(conn, t2.id, {"archived": True})
+        tags = list_tags(conn, workspace.id, only_archived=True)
+        assert len(tags) == 1
+        assert tags[0].name == "gone"
+
     def test_list_ordered_by_name(self, conn: sqlite3.Connection) -> None:
         workspace = self._setup(conn)
         insert_tag(conn, NewTag(workspace_id=workspace.id, name="zebra"))
@@ -1152,6 +1184,15 @@ class TestGroupRepository:
         update_group(conn, g2.id, {"archived": True})
         assert len(list_groups(conn, proj.id)) == 1
         assert len(list_groups(conn, proj.id, include_archived=True)) == 2
+
+    def test_list_groups_only_archived(self, conn: sqlite3.Connection) -> None:
+        _, proj = self._setup(conn)
+        insert_group(conn, NewGroup(workspace_id=proj.workspace_id, project_id=proj.id, title="active"))
+        g2 = insert_group(conn, NewGroup(workspace_id=proj.workspace_id, project_id=proj.id, title="gone"))
+        update_group(conn, g2.id, {"archived": True})
+        groups = list_groups(conn, proj.id, only_archived=True)
+        assert len(groups) == 1
+        assert groups[0].title == "gone"
 
     def test_list_groups_ordered_by_position(self, conn: sqlite3.Connection) -> None:
         _, proj = self._setup(conn)

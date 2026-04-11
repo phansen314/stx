@@ -8,12 +8,13 @@ from .formatting import format_group_num, format_priority, format_task_num, form
 from .models import Project, Status, Tag, Task, TaskHistory, Workspace
 from .service_models import (
     ArchivePreview,
+    EntityUpdatePreview,
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
+    TaskMovePreview,
     WorkspaceContext,
     WorkspaceListView,
 )
@@ -21,6 +22,18 @@ from .service_models import (
 
 def _empty(entity: str) -> str:
     return f"no {entity}s"
+
+
+def format_metadata_block(metadata: dict[str, str], indent: int = 2) -> str:
+    """Render a metadata dict as indented 'key: value' lines.
+
+    Returns an empty string when the dict is empty (callers can skip the
+    'Metadata:' header entirely in that case).
+    """
+    if not metadata:
+        return ""
+    pad = " " * indent
+    return "\n".join(f"{pad}{k}: {v}" for k, v in sorted(metadata.items()))
 
 
 def format_history_entry(h: TaskHistory) -> str:
@@ -49,7 +62,11 @@ def format_workspace_list(workspaces: tuple[Workspace, ...], active_id: int | No
 def format_status_list(statuses: tuple[Status, ...]) -> str:
     if not statuses:
         return "no statuses"
-    return "\n".join(f"  {s.name}" for s in statuses)
+    lines: list[str] = []
+    for s in statuses:
+        archived = " (archived)" if s.archived else ""
+        lines.append(f"  {s.name}{archived}")
+    return "\n".join(lines)
 
 
 def format_project_list(projects: tuple[Project, ...]) -> str:
@@ -57,8 +74,9 @@ def format_project_list(projects: tuple[Project, ...]) -> str:
         return _empty("project")
     lines: list[str] = []
     for p in projects:
+        archived = " (archived)" if p.archived else ""
         desc = f"  {p.description}" if p.description else ""
-        lines.append(f"  {p.name}{desc}")
+        lines.append(f"  {p.name}{archived}{desc}")
     return "\n".join(lines)
 
 
@@ -68,8 +86,7 @@ def format_project_detail(detail: ProjectDetail) -> str:
         lines.append(f"  {detail.description}")
     if detail.metadata:
         lines.append("  Metadata:")
-        for k, v in sorted(detail.metadata.items()):
-            lines.append(f"    {k}: {v}")
+        lines.append(format_metadata_block(detail.metadata, indent=4))
     lines.append(f"  Tasks: {len(detail.tasks)}")
     for t in detail.tasks:
         lines.append(f"    {format_task_num(t.id)}  {t.title}")
@@ -98,8 +115,7 @@ def format_task_detail(detail: TaskDetail) -> str:
         lines.append(f"  Tags:        {tag_str}")
     if detail.metadata:
         lines.append("  Metadata:")
-        for k, v in sorted(detail.metadata.items()):
-            lines.append(f"    {k}: {v}")
+        lines.append(format_metadata_block(detail.metadata, indent=4))
     lines.append(f"  Priority:    {detail.priority}")
     if detail.due_date:
         lines.append(f"  Due:         {format_timestamp(detail.due_date)}")
@@ -142,8 +158,7 @@ def format_workspace_context(ctx: WorkspaceContext) -> str:
     lines: list[str] = [f"== {ctx.view.workspace.name} =="]
     if ctx.view.workspace.metadata:
         lines.append("Metadata:")
-        for k, v in sorted(ctx.view.workspace.metadata.items()):
-            lines.append(f"  {k}: {v}")
+        lines.append(format_metadata_block(ctx.view.workspace.metadata, indent=2))
     view_str = format_workspace_list_view(ctx.view)
     if view_str:
         lines.append(view_str)
@@ -180,58 +195,12 @@ def format_group_list(
     return "\n".join(lines)
 
 
-def format_group_trees(
-    sections: tuple[tuple[Project, ProjectGroupTree, dict[int, Task]], ...],
-) -> str:
-    if not sections:
-        return _empty("project")
-    show_headers = len(sections) > 1
-    lines: list[str] = []
-    for proj, tree, task_by_id in sections:
-        if not tree.roots and not tree.ungrouped_task_count:
-            continue
-        if show_headers:
-            lines.append(f"\n== {proj.name} ==")
-        lines.extend(_format_group_tree_lines(tree, task_by_id))
-    if not lines and len(sections) == 1:
-        return _empty("group")
-    return "\n".join(lines)
-
-
-def _format_group_tree_lines(
-    tree: ProjectGroupTree,
-    task_by_id: dict[int, Task],
-) -> list[str]:
-    lines: list[str] = []
-
-    def _format_subtree(node, prefix: str, is_last: bool) -> None:
-        ref = node.group
-        connector = "+-- " if prefix else ""
-        archived = " (archived)" if ref.archived else ""
-        lines.append(f"{prefix}{connector}{format_group_num(ref.id)}  {ref.title}{archived}")
-        child_prefix = prefix + ("|   " if not is_last and prefix else "    ") if prefix else ""
-        for tid in ref.task_ids:
-            task = task_by_id.get(tid)
-            if task is None:
-                continue
-            lines.append(f"{child_prefix}+-- {format_task_num(task.id)}: {task.title}")
-        for i, child in enumerate(node.children):
-            _format_subtree(child, child_prefix, i == len(node.children) - 1)
-
-    for i, root in enumerate(tree.roots):
-        _format_subtree(root, "", i == len(tree.roots) - 1)
-
-    if tree.ungrouped_task_count:
-        lines.append(f"\n({tree.ungrouped_task_count} ungrouped tasks)")
-    return lines
-
-
 def format_group_detail(
     detail: GroupDetail,
     project_name: str,
     ancestry_titles: tuple[str, ...],
 ) -> str:
-    lines = [f"Group: {detail.title} ({format_group_num(detail.id)})"]
+    lines = [f"{format_group_num(detail.id)}  {detail.title}"]
     if detail.description:
         lines.append(f"  Description: {detail.description}")
     lines.append(f"  Project:     {project_name}")
@@ -239,8 +208,7 @@ def format_group_detail(
     lines.append(f"  Tasks:       {len(detail.tasks)}")
     if detail.metadata:
         lines.append("  Metadata:")
-        for k, v in sorted(detail.metadata.items()):
-            lines.append(f"    {k}: {v}")
+        lines.append(format_metadata_block(detail.metadata, indent=4))
     if detail.children:
         child_names = ", ".join(c.title for c in detail.children)
         lines.append(f"  Sub-groups: {child_names}")
@@ -258,12 +226,15 @@ def format_move_preview(
     preview: MoveToWorkspacePreview,
     target_workspace_name: str,
     target_status_name: str,
+    *,
+    source_workspace_name: str,
+    target_project_name: str | None = None,
 ) -> str:
     lines = [f"dry-run: would transfer {format_task_num(preview.task_id)} ({preview.task_title})"]
-    lines.append(
-        f"  from workspace {preview.source_workspace_id} -> "
-        f"workspace '{target_workspace_name}' / status '{target_status_name}'"
-    )
+    dest = f"workspace '{target_workspace_name}' / status '{target_status_name}'"
+    if target_project_name:
+        dest += f" / project '{target_project_name}'"
+    lines.append(f"  from workspace '{source_workspace_name}' -> {dest}")
     if not preview.can_move:
         if preview.dependency_ids:
             dep_list = ", ".join(format_task_num(d) for d in preview.dependency_ids)
@@ -281,7 +252,7 @@ def format_archive_preview(preview: ArchivePreview) -> str:
     if preview.already_archived:
         return f"{preview.entity_type} '{preview.entity_name}' is already archived; nothing to do"
     total = preview.task_count + preview.group_count + preview.project_count + preview.status_count
-    lines = [f"dry-run: would archive {preview.entity_type} '{preview.entity_name}'"]
+    lines = [f"would archive {preview.entity_type} '{preview.entity_name}'"]
     if total == 0:
         return lines[0]
     if preview.project_count:
@@ -293,4 +264,61 @@ def format_archive_preview(preview: ArchivePreview) -> str:
         lines.append(f"  statuses: {preview.status_count}")
     if preview.task_count:
         lines.append(f"  tasks: {preview.task_count}")
+    return "\n".join(lines)
+
+
+def _fmt_diff_value(value: object) -> str:
+    """Format a before/after value for human-readable diff output.
+
+    Strings render with explicit single quotes (`'foo'`), None renders as
+    `(none)`, everything else renders via `str()` (ints, bools). Shared
+    across `format_entity_update_preview` and `format_task_move_preview`
+    for consistency.
+    """
+    if value is None:
+        return "(none)"
+    if isinstance(value, str):
+        return f"'{value}'"
+    return str(value)
+
+
+def format_entity_update_preview(preview: EntityUpdatePreview) -> str:
+    if preview.entity_type == "task":
+        header = f"{format_task_num(preview.entity_id)} ({preview.label})"
+    elif preview.entity_type == "group":
+        header = f"{format_group_num(preview.entity_id)} ({preview.label})"
+    else:
+        # Projects don't have a numeric handle — names are unique within
+        # a workspace, so the label alone is the canonical identifier.
+        header = f"project '{preview.label}'"
+    lines = [f"dry-run: would update {header}"]
+    has_body = False
+    for key in preview.after:
+        before = preview.before.get(key)
+        after = preview.after[key]
+        lines.append(f"  {key}: {_fmt_diff_value(before)} -> {_fmt_diff_value(after)}")
+        has_body = True
+    for tag in preview.tags_added:
+        lines.append(f"  +tag {tag}")
+        has_body = True
+    for tag in preview.tags_removed:
+        lines.append(f"  -tag {tag}")
+        has_body = True
+    if not has_body:
+        lines.append("  (no changes)")
+    return "\n".join(lines)
+
+
+def format_task_move_preview(preview: TaskMovePreview) -> str:
+    lines = [f"dry-run: would move {format_task_num(preview.task_id)} ({preview.title})"]
+    lines.append(
+        f"  status: {_fmt_diff_value(preview.from_status)} -> {_fmt_diff_value(preview.to_status)}"
+    )
+    lines.append(
+        f"  position: {_fmt_diff_value(preview.from_position)} -> {_fmt_diff_value(preview.to_position)}"
+    )
+    if preview.project_changed:
+        lines.append(
+            f"  project: {_fmt_diff_value(preview.from_project)} -> {_fmt_diff_value(preview.to_project)}"
+        )
     return "\n".join(lines)

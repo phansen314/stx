@@ -18,10 +18,8 @@ from sticky_notes.service_models import (
     WorkspaceListView,
     GroupDetail,
     GroupRef,
-    GroupTreeNode,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
     TaskListItem,
 )
@@ -149,8 +147,25 @@ class TestFormatStatusList:
         assert "Todo" in out
         assert "Done" in out
 
+    def test_archived_marker(self):
+        statuses = (_status(1, "active"), _status(2, "old", archived=True))
+        out = presenters.format_status_list(statuses)
+        assert "  active" in out
+        assert "old (archived)" in out
+
+    def test_no_archived_marker_on_active(self):
+        statuses = (_status(1, "active"),)
+        out = presenters.format_status_list(statuses)
+        assert "(archived)" not in out
+
 
 # ---- format_project_list ----
+
+
+def _archived_project(id: int, name: str, description: str | None = None) -> Project:
+    return Project(
+        id=id, workspace_id=1, name=name, description=description, archived=True, created_at=0, metadata={},
+    )
 
 
 class TestFormatProjectList:
@@ -166,6 +181,17 @@ class TestFormatProjectList:
         out = presenters.format_project_list(projs)
         assert "P" in out
         assert "a desc" in out
+
+    def test_archived_marker(self):
+        projs = (_project(1, "live"), _archived_project(2, "old"))
+        out = presenters.format_project_list(projs)
+        assert "  live" in out
+        assert "old (archived)" in out
+
+    def test_no_archived_marker_on_live(self):
+        projs = (_project(1, "live"),)
+        out = presenters.format_project_list(projs)
+        assert "(archived)" not in out
 
 
 # ---- format_project_detail ----
@@ -388,58 +414,6 @@ class TestFormatGroupList:
         assert "(archived)" in out
 
 
-# ---- format_group_trees ----
-
-
-class TestFormatGroupTrees:
-    def _node(self, id: int, title: str, children=()) -> GroupTreeNode:
-        ref = GroupRef(
-            id=id, workspace_id=1, project_id=1, title=title, description=None, parent_id=None, position=0,
-            archived=False, created_at=0, metadata={}, task_ids=(), child_ids=(),
-        )
-        return GroupTreeNode(group=ref, children=children)
-
-    def test_empty(self):
-        assert presenters.format_group_trees(()) == "no projects"
-
-    def test_single_root(self):
-        tree = ProjectGroupTree(project_id=1, roots=(self._node(1, "Root"),), ungrouped_task_count=0)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "group-0001" in out
-        assert "Root" in out
-
-    def test_nested(self):
-        # Tree rendering preserves existing behavior: top-level children
-        # render without connectors/indentation (prefix="" stays "").
-        grandchild = self._node(3, "GrandChild")
-        child = self._node(2, "Child", children=(grandchild,))
-        root = self._node(1, "Root", children=(child,))
-        tree = ProjectGroupTree(project_id=1, roots=(root,), ungrouped_task_count=0)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "group-0001  Root" in out
-        assert "group-0002  Child" in out
-        assert "group-0003  GrandChild" in out
-
-    def test_ungrouped_count_shown(self):
-        tree = ProjectGroupTree(project_id=1, roots=(self._node(1, "R"),), ungrouped_task_count=3)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "3 ungrouped tasks" in out
-
-    def test_multi_project_headers(self):
-        t1 = ProjectGroupTree(project_id=1, roots=(self._node(1, "R1"),), ungrouped_task_count=0)
-        t2 = ProjectGroupTree(project_id=2, roots=(self._node(2, "R2"),), ungrouped_task_count=0)
-        sections = (
-            (_project(1, "P1"), t1, {}),
-            (_project(2, "P2"), t2, {}),
-        )
-        out = presenters.format_group_trees(sections)
-        assert "== P1 ==" in out
-        assert "== P2 ==" in out
-
-
 # ---- format_group_detail ----
 
 
@@ -451,7 +425,7 @@ class TestFormatGroupDetail:
             tasks=(), children=(), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
-        assert "Group: G (group-0001)" in out
+        assert "group-0001  G" in out
         assert "Project:     P" in out
         assert "Path:        G" in out
         assert "Tasks:       0" in out
@@ -463,6 +437,7 @@ class TestFormatGroupDetail:
             tasks=(), children=(), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
+        assert "group-0001  G" in out
         assert "Description: Important group" in out
 
     def test_no_description_omitted(self):
@@ -473,7 +448,7 @@ class TestFormatGroupDetail:
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         lines = out.splitlines()
-        assert lines[0].startswith("Group: G")
+        assert lines[0].startswith("group-0001  G")
         assert lines[1].startswith("  Project:")
 
     def test_with_children_and_tasks(self):
@@ -485,6 +460,7 @@ class TestFormatGroupDetail:
             children=(child,), parent=None, metadata={},
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("Root",))
+        assert "group-0001  Root" in out
         assert "Sub-groups: ChildA" in out
         assert "task-0010" in out
         assert "[P3]" in out
@@ -499,28 +475,29 @@ class TestFormatMovePreview:
     def _preview(self, **overrides) -> MoveToWorkspacePreview:
         base = dict(
             task_id=5, task_title="T", source_workspace_id=1, target_workspace_id=2,
-            target_status_id=3, can_move=True, blocking_reason=None,
+            target_status_id=3, target_project_id=None, can_move=True, blocking_reason=None,
             dependency_ids=(), is_archived=False,
         )
         base.update(overrides)
         return MoveToWorkspacePreview(**base)
 
     def test_can_move(self):
-        out = presenters.format_move_preview(self._preview(), "other", "Backlog")
+        out = presenters.format_move_preview(self._preview(), "other", "Backlog", source_workspace_name="dev")
         assert "dry-run" in out
         assert "task-0005" in out
         assert "workspace 'other' / status 'Backlog'" in out
+        assert "workspace 'dev'" in out
         assert "transfer OK" in out
 
     def test_blocked_by_dependencies(self):
         p = self._preview(can_move=False, dependency_ids=(10, 11))
-        out = presenters.format_move_preview(p, "other", "Backlog")
+        out = presenters.format_move_preview(p, "other", "Backlog", source_workspace_name="dev")
         assert "has dependencies: task-0010, task-0011" in out
         assert "move would FAIL" in out
 
     def test_blocked_other_reason(self):
         p = self._preview(can_move=False, blocking_reason="task is archived")
-        out = presenters.format_move_preview(p, "other", "Backlog")
+        out = presenters.format_move_preview(p, "other", "Backlog", source_workspace_name="dev")
         assert "task is archived" in out
         assert "move would FAIL" in out
 
@@ -539,7 +516,7 @@ class TestFormatArchivePreview:
             task_count=0, group_count=0, project_count=0, status_count=0,
         )
         out = presenters.format_archive_preview(p)
-        assert "dry-run" in out
+        assert "would archive" in out
         assert "tasks:" not in out
 
     def test_with_descendants(self):

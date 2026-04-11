@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
 
@@ -139,6 +139,7 @@ class MoveToWorkspacePreview:
     source_workspace_id: int
     target_workspace_id: int
     target_status_id: int
+    target_project_id: int | None
     can_move: bool
     blocking_reason: str | None
     dependency_ids: tuple[int, ...]
@@ -159,13 +160,38 @@ class ArchivePreview:
 
 
 @dataclass(frozen=True)
-class GroupTreeNode:
-    group: GroupRef
-    children: tuple["GroupTreeNode", ...]
+class EntityUpdatePreview:
+    """Dry-run result for a field-level update (task/project/group edit).
+    `before` / `after` contain only fields that differ — unchanged fields
+    are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
+    other entity kinds leave those empty.
+
+    Note: `before` and `after` are mutable dicts (shallow-frozen). This is
+    an intentional exception to the tuple-everywhere convention because
+    diff payloads are JSON-consumer-facing and dict shape is the natural
+    JSON representation. Callers must treat these fields as read-only.
+    """
+    entity_type: Literal["task", "project", "group"]
+    entity_id: int
+    label: str  # task title, project name, group title
+    before: dict[str, Any] = field(default_factory=dict)
+    after: dict[str, Any] = field(default_factory=dict)
+    tags_added: tuple[str, ...] = ()
+    tags_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
-class ProjectGroupTree:
-    project_id: int
-    roots: tuple[GroupTreeNode, ...]
-    ungrouped_task_count: int
+class TaskMovePreview:
+    """Dry-run result for `task mv`. Shows from/to status, position, and
+    optional project change."""
+    task_id: int
+    title: str
+    from_status: str
+    to_status: str
+    from_position: int
+    to_position: int
+    from_project: str | None
+    to_project: str | None
+    project_changed: bool
+
+

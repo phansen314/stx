@@ -12,22 +12,40 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 |---|---|---|---|
 | `--db PATH` | — | `~/.local/share/sticky-notes/sticky-notes.db` | Path to SQLite DB |
 | `--workspace NAME` | `-w` | active-workspace file | Workspace name override (bypasses `~/.local/share/sticky-notes/active-workspace`) |
-| `--json` | — | off | Emit JSON envelope instead of text |
-| `--quiet` | `-q` | off | Suppress success output |
+| `--json` | — | off | Force JSON output (also auto-enabled when stdout is a pipe) |
+| `--text` | — | off | Force text output even when piped |
+| `--quiet` | `-q` | off | Suppress success output (text mode only) |
+
+**Output format auto-detection:** When stdout is a terminal, text is emitted. When stdout is piped or redirected, JSON is emitted automatically — no flag needed. `--json` and `--text` override the auto-detection and are mutually exclusive.
+
+`--quiet` suppresses success text output only. It has **no effect in JSON mode** — JSON output is always emitted to stdout on success.
 
 **JSON envelope:**
 - Success → stdout: `{"ok": true, "data": ...}`
 - Error → stderr: `{"ok": false, "error": "...", "code": "..."}`
-- Exit codes: `0` success · `1` lookup/validation/no active workspace · `2` db error · `130` interrupt
 
-**Error codes:**
+See [`json-schema.md`](json-schema.md) for per-command `data` shapes.
+
+**Exit codes:**
 
 | code | meaning |
 |---|---|
-| `not_found` | entity doesn't exist |
-| `validation` | bad argument value (including duplicate names and integrity violations) |
-| `missing_active_workspace` | no active workspace set |
-| `db_error` | SQLite error (exits 2) |
+| `0` | success |
+| `2` | SQLite / database error |
+| `3` | `not_found` — entity doesn't exist |
+| `4` | `validation` — bad argument value, duplicate names, integrity violations |
+| `5` | `missing_active_workspace` — no active workspace set |
+| `130` | interrupted (SIGINT) |
+
+---
+
+## Archive Semantics
+
+Archives are **soft-deletes** — rows are never removed from the database; the `archived` flag is set to `1`.
+
+- **Visibility:** archived entities are hidden by default. Use `--archived include` or `--archived only` on `ls` commands where supported (`workspace ls`, `status ls`, `project ls`, `tag ls`, `group ls`, `task ls`).
+- **No unarchive command.** There is no `unarchive` or `restore` subcommand. To restore an entity, use the SQLite CLI directly: `sqlite3 ~/.local/share/sticky-notes/sticky-notes.db "UPDATE tasks SET archived=0 WHERE id=N"`.
+- **Cascade archive:** `workspace archive`, `project archive`, and `group archive` cascade to all descendants (statuses, tasks, groups, tags where applicable). See individual archive subcommand rows for cascade scope.
 
 ---
 
@@ -42,19 +60,19 @@ Apply to every command. Place before the subcommand:  `todo [global flags] <comm
 | `--status` | `-S` | **required** | Target status name |
 | `--desc` | `-d` | — | Description |
 | `--project` | `-p` | — | Project name |
-| `--priority` | `-P` | `1` | Priority 1–5 (convention: 1=lowest; range only is enforced) |
+| `--priority` | — | `1` | Priority (free-form integer; interpretation is user-defined — use metadata for labeled schemes) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
 | `--tag` | `-t` | — | Tag name (repeatable) |
 | `--group` | `-g` | — | Group title (infers project from group if `--project` not given) |
 
 ```sh
 todo task create "Write README" -S "To Do"
-todo task create "Deploy to prod" -S Backlog --project "Q2 launch" -P 3 --due 2026-05-01
+todo task create "Deploy to prod" -S Backlog --project "Q2 launch" --priority 3 --due 2026-05-01
 todo task create "Add tests" -S "To Do" --tag backend --tag ci
 todo task create "Fix layout" -S "To Do" --group "Frontend" --project "Q2 launch"
 ```
 
-> **JSON and tags:** The `task create` JSON response returns the raw `Task` object which has no `tags` field. Tags attached via `--tag` are not reflected in the response. To see attached tags, follow up with `todo task show <task_num>` which returns a `TaskDetail` with a `tags` array.
+The JSON response is a full `TaskDetail` (same shape as `todo task show`), including any tags attached via `--tag`.
 
 ---
 
@@ -62,31 +80,30 @@ todo task create "Fix layout" -S "To Do" --group "Frontend" --project "Q2 launch
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--all` | `-a` | off | Include archived tasks |
-| `--archived` | — | off | Show ONLY archived tasks |
+| `--archived` | — | `hide` | Archived visibility: `hide` (default), `include` (active + archived), `only` (archived only) |
 | `--status` | `-S` | — | Filter by status name |
 | `--project` | `-p` | — | Filter by project name |
-| `--priority` | `-P` | — | Filter by priority (1–5) |
-| `--search` | `-s` | — | Title substring search |
+| `--priority` | — | — | Filter by priority integer |
+| `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
-| `--tag` | `-t` | — | Filter by tag name |
+| `--tag` | `-t` | — | Filter by tag name (single value; not repeatable — unlike `task create`/`task edit` which accept multiple `-t` flags) |
 
 ```sh
 todo task ls
 todo task ls --project "Q2 launch" --status "In Progress"
 todo task ls --search auth --priority 3
-todo task ls --tag backend --all
+todo task ls --tag backend --archived include
 ```
 
 ---
 
-### `todo task show <task_num> [--by-title]`
+### `todo task show <task>`
 
-Shows full task detail: description, history, dependencies, group, tags.
+Shows full task detail: description, history, dependencies, group, tags. `<task>` accepts numeric IDs (`1`, `task-0001`, `#1`) or a title string.
 
 ```sh
 todo task show task-0001
-todo task show "Write README" --by-title
+todo task show "Write README"
 ```
 
 ---
@@ -99,48 +116,50 @@ All flags are optional; only provided fields are updated.
 |---|---|---|---|
 | `--title` | — | — | New title |
 | `--desc` | `-d` | — | New description |
-| `--priority` | `-P` | — | New priority (1–5) |
+| `--priority` | — | — | New priority integer |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
 | `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |
-| `--untag` | — | — | Remove tag (repeatable) |
-| `--by-title` | — | off | Resolve `task_num` as title string |
+| `--untag` | — | — | Remove tag (repeatable; errors if tag not currently on task) |
+| `--dry-run` | — | off | Preview the field + tag diff without writing |
 
 ```sh
 todo task edit task-0003 --priority 4 --due 2026-06-01
 todo task edit task-0003 --tag urgent --untag backend
+todo task edit task-0003 --priority 5 --dry-run
 ```
 
 ---
 
-### `todo task mv <task_num> <status> [position] [flags]`
+### `todo task mv <task> --status <status> [position] [flags]`
 
 **Within-workspace only.** Use `todo task transfer` for cross-workspace moves.
 
 | Arg/Flag | Description |
 |---|---|
-| `status` (positional) | Target status name |
+| `--status` / `-S` | Target status name (**required**) |
 | `position` (optional positional) | Integer position within status (default: `0` = top) |
 | `--project` / `-p` | Also change the task's project |
-| `--by-title` | Resolve task by title |
+| `--dry-run` | Preview from/to status + position without writing |
 
 ```sh
-todo task mv task-0001 "In Progress"
-todo task mv task-0001 Done 2          # position 2 within Done status
-todo task mv task-0001 Backlog --project "Next sprint"
+todo task mv task-0001 --status "In Progress"
+todo task mv task-0001 -S Done 2          # position 2 within Done status
+todo task mv task-0001 -S Backlog --project "Next sprint"
+todo task mv task-0001 -S Done --dry-run
 ```
 
-**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> Done` (requires a status literally named "Done").
+**Note:** `todo task done` does not exist. To mark done: `todo task mv <task> -S Done` (requires a status literally named "Done").
 
 ---
 
-### `todo task archive <task_num> [--by-title] [--force] [--dry-run]`
+### `todo task archive <task> [--force] [--dry-run]`
 
-Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. JSON mode (`--json`) auto-confirms. Tasks remain queryable with `--all` or `--archived`.
+Archives the task (`archived=true`). Prompts for y/N confirmation unless `--force` is passed. `--dry-run` previews without executing. Non-interactive stdin (pipes, CI) requires `--force` or `--dry-run` — the command fails fast with an error rather than hang on `input()`. Archived tasks remain queryable via `task ls --archived include` or `--archived only`.
 
 ---
 
-### `todo task log <task_num> [--by-title]`
+### `todo task log <task>`
 
 Shows the full audit trail of field changes (TaskHistory).
 
@@ -161,7 +180,7 @@ Tasks, workspaces, projects, and groups each carry an independent JSON key/value
 - `meta set` → `{"key": "...", "value": "..."}` (the just-set record; key is the lowercase-normalized form)
 - `meta del` → `{"key": "...", "value": "..."}` (the just-removed record)
 
-Text output for `ls` on an empty entity: `"no metadata"`. `get`/`set`/`del` on a missing key raise `LookupError` (`not_found`, exit 1).
+Text output for `ls` on an empty entity: `"no metadata"`. `get`/`set`/`del` on a missing key raise `LookupError` (`not_found`, exit 3).
 
 Markdown export (`todo export --md`) renders metadata under dedicated sections: `**Metadata:**` block per workspace, `### Project Metadata`, `### Group Metadata`, `### Task Metadata`. JSON export (`todo export`) inlines `metadata` dicts on every entity.
 
@@ -171,12 +190,12 @@ Markdown export (`todo export --md`) renders metadata under dedicated sections: 
 
 | Command | Args | Description |
 |---|---|---|
-| `task meta ls` | `task_num` | List all metadata entries; empty → `"no metadata"` |
-| `task meta get` | `task_num key` | Get the value for a key |
-| `task meta set` | `task_num key value` | Set (create or overwrite) a key's value |
-| `task meta del` | `task_num key` | Remove a key |
+| `task meta ls` | `task` | List all metadata entries; empty → `"no metadata"` |
+| `task meta get` | `task key` | Get the value for a key |
+| `task meta set` | `task key value` | Set (create or overwrite) a key's value |
+| `task meta del` | `task key` | Remove a key |
 
-All four accept `--by-title` to resolve the task by title. Metadata is also shown by `todo task show`. Cross-workspace `todo task transfer` copies task metadata verbatim to the new task.
+`task` accepts numeric IDs or title strings — resolution is automatic. Metadata is also shown by `todo task show`. Cross-workspace `todo task transfer` copies task metadata verbatim to the new task.
 
 ```sh
 todo task meta set task-0001 branch feat/kv
@@ -250,16 +269,6 @@ In `todo export --md` the Group Metadata section labels each block `#### <projec
 
 ---
 
-### `todo context`
-
-Single-call workspace snapshot. No arguments. Outputs: statuses with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions.
-
-```sh
-todo context
-todo --json context
-```
-
----
 
 ## `todo task transfer` — Cross-Workspace Move
 
@@ -272,19 +281,18 @@ todo --json context
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
-| `--workspace` | — | **yes** | Target workspace name |
+| `--to` | — | **yes** | Target workspace name |
 | `--status` | `-S` | **yes** | Status on target workspace |
 | `--project` | `-p` | no | Project on target workspace |
 | `--dry-run` | — | no | Preview without executing; validates blocking deps |
-| `--by-title` | — | no | Resolve source task by title |
 
 ```sh
-todo task transfer task-0001 --workspace ops --status Backlog
-todo task transfer task-0001 --workspace ops --status Backlog --project infra
-todo task transfer task-0001 --workspace ops --status Backlog --dry-run
+todo task transfer task-0001 --to ops --status Backlog
+todo task transfer task-0001 --to ops --status Backlog --project infra
+todo task transfer task-0001 --to ops --status Backlog --dry-run
 ```
 
-> **Workspace flag disambiguation:** The global `-w/--workspace` selects the **source** workspace (or falls back to the active workspace). The transfer subcommand's own `--workspace` selects the **target** workspace. Both may appear on the same command line.
+> **Workspace flag disambiguation:** The global `-w/--workspace` selects the **source** workspace (or falls back to the active workspace). The transfer subcommand's own `--to` selects the **target** workspace. Both may appear on the same command line.
 
 
 ---
@@ -294,15 +302,19 @@ todo task transfer task-0001 --workspace ops --status Backlog --dry-run
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `workspace create` | `name` | `--statuses "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--statuses` takes a single comma-separated string (e.g. `--statuses "To Do,In Progress,Done"`). Quote the whole value. |
-| `workspace ls` | — | `--all` / `-a` | List all workspaces; marks active workspace |
+| `workspace ls` | — | `--archived {hide,include,only}` (default `hide`) | List workspaces; marks active workspace |
+| `workspace show` | `[name]` | — | Single-call workspace snapshot: statuses with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions. Operates on named workspace, active workspace, or `-w` override. |
 | `workspace use` | `name` | — | Switch active workspace |
-| `workspace rename` | `[old] new` | — | 1 arg = rename active workspace; 2 args = rename named workspace |
+| `workspace rename` | `old new` | — | Rename workspace from `old` to `new` |
 | `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (projects, groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
 
 ```sh
 todo workspace create work --statuses "To Do,In Progress,Done"
 todo workspace use personal
 todo workspace ls
+todo workspace show
+todo workspace show other-ws
+todo --json workspace show
 todo workspace rename "work" "work-q2"
 todo workspace archive work --dry-run
 todo workspace archive work --force
@@ -315,12 +327,15 @@ todo workspace archive work --force
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `status create` | `name` | — | Create a status on the active workspace |
-| `status ls` | — | — | List statuses on active workspace |
+| `status ls` | — | `--archived hide\|include\|only` | List statuses on active workspace; default hides archived |
 | `status rename` | `old new` | — | Rename a status |
-| `status archive` | `name` | `--reassign-to STATUS`, `--force` | Archive status; either reassign its tasks to another status, or `--force` to archive all tasks |
+| `status order` | `status1 status2 ...` | — | Set the TUI display order for statuses on the active workspace (or `-w`). Writes `~/.config/sticky-notes/tui.toml`. Partial ordering allowed — unlisted statuses fall to the end. |
+| `status archive` | `name` | `--reassign-to STATUS`, `--force`, `--dry-run` | Archive status. `--dry-run` previews without executing. `--reassign-to` moves tasks to another status before archiving. `--force` archives all tasks in the status instead. Neither flag triggers a confirmation prompt — `--reassign-to` and `--force` both proceed immediately (works from pipes and CI without `--force` being special-cased). Without either flag the service layer blocks on active tasks and exits with an error. |
 
 ```sh
 todo status create "Blocked"
+todo status order backlog "in progress" review done
+todo status archive "Old Status" --dry-run
 todo status archive "Old Status" --reassign-to "Backlog"
 todo status archive "Old Status" --force
 ```
@@ -332,41 +347,26 @@ todo status archive "Old Status" --force
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `project create` | `name` | `--desc` / `-d` | Create project |
-| `project ls` | — | — | List projects |
+| `project ls` | — | `--archived hide\|include\|only` | List projects; default hides archived |
 | `project show` | `name` | — | Show project detail |
-| `project edit` | `name` | `--desc` / `-d`, `--name` / `-n` | Edit project description or rename |
+| `project edit` | `name` | `--desc` / `-d`, `--dry-run` | Edit project description; `--dry-run` previews the diff |
+| `project rename` | `old new` | — | Rename project from `old` to `new` |
 | `project archive` | `name` | `--force`, `--dry-run` | Cascade-archive project and all groups/tasks. Prompts y/N unless `--force`. |
 
 ---
 
 ## `todo dep` Subcommands
 
-Semantics: `todo dep create <task> <depends-on>` means **task is blocked by depends-on**. No `dep ls` — use `todo task show <task>` to see `blocked_by` and `blocks` arrays.
+Flags are explicit about direction: `--task X --blocked-by Y` means **X is blocked by Y**. No `dep ls` — use `todo task show <task>` to see `blocked_by` and `blocks` arrays.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `dep create` | `task_num depends_on_num` | `--by-title` | Add dependency |
-| `dep archive` | `task_num depends_on_num` | `--by-title` | Archive dependency (soft-delete) |
+| `dep create` | — | `--task TASK --blocked-by TASK` (both required) | Add dependency |
+| `dep archive` | — | `--task TASK --blocked-by TASK` (both required) | Archive dependency (soft-delete) |
 
 ```sh
-todo dep create task-0003 task-0001   # task-0003 is blocked by task-0001
-todo dep archive task-0003 task-0001
-```
-
----
-
-## `todo group-dep` Subcommands
-
-Semantics: `todo group-dep create <group> <depends-on>` means **group is blocked by depends-on**. Groups are resolved by title within the active workspace's projects.
-
-| Command | Args | Flags | Description |
-|---|---|---|---|
-| `group-dep create` | `group_title depends_on_title` | — | Add group dependency |
-| `group-dep archive` | `group_title depends_on_title` | — | Archive group dependency (soft-delete) |
-
-```sh
-todo group-dep create "Sprint 2" "Sprint 1"
-todo group-dep archive "Sprint 2" "Sprint 1"
+todo dep create --task task-0003 --blocked-by task-0001   # task-0003 is blocked by task-0001
+todo dep archive --task task-0003 --blocked-by task-0001
 ```
 
 ---
@@ -378,10 +378,9 @@ Tags are workspace-scoped. Many-to-many with tasks. `todo task create`/`todo tas
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `tag create` | `name` | — | Create a tag (workspace-scoped) |
-| `tag ls` | — | `--all` / `-a` | List tags (include archived with `-a`) |
+| `tag ls` | — | `--archived {hide,include,only}` (default `hide`) | List tags |
+| `tag rename` | `old new` | — | Rename tag from `old` to `new` |
 | `tag archive` | `name` | `--unassign`, `--force`, `--dry-run` | Archive tag; `--unassign` strips it from all tasks first. Prompts y/N unless `--force`. |
-
-> **No `tag rename`.** To rename: create new tag, reassign via `todo task edit --tag new --untag old`, archive old.
 
 ```sh
 todo tag create backend
@@ -395,25 +394,30 @@ todo tag archive backend --unassign
 
 Groups are project-scoped hierarchical collections of tasks. All group commands accept `--project/-p` to scope to a project.
 
+**Project flag asymmetry:** `group create` requires `--project` because groups cannot exist outside a project. `group ls` makes it optional — omit it to list every group in the workspace across all projects. This is intentional: creation demands the scope, listing is allowed to span it for convenience.
+
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `group create` | `title` | `--project/-p` (**required**), `--parent TITLE`, `--desc/-d` | Create group; optionally nested under parent |
-| `group ls` | — | `--project/-p`, `--all/-a`, `--tree` | List (flat or tree view) |
+| `group ls` | — | `--project/-p`, `--archived {hide,include,only}` (default `hide`) | List groups (flat) |
 | `group show` | `title` | `--project/-p` | Show detail with ancestry |
-| `group rename` | `title new_title` | `--project/-p` | Rename |
-| `group edit` | `title` | `--desc/-d`, `--project/-p` | Edit group description |
+| `group rename` | `title new_title` | `--project/-p`, `--dry-run` | Rename; `--dry-run` previews the diff |
+| `group edit` | `title` | `--desc/-d`, `--project/-p`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
 | `group archive` | `title` | `--project/-p`, `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
-| `group mv` | `title` | `--parent` (**required**), `--project/-p` | Reparent; `--parent ''` promotes to top-level |
-| `group assign` | `task group_title` | `--project/-p`, `--by-title` | Assign task to group |
-| `group unassign` | `task` | `--by-title` | Unassign task from its group |
+| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--project/-p`, `--dry-run` | Reparent under another group, or `--to-top` to promote to top-level; `--dry-run` previews the diff |
+| `group assign` | `task title` | `--project/-p` | Assign task to group |
+| `group unassign` | `task` | — | Unassign task from its group |
+| `group dep create` | — | `-g/--group TITLE --blocked-by TITLE` (both required), `--project/-p` | Add group dependency (group blocked by depends-on) |
+| `group dep archive` | — | `-g/--group TITLE --blocked-by TITLE` (both required), `--project/-p` | Archive group dependency (soft-delete) |
 
 ```sh
 todo group create "Backend" --project "API rewrite" --desc "Core API services"
 todo group create "Auth" --project "API rewrite" --parent "Backend"
 todo group assign task-0005 "Auth" --project "API rewrite"
-todo group ls --project "API rewrite" --tree
+todo group ls --project "API rewrite"
 todo group mv "Auth" --parent "Frontend" --project "API rewrite"
-todo group mv "Backend" --parent '' --project "API rewrite"  # promote to top-level
+todo group mv "Backend" --to-top --project "API rewrite"  # promote to top-level
+todo group dep create --group "Sprint 2" --blocked-by "Sprint 1"   # Sprint 2 blocked by Sprint 1
 ```
 
 ---
@@ -426,6 +430,7 @@ Exports the **entire database**. Default format is JSON; pass `--md` for Markdow
 |---|---|---|
 | `--md` | — | Export as Markdown instead of JSON |
 | `--output` | `-o` | Write to file instead of stdout (creates parent dirs) |
+| `--overwrite` | — | Overwrite destination file if it already exists (required when `-o` points at an existing file) |
 
 With `--json`:
 - stdout (no `-o`): `{"markdown": "..."}`
@@ -449,7 +454,7 @@ todo info
 todo --json info
 ```
 
-JSON `data` shape: `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...]}`
+JSON `data` shape: `{"db": {"path": "...", "exists": bool}, "wal": {...}, "shm": {...}, "active_workspace": {...}}`
 
 ---
 
@@ -472,11 +477,9 @@ Launches the Textual TUI interface. No JSON output. Useful for interactive explo
 
 ---
 
-## `--by-title` Flag
+## Task identifier resolution
 
-Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
-
-`task show` · `task edit` · `task mv` · `task transfer` · `task archive` · `task log` · `task meta ls` · `task meta get` · `task meta set` · `task meta del` · `dep create` · `dep archive` · `group assign` · `group unassign`
+Every task-referencing command auto-detects whether the argument is an ID or a title. Numeric forms (`1`, `task-0001`, `#1`, `0001`) are tried first; anything else is looked up as a title on the active workspace. A task whose title literally looks like `task-NNNN` would be resolved as an ID, not a title — avoid such titles.
 
 ---
 
@@ -484,33 +487,38 @@ Resolves a task by title string instead of `task-NNNN` ID. Accepted by:
 
 | Command | `data` shape |
 |---|---|
-| `task create`, `task edit`, `task archive`, `task mv` | full Task object |
-| `workspace create/rename/archive` | full Workspace object |
+| `task create` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
+| `task edit`, `task archive`, `task mv` | full TaskDetail (same shape as `task show`) |
+| `task edit --dry-run`, `project edit --dry-run`, `group edit/rename/mv --dry-run` | `EntityUpdatePreview`: `{entity_type, entity_id, label, before, after, tags_added, tags_removed}` |
+| `task mv --dry-run` | `TaskMovePreview`: `{task_id, title, from_status, to_status, from_position, to_position, from_project, to_project, project_changed}` |
+| `workspace create/rename` | full Workspace object |
+| `workspace archive` | `{"workspace": {...Workspace}, "active_cleared": bool}` — `active_cleared` is `true` when the archived workspace was the active workspace and the active-workspace pointer was cleared as a side-effect. **Note:** this is the only archive command that returns an envelope rather than a bare entity — the `active_cleared` field represents a CLI state side-effect that cannot be inferred from the workspace object alone. |
 | `status create/rename/archive` | full Status object |
+| `status order` | `{"workspace_id": N, "statuses": [{"id": N, "name": str}, ...]}` |
 | `project create/archive` | full Project object |
 | `tag create/archive` | full Tag object |
-| `dep create/archive` | `{"task_id": N, "depends_on_id": N}` |
-| `group-dep create/archive` | `{"group_id": N, "depends_on_id": N}` |
-| `group assign` | `{"task": {...}, "group_id": N}` — `group_id` is duplicated: it appears here AND inside `task.group_id` (always equal after assign) |
-| `group unassign` | full Task object |
-| `task transfer` (live) | `{"task": {...}, "source_task_id": N}` |
-| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` — note: does NOT include `target_project_id` even when `--project` is passed |
-| `task ls` | `{"workspace": {...}, "statuses": [{"status": {...}, "tasks": [...]}]}` |
+| `dep create/archive` | `{"blocked_task_id": N, "blocked_task_title": str, "blocking_task_id": N, "blocking_task_title": str}` |
+| `group-dep create/archive` | `{"blocked_group_id": N, "blocked_group_title": str, "blocking_group_id": N, "blocking_group_title": str}` |
+| `group assign` | full TaskDetail — hydrated `group` object includes `title` |
+| `group unassign` | full TaskDetail |
+| `task transfer` (live) | `{"task": {...TaskDetail}, "source_task_id": N}` |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "target_project_id": N\|null, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` |
+| `task ls` | `[{"status": {...Status}, "tasks": [{...TaskListItem}]}, ...]` — grouped by status, mirrors text output. Each element has a full Status object and a `tasks` array of TaskListItem objects (with pre-resolved `project_name`, `tag_names`). |
 | `workspace ls` | array of Workspace objects with `"active": bool` field |
 | `status ls` | array of Status objects |
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
-| `group ls` | array of GroupRef objects |
+| `group ls` | array of GroupRef objects with `project_name` denormalized (avoids extra round-trip) |
 | `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
 | `project show` | ProjectDetail with `tasks` array and `metadata` dict |
 | `group show` | GroupDetail with `tasks`, `children` arrays, and `metadata` dict |
 | `workspace ls` / `project ls` / `group ls` | entities include their `metadata` dicts |
 | `task log` | array of TaskHistory objects |
-| `context` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
+| `workspace show` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 | `backup` | `{"source": "...", "dest": "...", "bytes": N}` |
-| `info` | `{"db": "...", "wal": "...", "shm": "...", "active_workspace": "...", "existing": [...]}` |
+| `info` | `{"db": {"path": str, "exists": bool}, "wal": {...}, "shm": {...}, "active_workspace": {...}}` |
 | `task meta ls`, `workspace meta ls`, `project meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
 | `task meta get/set/del`, `workspace meta get/set/del`, `project meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
 
-> **`context` vs `ls` shape asymmetry:** `ls` returns `{"workspace": {...}, "statuses": [...]}` directly at the top level. `context` wraps the same workspace+statuses shape inside a `"view"` key — they are **not** interchangeable payloads.
+> **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}`) for full workspace snapshot.

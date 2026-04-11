@@ -2,7 +2,7 @@
 
 A local todo/kanban app with two interfaces:
 
-- **CLI** (argparse) — task management from the terminal, with `--json` for structured output
+- **CLI** (argparse) — task management from the terminal; auto-emits JSON when piped, text at a terminal
 - **TUI** (Textual) — interactive kanban board with keyboard navigation
 
 All interfaces share the same database and service layer, backed by **SQLite**.
@@ -26,8 +26,8 @@ todo workspace create work --statuses "To Do","In Progress","Done"
 # Add and manage tasks
 todo task create "Write README" -S "To Do"
 todo task ls
-todo task mv task-0001 "In Progress"
-todo task mv task-0001 "Done"
+todo task mv task-0001 -S "In Progress"
+todo task mv task-0001 -S "Done"
 
 # Launch the TUI
 todo tui
@@ -39,7 +39,7 @@ Entry point: `todo`
 
 **Active workspace:** The CLI tracks the active workspace in `~/.local/share/sticky-notes/active-workspace`. Override per-command with `--workspace`/`-w`.
 
-**JSON output:** Add `--json` before any command for structured JSON output.
+**Output format:** Text at a terminal, JSON when piped (`todo task ls | jq`). Override with `--json` (force JSON) or `--text` (force text). See [`skills/sticky-notes/references/json-schema.md`](skills/sticky-notes/references/json-schema.md) for per-command shapes.
 
 ### Task Commands
 
@@ -49,12 +49,12 @@ Entry point: `todo`
 | `todo task ls` | List tasks on the active workspace |
 | `todo task show <task>` | Show task detail with history, dependencies, and metadata |
 | `todo task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
-| `todo task mv <task> <status> [pos]` | Move task to a status (within-workspace only) |
+| `todo task mv <task> -S <status> [pos]` | Move task to a status (within-workspace only) |
 | `todo task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
 | `todo task log <task>` | Show task change history |
 | `todo task meta ls\|get\|set\|del <task> ...` | JSON key/value metadata CRUD (lowercase-normalized keys; workspaces, projects, and groups expose the same four verbs) |
 
-Use `--by-title` on any task command to resolve `<task>` by title string instead of ID.
+Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resolve as IDs; anything else is looked up as a title on the active workspace.
 
 ### List Filters
 
@@ -62,12 +62,11 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 
 | Flag | Description |
 |------|-------------|
-| `--all` / `-a` | Include archived tasks |
-| `--archived` | Show only archived tasks |
+| `--archived {hide,include,only}` | Archived visibility (default `hide`) |
 | `--status` / `-S` | Filter by status name |
 | `--project` / `-p` | Filter by project name |
-| `--priority` / `-P` | Filter by priority (1-5) |
-| `--search` / `-s` | Search by title substring |
+| `--priority` | Filter by priority integer |
+| `--search` | Search by title substring |
 | `--group` / `-g` | Filter by group title |
 | `--tag` / `-t` | Filter by tag name |
 
@@ -75,14 +74,12 @@ Use `--by-title` on any task command to resolve `<task>` by title string instead
 
 | Command | Description |
 |---------|-------------|
-| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `use`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
-| `todo status ...` | `create`, `ls`, `rename`, `archive [--reassign-to STATUS\|--force]` |
-| `todo project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc\|--name]`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del <name>` |
+| `todo workspace ...` | `create [--statuses a,b,c]`, `ls`, `show`, `use`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
+| `todo status ...` | `create`, `ls`, `rename`, `order <workspace> <statuses...>`, `archive [--reassign-to STATUS\|--force]` |
+| `todo project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc]`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del <name>` |
 | `todo dep ...` | `create`, `archive` |
-| `todo group-dep ...` | `create`, `archive` (group-level dependencies) |
-| `todo tag ...` | `create`, `ls`, `archive [--unassign\|--force\|--dry-run]` |
-| `todo group ...` | `create [--desc]`, `ls [--tree]`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `meta ls\|get\|set\|del <title> [--project]` |
-| `todo context` | One-call workspace summary: statuses, tasks, projects, tags, groups |
+| `todo tag ...` | `create`, `ls`, `rename`, `archive [--unassign\|--force\|--dry-run]` |
+| `todo group ...` | `create [--desc]`, `ls`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `dep create\|archive`, `meta ls\|get\|set\|del <title> [--project]` |
 | `todo export` | Export database as JSON (default) or Markdown (`--md`) |
 | `todo info` | Show sticky-notes file locations |
 | `todo backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |
@@ -93,13 +90,13 @@ Tasks can be transferred between workspaces. The transfer creates a copy on the 
 
 ```sh
 # Transfer task to another workspace
-todo task transfer task-0001 --workspace ops --status Backlog
+todo task transfer task-0001 --to ops --status Backlog
 
 # Transfer with project assignment on the target workspace
-todo task transfer task-0001 --workspace ops --status Backlog --project infra
+todo task transfer task-0001 --to ops --status Backlog --project infra
 
 # Preview before transferring (checks for blocking dependencies)
-todo task transfer task-0001 --workspace ops --status Backlog --dry-run
+todo task transfer task-0001 --to ops --status Backlog --dry-run
 ```
 
 ## TUI
