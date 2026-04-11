@@ -178,8 +178,11 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pat
         include_archived=include_archived,
         only_archived=only_archived,
     )
-    flat = tuple(task for col in view.statuses for task in col.tasks)
-    return Ok(data=flat, text=presenters.format_workspace_list_view(view))
+    data = [
+        {"status": to_dict(col.status), "tasks": [to_dict(t) for t in col.tasks]}
+        for col in view.statuses
+    ]
+    return Ok(data=data, text=presenters.format_workspace_list_view(view))
 
 
 def cmd_task_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:

@@ -1290,8 +1290,11 @@ class TestJsonOutput:
         assert data["ok"] is True
         payload = data["data"]
         assert isinstance(payload, list)
-        assert len(payload) == 1
-        assert payload[0]["title"] == "Task A"
+        assert len(payload) == 1  # one status bucket
+        assert "status" in payload[0]
+        assert payload[0]["status"]["name"] == "Todo"
+        assert len(payload[0]["tasks"]) == 1
+        assert payload[0]["tasks"][0]["title"] == "Task A"
 
     def test_workspace_ls(self, cli):
         cli("workspace", "create", "B1")

@@ -498,7 +498,7 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `group unassign` | full TaskDetail |
 | `task transfer` (live) | `{"task": {...TaskDetail}, "source_task_id": N}` |
 | `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "target_project_id": N\|null, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` |
-| `task ls` | flat array of TaskListItem objects (with pre-resolved `project_name`, `tag_names`). Text output is still grouped by status. |
+| `task ls` | `[{"status": {...Status}, "tasks": [{...TaskListItem}]}, ...]` — grouped by status, mirrors text output. Each element has a full Status object and a `tasks` array of TaskListItem objects (with pre-resolved `project_name`, `tag_names`). |
 | `workspace ls` | array of Workspace objects with `"active": bool` field |
 | `status ls` | array of Status objects |
 | `project ls` | array of Project objects |
@@ -516,4 +516,4 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `task meta ls`, `workspace meta ls`, `project meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
 | `task meta get/set/del`, `workspace meta get/set/del`, `project meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
 
-> **`task ls` vs `workspace show`:** `task ls --json` returns a flat array of TaskListItem objects — same shape as `workspace ls` / `project ls` / `group ls`. Use `workspace show` for the grouped kanban view (`{"view": {"workspace": {...}, "statuses": [...]}, ...}`).
+> **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}`) for full workspace snapshot.
