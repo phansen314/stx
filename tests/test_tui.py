@@ -12,7 +12,7 @@ from sticky_notes.models import Group, Project, Task, Workspace
 from sticky_notes.tui.app import StickyNotesApp
 from sticky_notes.tui.config import TuiConfig
 from sticky_notes.tui.screens import MetadataModal
-from sticky_notes.tui.widgets import KanbanBoard, TaskCard
+from sticky_notes.tui.widgets import KanbanBoard, KanbanColumn, TaskCard
 
 
 class TestTreePopulation:
@@ -774,3 +774,257 @@ class TestMetadataKeybinding:
             await pilot.pause()
             await pilot.pause()
             assert service.get_group(app.conn, group.id).metadata == {"owner": "alice"}
+
+
+class TestColumnFocus:
+    """Tests for focusable KanbanColumn widget and column reordering."""
+
+    @pytest.fixture
+    def app(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        return StickyNotesApp(db_path=db_path, config=config), ids
+
+    def _col_title(self, app, status_id: int) -> str:
+        col = app.query_one(f"#status-col-{status_id}")
+        return str(col.query_one(".status-col-title").render())
+
+    def _card_column_id(self, card: TaskCard) -> str:
+        node = card.parent
+        while node is not None:
+            if hasattr(node, "id") and node.id and node.id.startswith("status-col-"):
+                return node.id
+            node = node.parent
+        raise AssertionError("Card not inside a status column")
+
+    async def test_click_focuses_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            col = app.query(KanbanColumn).first()
+            # on_click calls self.focus(); invoke same behavior directly
+            col.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused is col
+
+    async def test_up_from_top_card_focuses_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            card = todo_col.query(TaskCard).first()
+            app.set_focus(card)
+            await pilot.pause()
+            await pilot.press("up")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == todo_id
+
+    async def test_up_from_non_top_card_stays_on_card(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(todo_col.query(TaskCard))
+            assert len(cards) >= 2, "Need at least 2 todo cards"
+            app.set_focus(cards[1])
+            await pilot.pause()
+            await pilot.press("up")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == cards[0].task_data.id
+
+    async def test_down_from_bottom_card_no_wrap(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(todo_col.query(TaskCard))
+            bottom = cards[-1]
+            bottom_id = bottom.task_data.id
+            app.set_focus(bottom)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == bottom_id
+
+    async def test_column_left_wraps_to_last(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            done_id = sids["done"]
+            app.set_focus(todo_col)
+            await pilot.pause()
+            await pilot.press("left")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == done_id
+
+    async def test_column_right_wraps_to_first(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            done_col = app.query_one(f"#status-col-{sids['done']}", KanbanColumn)
+            todo_id = sids["todo"]
+            app.set_focus(done_col)
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == todo_id
+
+    async def test_column_down_focuses_first_card(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            first_card = todo_col.query(TaskCard).first()
+            first_task_id = first_card.task_data.id
+            app.set_focus(todo_col)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == first_task_id
+
+    async def test_column_down_on_empty_column_noop(self, seeded_tui_db_empty_middle):
+        db_path, ids = seeded_tui_db_empty_middle
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        app = StickyNotesApp(db_path=db_path, config=config)
+        async with app.run_test() as pilot:
+            ip_id = sids["in_progress"]
+            col = app.query_one(f"#status-col-{ip_id}", KanbanColumn)
+            app.set_focus(col)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == ip_id
+
+    async def test_shift_right_on_column_reorders(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after[0] == order_before[1]
+            assert order_after[1] == order_before[0]
+            assert order_after[2:] == order_before[2:]
+
+    async def test_shift_right_no_wrap_at_end(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            done_col = app.query_one(f"#status-col-{sids['done']}", KanbanColumn)
+            app.set_focus(done_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after == order_before
+
+    async def test_shift_left_no_wrap_at_start(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+left")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after == order_before
+
+    async def test_column_reorder_persists_to_tui_toml(self, app, monkeypatch, tmp_path):
+        import tomllib
+        app, ids = app
+        toml_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", toml_path)
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            ws_id = ids["workspace_id"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            assert toml_path.exists()
+            with open(toml_path, "rb") as f:
+                saved = tomllib.load(f)
+            saved_order = saved.get("status_order", {}).get(str(ws_id), [])
+            assert saved_order[0] == order_before[1]
+            assert saved_order[1] == order_before[0]
+
+    async def test_materializes_full_order_on_first_move(self, seeded_tui_db, monkeypatch, tmp_path):
+        import tomllib
+        db_path, ids = seeded_tui_db
+        toml_path = tmp_path / "tui.toml"
+        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", toml_path)
+        # Start with empty status_order so _reorder_column must materialize all IDs
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        sids = ids["status_ids"]
+        ws_id = ids["workspace_id"]
+        async with app.run_test() as pilot:
+            # With empty status_order, DB order is used — pick the leftmost column
+            # (guaranteed movable right regardless of which status is there)
+            first_col = app.query(KanbanColumn).first()
+            app.set_focus(first_col)
+            await pilot.pause()
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            assert toml_path.exists()
+            with open(toml_path, "rb") as f:
+                saved = tomllib.load(f)
+            saved_order = saved.get("status_order", {}).get(str(ws_id), [])
+            all_status_ids = set(sids.values())
+            assert set(saved_order) == all_status_ids, "Full order must be saved"
+
+    async def test_column_focus_survives_refresh(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            app.request_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == sids["todo"]
+
+    async def test_b_binding_prefers_card_not_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            await pilot.press("w")
+            await pilot.pause()
+            await pilot.press("b")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
