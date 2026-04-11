@@ -105,7 +105,7 @@ All flags are optional; only provided fields are updated.
 | `--due` | — | — | New due date `YYYY-MM-DD` |
 | `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |
-| `--untag` | — | — | Remove tag (repeatable) |
+| `--untag` | — | — | Remove tag (repeatable; errors if tag not currently on task) |
 | `--dry-run` | — | off | Preview the field + tag diff without writing |
 
 ```sh
