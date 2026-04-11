@@ -201,6 +201,15 @@ class TestStatusService:
         statuses = service.list_statuses(conn, bid)
         assert [s.name for s in statuses] == ["done", "todo"]
 
+    def test_list_statuses_only_archived(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        service.create_status(conn, bid, "active")
+        old = service.create_status(conn, bid, "old")
+        service.update_status(conn, old.id, {"archived": True})
+        result = service.list_statuses(conn, bid, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "old"
+
     def test_get_by_name(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         col = service.create_status(conn, bid, "todo")
@@ -276,6 +285,15 @@ class TestProjectService:
         p1 = service.create_project(conn, bid, "a")
         p2 = service.create_project(conn, bid, "b")
         assert service.list_projects(conn, bid) == (p1, p2)
+
+    def test_list_projects_only_archived(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        service.create_project(conn, bid, "active")
+        old = service.create_project(conn, bid, "old")
+        service.update_project(conn, old.id, {"archived": True})
+        result = service.list_projects(conn, bid, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "old"
 
     def test_update(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)

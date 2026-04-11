@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`task transfer --dry-run` JSON now includes `target_project_id`** (`null` when `--project` not passed). Previously omitted even when `--project` was supplied.
+- **`workspace show [name]`** accepts an optional workspace name positional, matching `workspace archive`. Defaults to active workspace / `-w`.
+
+### Changed
+
+- **`task ls --json` now returns a flat array of TaskListItem objects** instead of the `{workspace, statuses}` grouped shape. Text output is unchanged. Use `workspace show` for the grouped kanban view. Breaking.
+- **`group assign` and `group unassign` `--json` now return full TaskDetail** instead of `{task, group_id}` wrapper. Hydrated `group` object includes `title`. Breaking.
+- **`dep create/archive` `--json` field names renamed** to match flag framing: `task_id` → `blocked_task_id`, `depends_on_id` → `blocking_task_id`. Group-dep analogously: `group_id` → `blocked_group_id`, `depends_on_id` → `blocking_group_id`. Breaking.
+- **`task edit`, `task mv`, `task archive`, `task transfer` `--json` now return full TaskDetail** (same shape as `task show`) instead of a bare Task. Breaking for JSON consumers reading `status_id` directly — it is now `status.id`. Agents no longer need a follow-up `task show` call after mutations.
+- **`status order` no longer takes a workspace positional.** Uses active workspace / `-w` flag like every other workspace-scoped command. Breaking: `todo status order dev backlog done` → `todo status order backlog done`.
+- **`status ls` and `project ls` accept `--archived hide|include|only`** (default `hide`). Mirrors the filter already on `workspace ls`, `tag ls`, and `group ls`.
+
 ## [0.7.0] — 2026-04-10
 
 ### Added

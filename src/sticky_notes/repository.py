@@ -173,8 +173,14 @@ def list_statuses(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Status, ...]:
-    archive_clause = "" if include_archived else " AND archived = 0"
+    if only_archived:
+        archive_clause = " AND archived = 1"
+    elif include_archived:
+        archive_clause = ""
+    else:
+        archive_clause = " AND archived = 0"
     rows = conn.execute(
         f"SELECT * FROM statuses WHERE workspace_id = ?{archive_clause} ORDER BY name, id",
         (workspace_id,),
@@ -231,8 +237,14 @@ def list_projects(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Project, ...]:
-    archive_clause = "" if include_archived else " AND archived = 0"
+    if only_archived:
+        archive_clause = " AND archived = 1"
+    elif include_archived:
+        archive_clause = ""
+    else:
+        archive_clause = " AND archived = 0"
     rows = conn.execute(
         f"SELECT * FROM projects WHERE workspace_id = ?{archive_clause} ORDER BY created_at",
         (workspace_id,),

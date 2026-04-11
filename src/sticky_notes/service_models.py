@@ -139,6 +139,7 @@ class MoveToWorkspacePreview:
     source_workspace_id: int
     target_workspace_id: int
     target_status_id: int
+    target_project_id: int | None
     can_move: bool
     blocking_reason: str | None
     dependency_ids: tuple[int, ...]

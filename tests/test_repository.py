@@ -228,6 +228,15 @@ class TestStatusRepository:
         assert len(list_statuses(conn, workspace.id)) == 1
         assert len(list_statuses(conn, workspace.id, include_archived=True)) == 2
 
+    def test_list_statuses_only_archived(self, conn: sqlite3.Connection) -> None:
+        workspace = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
+        c2 = insert_status(conn, NewStatus(workspace_id=workspace.id, name="done"))
+        update_status(conn, c2.id, {"archived": True})
+        result = list_statuses(conn, workspace.id, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "done"
+
     def test_update_status(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="old"))
@@ -289,6 +298,15 @@ class TestProjectRepository:
         update_project(conn, p2.id, {"archived": True})
         assert len(list_projects(conn, workspace.id)) == 1
         assert len(list_projects(conn, workspace.id, include_archived=True)) == 2
+
+    def test_list_projects_only_archived(self, conn: sqlite3.Connection) -> None:
+        workspace = insert_workspace(conn, NewWorkspace(name="b"))
+        insert_project(conn, NewProject(workspace_id=workspace.id, name="p1"))
+        p2 = insert_project(conn, NewProject(workspace_id=workspace.id, name="p2"))
+        update_project(conn, p2.id, {"archived": True})
+        result = list_projects(conn, workspace.id, only_archived=True)
+        assert len(result) == 1
+        assert result[0].name == "p2"
 
     def test_update_project(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))

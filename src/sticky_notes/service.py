@@ -326,8 +326,9 @@ def list_statuses(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Status, ...]:
-    return repo.list_statuses(conn, workspace_id, include_archived=include_archived)
+    return repo.list_statuses(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
 
 
 def update_status(
@@ -415,8 +416,9 @@ def list_projects(
     workspace_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Project, ...]:
-    return repo.list_projects(conn, workspace_id, include_archived=include_archived)
+    return repo.list_projects(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
 
 
 def _validate_project_update(
@@ -806,6 +808,7 @@ def preview_move_to_workspace(
         source_workspace_id=task.workspace_id,
         target_workspace_id=target_workspace_id,
         target_status_id=target_status_id,
+        target_project_id=project_id,
         can_move=can_move,
         blocking_reason=reason,
         dependency_ids=dep_ids,
