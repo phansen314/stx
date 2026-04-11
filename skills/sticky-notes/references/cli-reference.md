@@ -81,7 +81,7 @@ The JSON response is a full `TaskDetail` (same shape as `todo task show`), inclu
 | `--priority` | — | — | Filter by priority integer |
 | `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
-| `--tag` | `-t` | — | Filter by tag name |
+| `--tag` | `-t` | — | Filter by tag name (single value; not repeatable — unlike `task create`/`task edit` which accept multiple `-t` flags) |
 
 ```sh
 todo task ls
