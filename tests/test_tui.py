@@ -1097,3 +1097,131 @@ class TestActiveWorkspaceInvariant:
                 assert save_config_mock.call_count > 0, (
                     "positive control: save_config should be called by _reorder_column"
                 )
+
+
+class TestConfigModal:
+    @pytest.fixture
+    def app(self, seeded_tui_db, tmp_path):
+        db_path, ids = seeded_tui_db
+        # Use a distinct name to avoid collision with seed_workspace's tui.toml write
+        toml_path = tmp_path / "config-modal-test.toml"
+        return StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path), toml_path
+
+    @pytest.mark.asyncio
+    async def test_open_config_modal_via_c_key(self, app):
+        from sticky_notes.tui.screens.config_modal import ConfigModal
+        app, _ = app
+        async with app.run_test() as pilot:
+            await pilot.press("c")
+            await pilot.pause()
+            assert any(isinstance(s, ConfigModal) for s in app.screen_stack)
+
+    @pytest.mark.asyncio
+    async def test_save_no_changes_dismisses_without_write(self, app):
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert not toml_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_change_theme_live_applies_and_persists(self, app):
+        from sticky_notes.tui.config import load_config
+        from textual.widgets import Select
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            themes = list(app.available_themes.keys())
+            # Pick a different theme from the current one
+            new_theme = next(t for t in themes if t != app.theme)
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            theme_select = app.screen.query_one("#config-theme", Select)
+            theme_select.value = new_theme
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert app.theme == new_theme
+            assert toml_path.exists()
+            assert load_config(toml_path).theme == new_theme
+
+    @pytest.mark.asyncio
+    async def test_startup_applies_stored_theme(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.config import load_config, save_config
+        db_path, _ = seeded_tui_db
+        toml_path = tmp_path / "startup_theme.toml"
+        # Discover available themes from a disposable app instance
+        probe = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with probe.run_test():
+            all_themes = list(probe.available_themes.keys())
+        # Pick a theme that's definitively not the Textual default
+        default_theme = probe.theme
+        new_theme = next(t for t in all_themes if t != default_theme)
+        cfg = TuiConfig(theme=new_theme)
+        save_config(cfg, toml_path)
+        loaded = load_config(toml_path)
+        app2 = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        async with app2.run_test() as pilot:
+            await pilot.pause()
+            assert app2.theme == new_theme
+
+    @pytest.mark.asyncio
+    async def test_startup_ignores_unknown_theme(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.config import load_config, save_config
+        db_path, _ = seeded_tui_db
+        toml_path = tmp_path / "bad_theme.toml"
+        cfg = TuiConfig(theme="totally-not-a-real-theme-xyz")
+        save_config(cfg, toml_path)
+        loaded = load_config(toml_path)
+        app = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        # Should not raise
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme in app.available_themes
+
+    @pytest.mark.asyncio
+    async def test_change_auto_refresh_swaps_timer(self, app):
+        from sticky_notes.tui.config import load_config
+        from textual.widgets import Input
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            original_timer = app._refresh_timer
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            refresh_input = app.screen.query_one("#config-refresh", Input)
+            refresh_input.value = "120"
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._refresh_timer is not original_timer
+            assert toml_path.exists()
+            assert load_config(toml_path).auto_refresh_seconds == 120
+
+    @pytest.mark.asyncio
+    async def test_invalid_auto_refresh_shows_error(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.screens.config_modal import ConfigModal
+        from textual.widgets import Input, Static
+        db_path, _ = seeded_tui_db
+        for bad_value in ("abc", "0", "-3"):
+            toml_path = tmp_path / f"cfg-{bad_value}.toml"
+            app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+            async with app.run_test() as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.pause()
+                refresh_input = app.screen.query_one("#config-refresh", Input)
+                refresh_input.value = bad_value
+                await pilot.pause()
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                error_msg = app.screen.query_one("#modal-error", Static).content
+                assert error_msg.strip(), f"Expected error for {bad_value!r}, got empty"
+                # Modal still open
+                assert any(isinstance(s, ConfigModal) for s in app.screen_stack)

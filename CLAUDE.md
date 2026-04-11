@@ -115,6 +115,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 | `r` | Refresh |
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity (task/workspace/project/group) |
+| `c` | Open settings modal (theme, auto_refresh_seconds) |
 | `n` | Create new (task/group/project selector) |
 | `s` | Switch workspace |
 | `[` / `]` | Move task left/right across statuses |

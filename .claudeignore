@@ -1,0 +1,80 @@
+# Build outputs
+build/
+dist/
+out/
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.pyc
+*.pyo
+*.egg-info/
+__pycache__/
+*.so
+*.dylib
+*.dll
+
+# Python virtual environments
+venv/
+env/
+.venv/
+.env/
+ENV/
+virtualenv/
+
+# Dependency directories
+node_modules/
+.gradle/
+*.egg
+pip-wheel-metadata/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.project
+.classpath
+.settings/
+
+# Test coverage and reports
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+.mypy_cache/
+.ruff_cache/
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.db
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Large data files (adjust as needed)
+*.csv
+*.json
+*.parquet
+*.h5
+*.hdf5
+data/
+datasets/
+
+# Documentation builds
+docs/_build/
+site/
+
+# Kotlin/Gradle specific
+.kotlin/
+gradle.properties
+local.properties

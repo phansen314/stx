@@ -21,7 +21,7 @@ from sticky_notes.service import create_group, create_project, create_task, get_
 from sticky_notes.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
+from sticky_notes.tui.screens import ConfigModal, GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
 from sticky_notes.tui.widgets import KanbanBoard, KanbanColumn, TaskCard, WorkspaceTree
 
 
@@ -50,6 +50,7 @@ class StickyNotesApp(App):
         Binding("shift+left", "status_left", show=False),
         Binding("]", "status_right", "Status ▶", show=False),
         Binding("shift+right", "status_right", show=False),
+        Binding("c", "config", "Config", show=True),
         Binding("n", "new", "New", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
@@ -60,6 +61,7 @@ class StickyNotesApp(App):
     _kanban_last_focused: TaskCard | KanbanColumn | None = None
     _active_workspace_id: int | None = None
     _models: dict[int, WorkspaceModel]
+    _refresh_timer: object | None = None
 
     @property
     def _active_model(self) -> WorkspaceModel | None:
@@ -87,6 +89,15 @@ class StickyNotesApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        # Sync theme before workspace loading so the settings modal sees a
+        # consistent baseline regardless of whether workspaces exist.
+        if self.config.theme in self.available_themes:
+            self.theme = self.config.theme
+        else:
+            # Unknown / stale theme name — sync config to the actual live theme.
+            self.config.theme = self.theme
+        self._refresh_timer = self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
+
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
         workspaces = list_workspaces(self.conn)
@@ -111,7 +122,6 @@ class StickyNotesApp(App):
         tree.load(self._models, expand_workspace_id=hint_id)
         await kanban.load(self._models[hint_id])
         tree.focus()
-        self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
 
     def request_refresh(self) -> None:
         self.post_message(_RefreshRequested())
@@ -460,6 +470,30 @@ class StickyNotesApp(App):
             self.notify(str(e), severity="error")
             return
         self.request_refresh()
+
+    def action_config(self) -> None:
+        self.push_screen(
+            ConfigModal(config=self.config, available_themes=tuple(self.available_themes)),
+            callback=self._on_config_dismiss,
+        )
+
+    def _on_config_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        changes = result["changes"]
+        self._dismiss_callback(result, lambda: self._apply_config_changes(changes))
+
+    def _apply_config_changes(self, changes: dict) -> None:
+        # Live-apply side effects before persisting so a failed apply
+        # doesn't leave disk out of sync with the live state.
+        if "theme" in changes:
+            self.theme = changes["theme"]
+        if "auto_refresh_seconds" in changes and self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = self.set_interval(changes["auto_refresh_seconds"], self.request_refresh)
+        for key, value in changes.items():
+            setattr(self.config, key, value)
+        save_config(self.config, self.config_path)
 
     def action_new(self) -> None:
         if self._active_model is None:
