@@ -17,6 +17,7 @@ class TuiConfig:
     confirm_archive: bool = True
     default_priority: int = 1
     auto_refresh_seconds: int = 30
+    active_workspace: int | None = None
     status_order: dict[int, list[int]] = field(default_factory=dict)
 
 
@@ -53,6 +54,8 @@ def save_config(config: TuiConfig, path: Path | None = None) -> None:
             lines.append(f"{field.name} = {value}")
         elif isinstance(value, str):
             lines.append(f'{field.name} = "{value}"')
+        elif value is None:
+            pass  # omit None fields — None is not valid TOML
         elif isinstance(value, dict):
             lines.append(f"\n[{field.name}]")
             for k, v in value.items():

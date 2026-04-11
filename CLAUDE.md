@@ -52,10 +52,11 @@ src/sticky_notes/
       workspace_edit.py    # WorkspaceEditModal
       workspace_switch.py  # WorkspaceSwitchModal
       new_resource.py  # NewResourceModal — Alt+N resource type selector
+      config_modal.py  # ConfigModal — in-TUI settings editor (theme, auto_refresh_seconds), bound to `c`
     widgets/
       __init__.py        # re-exports widgets
       workspace_tree.py  # WorkspaceTree — left-panel tree widget
-      kanban_board.py    # KanbanBoard — right-panel kanban with diff-based sync
+      kanban_board.py    # KanbanBoard + KanbanColumn — right-panel kanban with diff-based sync, focusable columns with shift+left/right reorder
       task_card.py       # TaskCard — focusable card widget
       markdown_editor.py # MarkdownEditor — edit/preview toggle for description fields
 
@@ -83,7 +84,7 @@ tests/
 
 Entry point: `todo = "sticky_notes.__main__:main"`.
 
-**Active workspace:** persisted at `~/.local/share/sticky-notes/active-workspace`. CLI resolves workspace from `--workspace`/`-w` flag, falling back to this file. Set via `todo workspace create` or `todo workspace use`.
+**Active workspace:** persisted as `active_workspace` in `~/.config/sticky-notes/tui.toml`. CLI resolves workspace from `--workspace`/`-w` flag, falling back to this config field. Set via `todo workspace use <name>` or `todo config set active_workspace <name>`. The legacy `~/.local/share/sticky-notes/active-workspace` file is still read as a fallback for one release; writes no longer go there.
 
 **Command structure:**
 - Task subcommands: `todo task create|ls|show|edit|mv|transfer|archive|log` (`create` accepts `--group/-g`)
@@ -95,6 +96,7 @@ Entry point: `todo = "sticky_notes.__main__:main"`.
 - Group subcommands: `todo group create|ls|show|rename|edit|archive|mv|assign|unassign|dep`
 - Workspace subcommands: `todo workspace create|ls|show|use|rename|archive`
 - Other subcommand groups: `workspace`, `status`, `dep`, `tag`
+- Config subcommands: `todo config ls|get|set|unset` — edit `auto_refresh_seconds` and `active_workspace` in `tui.toml`. `ls`/`get` can read any field; `set`/`unset` are gated by an editable-field allowlist.
 - Standalone commands: `export`, `info`, `backup`
 
 ## TUI
@@ -105,7 +107,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - **Model** (`tui/model.py`): `WorkspaceModel` loads all non-archived data for the active workspace via existing service functions, then organizes it into a tree: `WorkspaceModel` → `ProjectNode` → `GroupNode` (recursive). Tasks without a project live in `unassigned_tasks`. Groups nest recursively via `parent_id`. Dependency-aware topological ordering for both tree and kanban.
 - **View / Controller** (`tui/app.py`): `StickyNotesApp` — two-panel layout. Left: `#workspaces-panel` (25% width) with `WorkspaceTree`. Right: `#kanban-panel` with `KanbanBoard` — one scrollable column per status with `TaskCard` widgets. Diff-based kanban sync with coalescing refresh (duplicates merge in the message queue). `app.py` acts as both view and controller — dispatches keybindings, pushes modals, calls service layer on dismiss.
 - **Screens**: `BaseEditModal` provides shared form scaffolding: save/cancel buttons, error display, field navigation (`ctrl+n`/`ctrl+b`), date parsing (`_parse_date_field`), change diffing (`_diff_and_dismiss`). Edit modals diff form values against the original entity and dismiss with changes only. Create modals dismiss with the full form data dict. `_dismiss_callback` in `app.py` wraps the common null-check → try/except → notify → refresh pattern for all modal callbacks.
-- **Widgets**: `WorkspaceTree` (tree with emoji prefixes: workspace, project, group, task — node `data` carries the model object), `KanbanBoard` (diff-based card sync, status-move via `[`/`]`), `TaskCard` (focusable, renders task summary), `MarkdownEditor` (edit/preview toggle for description fields).
+- **Widgets**: `WorkspaceTree` (tree with emoji prefixes: workspace, project, group, task — node `data` carries the model object), `KanbanBoard` (diff-based card sync, status-move via `[`/`]` or `shift+left/right`), `KanbanColumn` (focusable; `shift+left/right` while focused reorders the column and persists to `tui.toml`), `TaskCard` (focusable, renders task summary), `MarkdownEditor` (edit/preview toggle for description fields).
 
 **Keybindings:**
 | Key | Action |
@@ -115,12 +117,13 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 | `r` | Refresh |
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity (task/workspace/project/group) |
+| `c` | Open settings modal (theme, auto_refresh_seconds) |
 | `n` | Create new (task/group/project selector) |
 | `s` | Switch workspace |
-| `[` / `]` | Move task left/right across statuses |
+| `[` / `]` / `shift+left` / `shift+right` | Task card focused → move task across statuses. Status column focused → reorder the column (persisted to `tui.toml`). |
 | `ctrl+q` | Quit |
 
-**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds. Loaded via `TuiConfig` dataclass in `tui/config.py`. Status order is editable from the CLI via `todo status order <workspace> <status_1> <status_2> ...`.
+**Config:** `~/.config/sticky-notes/tui.toml` — theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds, active_workspace. Loaded via `TuiConfig` dataclass in `tui/config.py`. Status order is editable from the CLI via `todo status order <status_1> <status_2> ...` (scoped to the active workspace / `-w` override) or interactively via `shift+left/right` on a focused kanban column. Theme and `auto_refresh_seconds` are also editable in-TUI via the settings modal (`c` key, `tui/screens/config_modal.py`).
 
 ## Key Design Conventions
 
@@ -136,7 +139,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 - **Transaction context manager** — service layer controls transaction boundaries. Repository functions receive a connection and never commit/rollback. On rollback failure, `raise exc from rollback_exc` — the original error is primary, rollback failure is attached as `__cause__`. This is intentional.
 - **Timestamps as Unix epoch integers** — formatting happens at the edges only. `parse_date` and `format_timestamp` live in `formatting.py` (shared by CLI and TUI).
 - **Task numbers** — formatted as `task-{id:04d}` in the application layer, derived from autoincrement ID. `format_task_num` and `format_priority` also live in `formatting.py`.
-- **Active workspace file** — persisted at `~/.local/share/sticky-notes/active-workspace`. CLI resolves workspace from `--workspace` flag or this file.
+- **Active workspace** — persisted as the `active_workspace` field in `~/.config/sticky-notes/tui.toml`. CLI resolves workspace from `--workspace` flag or this config field. Legacy `~/.local/share/sticky-notes/active-workspace` file is still read as a one-release fallback; writes go to `tui.toml`.
 - **Tags** — workspace-scoped, many-to-many with tasks via `task_tags` junction table. `tag_task` auto-creates the tag if it doesn't exist. Composite FKs enforce same-workspace scoping at the DB level.
 - **Error translation** — `_friendly_errors()` context manager in the service layer catches `IntegrityError` and translates to `ValueError` with human-readable messages. `_UNIQUE_MESSAGES` dict maps constraint patterns to messages.
 - **Service-layer pre-validation** — `_validate_task_fields()` checks scalar constraints (priority range, position >= 0, date ordering) and cross-entity constraints (status/project exists, on correct workspace, not archived) before hitting the DB. `_validate_group_project_consistency()` separately enforces the (project_id, group_id) invariant whenever either field is in an update's `changes` dict — catches both "assign a group to a task in the wrong project" and "change project out from under an existing group". `update_task` is split into an outer public entry point that owns the transaction and an inner `_update_task_body` that can be called from service functions already holding a transaction (e.g. the `assign_task_to_group` wrapper).

@@ -125,9 +125,10 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 | `r` | Refresh |
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity |
+| `c` | Open settings modal (theme, auto_refresh_seconds) |
 | `n` | Create new (task/group/project) |
 | `s` | Switch workspace |
-| `[` / `]` | Move task left/right across statuses |
+| `[` / `]` / `shift+left` / `shift+right` | With a task card focused: move task left/right across statuses. With a status column focused: reorder the column (persists to `tui.toml`). |
 | `ctrl+q` | Quit |
 
 ## Claude Code Plugin

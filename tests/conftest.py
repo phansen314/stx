@@ -12,6 +12,11 @@ from tests.seed import seed_multi_workspace, seed_workspace
 
 
 @pytest.fixture
+def config_path(tmp_path: Path) -> Path:
+    return tmp_path / "tui.toml"
+
+
+@pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     return tmp_path / "test.db"
 

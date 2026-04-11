@@ -37,6 +37,7 @@ description: Use when the user wants to persist a kanban board, todo list, or mu
 - **Group dependencies** — `todo group dep create --group <title> --blocked-by <title>` (by title within the same project).
 - **Entity metadata** — arbitrary key/value pairs on any task, workspace, project, or group: `todo task meta set task-0001 branch feat/kv`, `todo workspace meta set region us-east-1`, `todo project meta set backend owner alice`, `todo group meta set "Sprint 1" start 2026-01-01 --project backend`. Keys are lowercase-normalized (`Branch` → `branch`), charset `[a-z0-9_.-]+`, max 64 chars. Values free-form up to 500 chars. Use for linking to external IDs (JIRA, GitHub, branches, PRs), environment tags, ownership, sprint windows, etc.
 - **Cross-workspace move** — use `todo task transfer` (not `todo task mv`): `todo task transfer task-0001 --to ops --status Backlog`. Tags and metadata are carried over; group assignment is not.
+- **Archive (soft-delete)** — `todo {task,project,group,workspace,status,tag} archive <id>`. Cascade-archives descendants where applicable. **Pass `--force` in scripts/loops** — archive commands prompt y/N interactively and fail-fast on non-interactive stdin. No unarchive command; restore via SQLite directly.
 - **Audit trail** — `todo task log <task>` shows full field-change history.
 - **Milestone snapshot** — `todo export` (all workspaces, Mermaid dep graphs); `-o FILE` writes to disk.
 

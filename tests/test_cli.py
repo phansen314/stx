@@ -24,13 +24,13 @@ from sticky_notes.formatting import (
 
 
 @pytest.fixture
-def cli(db_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
+def cli(db_path: Path, config_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
     # Default to TTY so existing text-mode assertions keep working.
     # Individual tests override sticky_notes.cli._stdout_is_tty via their own monkeypatch.
     monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: True)
 
     def run(*args: str, expect_exit: int = 0) -> tuple[str, str]:
-        argv = ["--db", str(db_path), *args]
+        argv = ["--db", str(db_path), "--config", str(config_path), *args]
         try:
             main(argv)
         except SystemExit as exc:
@@ -99,13 +99,13 @@ class TestActiveWorkspace:
     def test_path(self, db_path: Path):
         assert active_workspace_path(db_path) == db_path.parent / "active-workspace"
 
-    def test_get_none(self, db_path: Path):
-        assert get_active_workspace_id(db_path) is None
+    def test_get_none(self, db_path: Path, config_path: Path):
+        assert get_active_workspace_id(config_path, db_path) is None
 
-    def test_set_and_get(self, db_path: Path):
+    def test_set_and_get(self, db_path: Path, config_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        set_active_workspace_id(db_path, 42)
-        assert get_active_workspace_id(db_path) == 42
+        set_active_workspace_id(config_path, 42)
+        assert get_active_workspace_id(config_path, db_path) == 42
 
 
 # ---- Workspace commands ----
@@ -116,9 +116,9 @@ class TestWorkspaceCommands:
         out, _ = cli("workspace", "create", "dev")
         assert "created workspace 'dev' (active)" in out
 
-    def test_create_auto_activates(self, cli, db_path):
+    def test_create_auto_activates(self, cli, db_path, config_path):
         cli("workspace", "create", "dev")
-        assert get_active_workspace_id(db_path) is not None
+        assert get_active_workspace_id(config_path, db_path) is not None
 
     def test_ls(self, cli):
         cli("workspace", "create", "dev")
@@ -153,19 +153,19 @@ class TestWorkspaceCommands:
         out, _ = cli("workspace", "archive", "--force")
         assert "archived workspace" in out
 
-    def test_archive_active_workspace_clears_pointer(self, cli, db_path):
+    def test_archive_active_workspace_clears_pointer(self, cli, db_path, config_path):
         cli("workspace", "create", "dev")
-        assert get_active_workspace_id(db_path) is not None
+        assert get_active_workspace_id(config_path, db_path) is not None
         cli("workspace", "archive", "--force")
-        assert get_active_workspace_id(db_path) is None
+        assert get_active_workspace_id(config_path, db_path) is None
 
-    def test_archive_non_active_workspace_leaves_pointer(self, cli, db_path):
+    def test_archive_non_active_workspace_leaves_pointer(self, cli, db_path, config_path):
         cli("workspace", "create", "dev")
         cli("workspace", "create", "ops")
         cli("workspace", "use", "dev")
         # ops is not active — archiving it must not clear the pointer
         cli("-w", "ops", "workspace", "archive", "--force")
-        assert get_active_workspace_id(db_path) is not None
+        assert get_active_workspace_id(config_path, db_path) is not None
 
     def test_archive_json_shape_includes_active_cleared(self, cli):
         cli("workspace", "create", "dev")
@@ -233,42 +233,34 @@ class TestStatusCommands:
         out, _ = cli("status", "archive", "todo")
         assert "archived status 'todo'" in out
 
-    def test_order_writes_config(self, cli, tmp_path, monkeypatch):
-        cfg_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+    def test_order_writes_config(self, cli, config_path):
         cli("workspace", "create", "dev")
         cli("status", "create", "backlog")
         cli("status", "create", "doing")
         cli("status", "create", "done")
         out, _ = cli("status", "order", "doing", "done", "backlog")
         assert "set status order for workspace 'dev'" in out
-        content = cfg_path.read_text()
+        content = config_path.read_text()
         assert "[status_order]" in content
         # All three status ids listed in the right order
         from sticky_notes.tui.config import load_config
-        config = load_config(cfg_path)
+        config = load_config(config_path)
         assert 1 in config.status_order
         assert len(config.status_order[1]) == 3
 
-    def test_order_unknown_status(self, cli, tmp_path, monkeypatch):
-        cfg_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+    def test_order_unknown_status(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         _, err = cli("status", "order", "todo", "nonexistent", expect_exit=3)
         assert "not found" in err
 
-    def test_order_duplicate_status(self, cli, tmp_path, monkeypatch):
-        cfg_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+    def test_order_duplicate_status(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         _, err = cli("status", "order", "todo", "todo", expect_exit=4)
         assert "duplicate" in err
 
-    def test_order_json_shape(self, cli, tmp_path, monkeypatch):
-        cfg_path = tmp_path / "tui.toml"
-        monkeypatch.setattr("sticky_notes.tui.config.DEFAULT_CONFIG_PATH", cfg_path)
+    def test_order_json_shape(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "backlog")
         cli("status", "create", "doing")
@@ -1990,9 +1982,9 @@ class TestArchiveCascade:
         out2, _ = self.cli("project", "ls")
         assert "no projects" in out2
 
-    def test_workspace_cascade_archives_all(self, db_path):
+    def test_workspace_cascade_archives_all(self, db_path, config_path):
         self.cli("workspace", "archive", "--force")
-        assert get_active_workspace_id(db_path) is None
+        assert get_active_workspace_id(config_path, db_path) is None
         # Workspace hidden from default ls
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
@@ -2213,9 +2205,10 @@ class TestEndToEndSmoke:
     then cascade-archive everything."""
 
     @pytest.fixture(autouse=True)
-    def _setup(self, cli, db_path):
+    def _setup(self, cli, db_path, config_path):
         self.cli = cli
         self.db_path = db_path
+        self.config_path = config_path
         # Workspace + statuses
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
@@ -2335,7 +2328,7 @@ class TestEndToEndSmoke:
 
     def test_cascade_archive_workspace(self):
         self.cli("workspace", "archive", "--force")
-        assert get_active_workspace_id(self.db_path) is None
+        assert get_active_workspace_id(self.config_path, self.db_path) is None
         out, _ = self.cli("workspace", "ls")
         assert "dev" not in out
         out, _ = self.cli("workspace", "ls", "--archived", "include")
@@ -2885,3 +2878,125 @@ class TestTtyAwareOutput:
         monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
         out, _ = self.cli("task", "archive", "1", "--force")
         assert "archived task-0001" in out
+
+
+class TestConfigCommands:
+    """Tests for `todo config ls/get/set/unset` and active_workspace storage migration."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, cli, config_path):
+        self.cli = cli
+        self.cfg_path = config_path
+        self.cli("workspace", "create", "dev")
+
+    def test_config_ls_returns_defaults_on_fresh_db(self):
+        out, _ = self.cli("config", "ls")
+        assert "auto_refresh_seconds" in out
+        assert "active_workspace" in out
+
+    def test_config_ls_json_shape(self):
+        out, _ = self.cli("--json", "config", "ls")
+        data = json.loads(out)["data"]
+        assert "auto_refresh_seconds" in data
+        assert "active_workspace" in data
+        assert data["auto_refresh_seconds"] == 30
+        assert "active_workspace" in data  # value set by workspace create in autouse fixture
+
+    def test_config_get_auto_refresh_seconds(self):
+        out, _ = self.cli("config", "get", "auto_refresh_seconds")
+        assert "30" in out
+
+    def test_config_get_unknown_key_errors(self):
+        _, err = self.cli("config", "get", "bogus_key", expect_exit=3)
+        assert "unknown config key" in err
+
+    def test_config_set_auto_refresh_seconds(self):
+        out, _ = self.cli("config", "set", "auto_refresh_seconds", "5")
+        assert "5" in out
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).auto_refresh_seconds == 5
+
+    def test_config_set_auto_refresh_seconds_rejects_zero(self):
+        _, err = self.cli("config", "set", "auto_refresh_seconds", "0", expect_exit=4)
+        assert "positive integer" in err
+        # file should not exist / value unchanged
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).auto_refresh_seconds == 30
+
+    def test_config_set_auto_refresh_seconds_rejects_negative(self):
+        _, err = self.cli("config", "set", "auto_refresh_seconds", "-5", expect_exit=4)
+        assert "positive integer" in err
+
+    def test_config_set_auto_refresh_seconds_rejects_non_integer(self):
+        _, err = self.cli("config", "set", "auto_refresh_seconds", "abc", expect_exit=4)
+        assert "positive integer" in err
+
+    def test_config_set_active_workspace_by_id(self):
+        out, _ = self.cli("--json", "workspace", "ls")
+        ws_id = json.loads(out)["data"][0]["id"]
+        self.cli("config", "set", "active_workspace", str(ws_id))
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).active_workspace == ws_id
+
+    def test_config_set_active_workspace_by_name(self):
+        self.cli("config", "set", "active_workspace", "dev")
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).active_workspace is not None
+
+    def test_config_set_active_workspace_rejects_unknown(self):
+        _, err = self.cli("config", "set", "active_workspace", "nonexistent", expect_exit=3)
+        assert "not found" in err
+
+    def test_config_set_rejects_non_editable_key(self):
+        _, err = self.cli("config", "set", "theme", "dark", expect_exit=4)
+        assert "not editable" in err
+
+    def test_config_unset_resets_auto_refresh_to_default(self):
+        self.cli("config", "set", "auto_refresh_seconds", "10")
+        self.cli("config", "unset", "auto_refresh_seconds")
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).auto_refresh_seconds == 30
+
+    def test_config_unset_rejects_non_editable_key(self):
+        _, err = self.cli("config", "unset", "theme", expect_exit=4)
+        assert "not editable" in err
+
+    def test_config_set_active_workspace_via_workspace_use_matches(self):
+        """todo workspace use and todo config set active_workspace produce same tui.toml value."""
+        self.cli("workspace", "use", "dev")
+        from sticky_notes.tui.config import load_config
+        via_use = load_config(self.cfg_path).active_workspace
+        # reset
+        self.cfg_path.unlink(missing_ok=True)
+        self.cli("config", "set", "active_workspace", "dev")
+        via_config = load_config(self.cfg_path).active_workspace
+        assert via_use == via_config
+
+    def test_active_workspace_legacy_file_fallback(self, db_path):
+        """get_active_workspace_id falls back to legacy file when tui.toml has no value."""
+        from sticky_notes.active_workspace import get_active_workspace_id
+        legacy_file = db_path.parent / "active-workspace"
+        legacy_file.write_text("999")
+        # tui.toml exists but has no active_workspace
+        self.cfg_path.write_text("auto_refresh_seconds = 30\n")
+        result = get_active_workspace_id(self.cfg_path, db_path)
+        assert result == 999
+
+    def test_active_workspace_tui_toml_wins_over_legacy_file(self, db_path):
+        """tui.toml active_workspace takes priority over legacy file."""
+        from sticky_notes.active_workspace import get_active_workspace_id
+        legacy_file = db_path.parent / "active-workspace"
+        legacy_file.write_text("999")
+        self.cfg_path.write_text("active_workspace = 42\n")
+        result = get_active_workspace_id(self.cfg_path, db_path)
+        assert result == 42
+
+    def test_workspace_use_writes_tui_toml_not_legacy_file(self, db_path):
+        """todo workspace use writes to tui.toml; legacy file is NOT created."""
+        legacy_file = db_path.parent / "active-workspace"
+        if legacy_file.exists():
+            legacy_file.unlink()
+        self.cli("workspace", "use", "dev")
+        assert not legacy_file.exists(), "legacy active-workspace file must not be written"
+        from sticky_notes.tui.config import load_config
+        assert load_config(self.cfg_path).active_workspace is not None

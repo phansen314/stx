@@ -12,7 +12,7 @@ from sticky_notes.models import Group, Project, Task, Workspace
 from sticky_notes.tui.app import StickyNotesApp
 from sticky_notes.tui.config import TuiConfig
 from sticky_notes.tui.screens import MetadataModal
-from sticky_notes.tui.widgets import KanbanBoard, TaskCard
+from sticky_notes.tui.widgets import KanbanBoard, KanbanColumn, TaskCard
 
 
 class TestTreePopulation:
@@ -112,7 +112,7 @@ class TestTreeNoWorkspaces:
         good = service.create_workspace(conn, "Good")
         service.create_status(conn, good.id, "Todo")
         bad = service.create_workspace(conn, "Bad")
-        set_active_workspace_id(db_path, good.id)
+        set_active_workspace_id(db_path.parent / "tui.toml", good.id)
         conn.close()
 
         from sticky_notes.tui import model as tui_model
@@ -154,7 +154,7 @@ class TestTreeWithGroups:
         service.assign_task_to_group(conn, t1.id, child_grp.id, source="test")
         # Ungrouped task in project
         service.create_task(conn, ws.id, "ungrouped-task", status.id, project_id=proj.id)
-        set_active_workspace_id(db_path, ws.id)
+        set_active_workspace_id(db_path.parent / "tui.toml", ws.id)
         conn.close()
         return db_path
 
@@ -774,3 +774,483 @@ class TestMetadataKeybinding:
             await pilot.pause()
             await pilot.pause()
             assert service.get_group(app.conn, group.id).metadata == {"owner": "alice"}
+
+
+class TestColumnFocus:
+    """Tests for focusable KanbanColumn widget and column reordering."""
+
+    @pytest.fixture
+    def app(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        return StickyNotesApp(db_path=db_path, config=config), ids
+
+    def _col_title(self, app, status_id: int) -> str:
+        col = app.query_one(f"#status-col-{status_id}")
+        return str(col.query_one(".status-col-title").render())
+
+    def _card_column_id(self, card: TaskCard) -> str:
+        node = card.parent
+        while node is not None:
+            if hasattr(node, "id") and node.id and node.id.startswith("status-col-"):
+                return node.id
+            node = node.parent
+        raise AssertionError("Card not inside a status column")
+
+    async def test_click_focuses_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            col = app.query(KanbanColumn).first()
+            # on_click calls self.focus(); invoke same behavior directly
+            col.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused is col
+
+    async def test_up_from_top_card_focuses_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            card = todo_col.query(TaskCard).first()
+            app.set_focus(card)
+            await pilot.pause()
+            await pilot.press("up")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == todo_id
+
+    async def test_up_from_non_top_card_stays_on_card(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(todo_col.query(TaskCard))
+            assert len(cards) >= 2, "Need at least 2 todo cards"
+            app.set_focus(cards[1])
+            await pilot.pause()
+            await pilot.press("up")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == cards[0].task_data.id
+
+    async def test_down_from_bottom_card_no_wrap(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            todo_col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(todo_col.query(TaskCard))
+            bottom = cards[-1]
+            bottom_id = bottom.task_data.id
+            app.set_focus(bottom)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == bottom_id
+
+    async def test_column_left_wraps_to_last(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            done_id = sids["done"]
+            app.set_focus(todo_col)
+            await pilot.pause()
+            await pilot.press("left")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == done_id
+
+    async def test_column_right_wraps_to_first(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            done_col = app.query_one(f"#status-col-{sids['done']}", KanbanColumn)
+            todo_id = sids["todo"]
+            app.set_focus(done_col)
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == todo_id
+
+    async def test_column_down_focuses_first_card(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            first_card = todo_col.query(TaskCard).first()
+            first_task_id = first_card.task_data.id
+            app.set_focus(todo_col)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+            assert app.focused.task_data.id == first_task_id
+
+    async def test_column_down_on_empty_column_noop(self, seeded_tui_db_empty_middle):
+        db_path, ids = seeded_tui_db_empty_middle
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        app = StickyNotesApp(db_path=db_path, config=config)
+        async with app.run_test() as pilot:
+            ip_id = sids["in_progress"]
+            col = app.query_one(f"#status-col-{ip_id}", KanbanColumn)
+            app.set_focus(col)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == ip_id
+
+    async def test_shift_right_on_column_reorders(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after[0] == order_before[1]
+            assert order_after[1] == order_before[0]
+            assert order_after[2:] == order_before[2:]
+
+    async def test_shift_right_no_wrap_at_end(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            done_col = app.query_one(f"#status-col-{sids['done']}", KanbanColumn)
+            app.set_focus(done_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after == order_before
+
+    async def test_shift_left_no_wrap_at_start(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+left")
+            await pilot.pause()
+            await pilot.pause()
+            order_after = [s.id for s in app._active_model.statuses]
+            assert order_after == order_before
+
+    async def test_column_reorder_persists_to_tui_toml(self, seeded_tui_db, tmp_path):
+        import tomllib
+        db_path, ids = seeded_tui_db
+        toml_path = tmp_path / "tui.toml"
+        sids = ids["status_ids"]
+        config = TuiConfig(status_order={
+            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+        })
+        app = StickyNotesApp(db_path=db_path, config=config, config_path=toml_path)
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            ws_id = ids["workspace_id"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            order_before = [s.id for s in app._active_model.statuses]
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            assert toml_path.exists()
+            with open(toml_path, "rb") as f:
+                saved = tomllib.load(f)
+            saved_order = saved.get("status_order", {}).get(str(ws_id), [])
+            assert saved_order[0] == order_before[1]
+            assert saved_order[1] == order_before[0]
+
+    async def test_materializes_full_order_on_first_move(self, seeded_tui_db, tmp_path):
+        import tomllib
+        db_path, ids = seeded_tui_db
+        toml_path = tmp_path / "tui.toml"
+        # Start with empty status_order so _reorder_column must materialize all IDs
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+        sids = ids["status_ids"]
+        ws_id = ids["workspace_id"]
+        async with app.run_test() as pilot:
+            # With empty status_order, DB order is used — pick the leftmost column
+            # (guaranteed movable right regardless of which status is there)
+            first_col = app.query(KanbanColumn).first()
+            app.set_focus(first_col)
+            await pilot.pause()
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            assert toml_path.exists()
+            with open(toml_path, "rb") as f:
+                saved = tomllib.load(f)
+            saved_order = saved.get("status_order", {}).get(str(ws_id), [])
+            all_status_ids = set(sids.values())
+            assert set(saved_order) == all_status_ids, "Full order must be saved"
+
+    async def test_column_order_persists_across_restart(self, seeded_tui_db, tmp_path):
+        """Reorder columns in session 1, then verify session 2 loads the saved order."""
+        from sticky_notes.tui.config import load_config
+        db_path, ids = seeded_tui_db
+        toml_path = tmp_path / "tui.toml"
+        ws_id = ids["workspace_id"]
+
+        # Session 1: reorder columns
+        app1 = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+        async with app1.run_test() as pilot:
+            await pilot.pause()
+            first_col = app1.query(KanbanColumn).first()
+            app1.set_focus(first_col)
+            await pilot.pause()
+            await pilot.press("shift+right")
+            await pilot.pause()
+            await pilot.pause()
+            order_session1 = [s.id for s in app1._active_model.statuses]
+
+        # Session 2: load config from file (production code path)
+        app2 = StickyNotesApp(db_path=db_path, config_path=toml_path)
+        async with app2.run_test() as pilot:
+            await pilot.pause()
+            order_session2 = [s.id for s in app2._active_model.statuses]
+
+        assert order_session2 == order_session1, (
+            f"Column order should persist: session1={order_session1}, session2={order_session2}"
+        )
+
+    async def test_column_focus_survives_refresh(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            app.request_refresh()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            assert app.focused.status_id == sids["todo"]
+
+    async def test_b_binding_prefers_card_not_column(self, app):
+        app, ids = app
+        async with app.run_test() as pilot:
+            sids = ids["status_ids"]
+            todo_col = app.query_one(f"#status-col-{sids['todo']}", KanbanColumn)
+            app.set_focus(todo_col)
+            await pilot.pause()
+            assert isinstance(app.focused, KanbanColumn)
+            await pilot.press("w")
+            await pilot.pause()
+            await pilot.press("b")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+
+
+class TestActiveWorkspaceInvariant:
+    """TUI tree-switch must be an in-memory focus change only — no disk writes."""
+
+    async def test_tui_tree_switch_does_not_write_active_workspace(
+        self, multi_workspace_tui_db, tmp_path
+    ):
+        """Navigating to a different workspace in the tree must not update tui.toml."""
+        from sticky_notes.tui.config import load_config, save_config
+
+        db_path, ids = multi_workspace_tui_db
+        ws1_id = ids["ws1"]["workspace_id"]
+        ws2_id = ids["ws2"]["workspace_id"]
+
+        cfg_path = tmp_path / "tui.toml"
+        initial_cfg = load_config(cfg_path)
+        initial_cfg.active_workspace = ws1_id
+        save_config(initial_cfg, cfg_path)
+        assert load_config(cfg_path).active_workspace == ws1_id
+
+        app = StickyNotesApp(db_path=db_path, config=initial_cfg, config_path=cfg_path)
+        async with app.run_test() as pilot:
+            assert app._active_workspace_id == ws1_id
+            # Navigate tree to workspace 2
+            tree = app.query_one("#workspaces-tree")
+            ws_nodes = list(tree.root.children)
+            tree.select_node(ws_nodes[1])
+            await pilot.pause()
+            await pilot.pause()
+            # In-memory state updated
+            assert app._active_workspace_id == ws2_id
+
+        # Disk must still show ws1
+        assert load_config(cfg_path).active_workspace == ws1_id
+
+    async def test_tui_save_config_not_called_on_workspace_switch(
+        self, multi_workspace_tui_db, monkeypatch, tmp_path
+    ):
+        """save_config must not be called during workspace tree navigation."""
+        from unittest.mock import MagicMock
+
+        db_path, ids = multi_workspace_tui_db
+
+        save_config_mock = MagicMock()
+        monkeypatch.setattr("sticky_notes.tui.app.save_config", save_config_mock)
+
+        cfg_path = tmp_path / "tui.toml"
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
+        async with app.run_test() as pilot:
+            # Drive a workspace tree switch
+            tree = app.query_one("#workspaces-tree")
+            ws_nodes = list(tree.root.children)
+            tree.select_node(ws_nodes[1])
+            await pilot.pause()
+            await pilot.pause()
+            assert save_config_mock.call_count == 0, (
+                "save_config must not be called on workspace tree navigation"
+            )
+            # Positive control: _reorder_column SHOULD call save_config
+            cols = list(app.query(KanbanColumn))
+            if len(cols) >= 2:
+                await app._reorder_column(cols[0], 1)
+                assert save_config_mock.call_count > 0, (
+                    "positive control: save_config should be called by _reorder_column"
+                )
+
+
+class TestConfigModal:
+    @pytest.fixture
+    def app(self, seeded_tui_db, tmp_path):
+        db_path, ids = seeded_tui_db
+        # Use a distinct name to avoid collision with seed_workspace's tui.toml write
+        toml_path = tmp_path / "config-modal-test.toml"
+        return StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path), toml_path
+
+    @pytest.mark.asyncio
+    async def test_open_config_modal_via_c_key(self, app):
+        from sticky_notes.tui.screens.config_modal import ConfigModal
+        app, _ = app
+        async with app.run_test() as pilot:
+            await pilot.press("c")
+            await pilot.pause()
+            assert any(isinstance(s, ConfigModal) for s in app.screen_stack)
+
+    @pytest.mark.asyncio
+    async def test_save_no_changes_dismisses_without_write(self, app):
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert not toml_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_change_theme_live_applies_and_persists(self, app):
+        from sticky_notes.tui.config import load_config
+        from textual.widgets import Select
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            themes = list(app.available_themes.keys())
+            # Pick a different theme from the current one
+            new_theme = next(t for t in themes if t != app.theme)
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            theme_select = app.screen.query_one("#config-theme", Select)
+            theme_select.value = new_theme
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert app.theme == new_theme
+            assert toml_path.exists()
+            assert load_config(toml_path).theme == new_theme
+
+    @pytest.mark.asyncio
+    async def test_startup_applies_stored_theme(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.config import load_config, save_config
+        db_path, _ = seeded_tui_db
+        toml_path = tmp_path / "startup_theme.toml"
+        # Discover available themes from a disposable app instance
+        probe = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with probe.run_test():
+            all_themes = list(probe.available_themes.keys())
+        # Pick a theme that's definitively not the Textual default
+        default_theme = probe.theme
+        new_theme = next(t for t in all_themes if t != default_theme)
+        cfg = TuiConfig(theme=new_theme)
+        save_config(cfg, toml_path)
+        loaded = load_config(toml_path)
+        app2 = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        async with app2.run_test() as pilot:
+            await pilot.pause()
+            assert app2.theme == new_theme
+
+    @pytest.mark.asyncio
+    async def test_startup_ignores_unknown_theme(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.config import load_config, save_config
+        db_path, _ = seeded_tui_db
+        toml_path = tmp_path / "bad_theme.toml"
+        cfg = TuiConfig(theme="totally-not-a-real-theme-xyz")
+        save_config(cfg, toml_path)
+        loaded = load_config(toml_path)
+        app = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        # Should not raise
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme in app.available_themes
+
+    @pytest.mark.asyncio
+    async def test_change_auto_refresh_swaps_timer(self, app):
+        from sticky_notes.tui.config import load_config
+        from textual.widgets import Input
+        app, toml_path = app
+        async with app.run_test() as pilot:
+            original_timer = app._refresh_timer
+            await pilot.press("c")
+            await pilot.pause()
+            await pilot.pause()
+            refresh_input = app.screen.query_one("#config-refresh", Input)
+            refresh_input.value = "120"
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._refresh_timer is not original_timer
+            assert toml_path.exists()
+            assert load_config(toml_path).auto_refresh_seconds == 120
+
+    @pytest.mark.asyncio
+    async def test_invalid_auto_refresh_shows_error(self, seeded_tui_db, tmp_path):
+        from sticky_notes.tui.screens.config_modal import ConfigModal
+        from textual.widgets import Input, Static
+        db_path, _ = seeded_tui_db
+        for bad_value in ("abc", "0", "-3"):
+            toml_path = tmp_path / f"cfg-{bad_value}.toml"
+            app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+            async with app.run_test() as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.pause()
+                refresh_input = app.screen.query_one("#config-refresh", Input)
+                refresh_input.value = bad_value
+                await pilot.pause()
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                error_msg = app.screen.query_one("#modal-error", Static).content
+                assert error_msg.strip(), f"Expected error for {bad_value!r}, got empty"
+                # Modal still open
+                assert any(isinstance(s, ConfigModal) for s in app.screen_stack)

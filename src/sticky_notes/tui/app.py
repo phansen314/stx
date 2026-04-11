@@ -18,11 +18,11 @@ from sticky_notes.connection import DEFAULT_DB_PATH, get_connection, init_db
 from sticky_notes.models import Group, Project, Status, Task, Workspace
 from sticky_notes.formatting import format_task_num
 from sticky_notes.service import create_group, create_project, create_task, get_group, get_group_detail, get_project, get_project_detail, get_task_detail, get_workspace, list_workspaces, replace_group_metadata, replace_project_metadata, replace_task_metadata, replace_workspace_metadata, update_group, update_project, update_task, update_workspace
-from sticky_notes.tui.config import TuiConfig, load_config
+from sticky_notes.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from sticky_notes.tui.markup import escape_markup
 from sticky_notes.tui.model import WorkspaceModel, load_workspace_model
-from sticky_notes.tui.screens import GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
-from sticky_notes.tui.widgets import KanbanBoard, TaskCard, WorkspaceTree
+from sticky_notes.tui.screens import ConfigModal, GroupCreateModal, GroupEditModal, MetadataModal, NewResourceModal, ProjectCreateModal, ProjectEditModal, TaskCreateModal, TaskEditModal, WorkspaceEditModal
+from sticky_notes.tui.widgets import KanbanBoard, KanbanColumn, TaskCard, WorkspaceTree
 
 
 class ActivePanel(StrEnum):
@@ -50,6 +50,7 @@ class StickyNotesApp(App):
         Binding("shift+left", "status_left", show=False),
         Binding("]", "status_right", "Status ▶", show=False),
         Binding("shift+right", "status_right", show=False),
+        Binding("c", "config", "Config", show=True),
         Binding("n", "new", "New", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
@@ -57,9 +58,10 @@ class StickyNotesApp(App):
     conn: sqlite3.Connection
     config: TuiConfig
     active_panel: ActivePanel = ActivePanel.TREE
-    _kanban_last_focused: TaskCard | None = None
+    _kanban_last_focused: TaskCard | KanbanColumn | None = None
     _active_workspace_id: int | None = None
     _models: dict[int, WorkspaceModel]
+    _refresh_timer: object | None = None
 
     @property
     def _active_model(self) -> WorkspaceModel | None:
@@ -67,12 +69,13 @@ class StickyNotesApp(App):
             return None
         return self._models.get(self._active_workspace_id)
 
-    def __init__(self, db_path: Path | None = None, config: TuiConfig | None = None):
+    def __init__(self, db_path: Path | None = None, config_path: Path | None = None, config: TuiConfig | None = None):
         super().__init__()
         self.db_path = db_path or DEFAULT_DB_PATH
+        self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.conn = get_connection(self.db_path)
         init_db(self.conn)
-        self.config = config or load_config()
+        self.config = config or load_config(self.config_path)
         self._models = {}
 
     def compose(self) -> ComposeResult:
@@ -86,6 +89,15 @@ class StickyNotesApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        # Sync theme before workspace loading so the settings modal sees a
+        # consistent baseline regardless of whether workspaces exist.
+        if self.config.theme in self.available_themes:
+            self.theme = self.config.theme
+        else:
+            # Unknown / stale theme name — sync config to the actual live theme.
+            self.config.theme = self.theme
+        self._refresh_timer = self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
+
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
         workspaces = list_workspaces(self.conn)
@@ -103,14 +115,13 @@ class StickyNotesApp(App):
             tree.show_empty("No workspaces")
             return
         # Use active-workspace file as initial-focus hint
-        hint_id = get_active_workspace_id(self.db_path)
+        hint_id = get_active_workspace_id(self.config_path, self.db_path)
         if hint_id not in self._models:
-            hint_id = workspaces[0].id
+            hint_id = next(iter(self._models))
         self._active_workspace_id = hint_id
         tree.load(self._models, expand_workspace_id=hint_id)
         await kanban.load(self._models[hint_id])
         tree.focus()
-        self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
 
     def request_refresh(self) -> None:
         self.post_message(_RefreshRequested())
@@ -167,25 +178,44 @@ class StickyNotesApp(App):
         return model
 
     async def _rerender(self, tree: WorkspaceTree, kanban: KanbanBoard, model: WorkspaceModel) -> None:
-        """Redraw the tree + kanban and restore focus to the previously focused card if possible."""
-        prev_task_id: int | None = None
-        if self._kanban_last_focused is not None:
-            prev_task_id = self._kanban_last_focused.task_data.id
+        """Redraw the tree + kanban and restore focus to the previously focused card/column if possible."""
+        from textual.css.query import NoMatches
+        last = self._kanban_last_focused
         tree.load(self._models, expand_workspace_id=self._active_workspace_id)
         await kanban.sync(model)
-        if self.active_panel == ActivePanel.KANBAN and prev_task_id is not None:
-            for card in self.query(TaskCard):
-                if card.task_data.id == prev_task_id:
-                    self._kanban_last_focused = card
-                    self.set_focus(card)
+        if self.active_panel == ActivePanel.KANBAN and last is not None:
+            if isinstance(last, KanbanColumn):
+                try:
+                    col = self.query_one(f"#status-col-{last.status_id}", KanbanColumn)
+                    self._kanban_last_focused = col
+                    self.set_focus(col)
                     return
-            # Task no longer exists — focus first card or fall back to tree
-            cards = self.query(TaskCard)
-            if cards:
-                self._kanban_last_focused = cards.first()
-                self.set_focus(cards.first())
+                except NoMatches:
+                    pass
+                # Column gone — fall through to first card or tree
+                cards = self.query(TaskCard)
+                if cards:
+                    first = cards.first()
+                    self._kanban_last_focused = first
+                    self.set_focus(first)
+                else:
+                    self.set_focus(tree)
             else:
-                self.set_focus(tree)
+                # last is a TaskCard
+                prev_task_id = last.task_data.id
+                for card in self.query(TaskCard):
+                    if card.task_data.id == prev_task_id:
+                        self._kanban_last_focused = card
+                        self.set_focus(card)
+                        return
+                # Task no longer exists — focus first card or fall back to tree
+                cards = self.query(TaskCard)
+                if cards:
+                    first = cards.first()
+                    self._kanban_last_focused = first
+                    self.set_focus(first)
+                else:
+                    self.set_focus(tree)
         else:
             self.set_focus(tree)
 
@@ -193,28 +223,58 @@ class StickyNotesApp(App):
         widget = event.widget
         if isinstance(widget, WorkspaceTree):
             self.active_panel = ActivePanel.TREE
-        elif isinstance(widget, TaskCard):
+        elif isinstance(widget, (TaskCard, KanbanColumn)):
             self.active_panel = ActivePanel.KANBAN
             self._kanban_last_focused = widget
 
-    def action_status_left(self) -> None:
-        self.query_one(KanbanBoard)._move_status(-1)
+    async def action_status_left(self) -> None:
+        focused = self.focused
+        if isinstance(focused, KanbanColumn):
+            await self._reorder_column(focused, -1)
+        else:
+            self.query_one(KanbanBoard)._move_status(-1)
 
-    def action_status_right(self) -> None:
-        self.query_one(KanbanBoard)._move_status(1)
+    async def action_status_right(self) -> None:
+        focused = self.focused
+        if isinstance(focused, KanbanColumn):
+            await self._reorder_column(focused, 1)
+        else:
+            self.query_one(KanbanBoard)._move_status(1)
+
+    async def _reorder_column(self, col: KanbanColumn, delta: int) -> None:
+        model = self._active_model
+        if model is None:
+            return
+        ids = [s.id for s in model.statuses]
+        try:
+            i = ids.index(col.status_id)
+        except ValueError:
+            return
+        j = i + delta
+        if j < 0 or j >= len(ids):
+            return
+        ids[i], ids[j] = ids[j], ids[i]
+        self.config.status_order[self._active_workspace_id] = ids
+        save_config(self.config, self.config_path)
+        new_statuses = self._order_statuses(model.statuses, self._active_workspace_id)
+        self._models[self._active_workspace_id] = replace(model, statuses=new_statuses)
+        await self.query_one(KanbanBoard).sync(self._models[self._active_workspace_id])
+        self.set_focus(self.query_one(f"#status-col-{col.status_id}", KanbanColumn))
 
     def action_focus_tree(self) -> None:
         self.set_focus(self.query_one(WorkspaceTree))
 
     def action_focus_kanban(self) -> None:
-        if self._kanban_last_focused is not None and self._kanban_last_focused.parent is not None:
-            self.set_focus(self._kanban_last_focused)
+        last = self._kanban_last_focused
+        if isinstance(last, TaskCard) and last.parent is not None:
+            self.set_focus(last)
         else:
-            cards = self.query("TaskCard")
+            cards = self.query(TaskCard)
             if cards:
                 self.set_focus(cards.first())
 
     async def on_workspace_tree_workspace_changed(self, event: WorkspaceTree.WorkspaceChanged) -> None:
+        # in-memory focus only — do not persist; terminal owns active workspace
         ws_id = event.workspace_id
         if ws_id == self._active_workspace_id:
             return
@@ -225,9 +285,7 @@ class StickyNotesApp(App):
             return
         model = replace(model, statuses=self._order_statuses(model.statuses, ws_id))
         self._models[ws_id] = model
-        tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
-        tree.load(self._models, expand_workspace_id=ws_id)
         await kanban.load(model)
         self._kanban_last_focused = None
 
@@ -246,7 +304,7 @@ class StickyNotesApp(App):
                     self._edit_group(node.data)
                 elif isinstance(node.data, Workspace):
                     self._edit_workspace(node.data)
-        elif self._kanban_last_focused is not None:
+        elif isinstance(self._kanban_last_focused, TaskCard):
             self._edit_task(self._kanban_last_focused.task_data)
 
     def _dismiss_callback(self, result: dict | None, save: Callable[[], None]) -> None:
@@ -286,7 +344,7 @@ class StickyNotesApp(App):
                 self._open_project_metadata(data)
             elif isinstance(data, Group):
                 self._open_group_metadata(data)
-        elif self._kanban_last_focused is not None:
+        elif isinstance(self._kanban_last_focused, TaskCard):
             self._open_task_metadata(self._kanban_last_focused.task_data)
 
     def _open_task_metadata(self, task: Task) -> None:
@@ -410,6 +468,30 @@ class StickyNotesApp(App):
             self.notify(str(e), severity="error")
             return
         self.request_refresh()
+
+    def action_config(self) -> None:
+        self.push_screen(
+            ConfigModal(config=self.config, available_themes=tuple(self.available_themes)),
+            callback=self._on_config_dismiss,
+        )
+
+    def _on_config_dismiss(self, result: dict | None) -> None:
+        if result is None:
+            return
+        changes = result["changes"]
+        self._dismiss_callback(result, lambda: self._apply_config_changes(changes))
+
+    def _apply_config_changes(self, changes: dict) -> None:
+        # Live-apply side effects before persisting so a failed apply
+        # doesn't leave disk out of sync with the live state.
+        if "theme" in changes:
+            self.theme = changes["theme"]
+        if "auto_refresh_seconds" in changes and self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = self.set_interval(changes["auto_refresh_seconds"], self.request_refresh)
+        for key, value in changes.items():
+            setattr(self.config, key, value)
+        save_config(self.config, self.config_path)
 
     def action_new(self) -> None:
         if self._active_model is None:

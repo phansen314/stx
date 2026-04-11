@@ -469,11 +469,40 @@ todo backup /tmp/sticky-notes-backup.db --overwrite
 
 ---
 
+## `todo config` Subcommands
+
+Manages TUI configuration stored in `~/.config/sticky-notes/tui.toml`. Only a subset of config fields are editable via CLI (see allowlist below); all fields are readable.
+
+| Subcommand | Args | Description |
+|---|---|---|
+| `ls` | — | Show all config values. |
+| `get <key>` | key | Print the value of a single config key. Accepts any key (not just editable ones). |
+| `set <key> <value>` | key value | Set an editable config value. Writes to tui.toml immediately. Applies on next TUI launch. |
+| `unset <key>` | key | Reset an editable config key to its dataclass default. |
+
+**Editable keys:** `auto_refresh_seconds` (positive integer), `active_workspace` (workspace id or name).
+
+`todo config set active_workspace <name>` is equivalent to `todo workspace use <name>` — both write `active_workspace` to `tui.toml`.
+
+```
+todo config ls
+todo config get auto_refresh_seconds
+todo config set auto_refresh_seconds 60
+todo config set active_workspace myproject
+todo config unset active_workspace
+```
+
+**Active workspace storage:** `active_workspace` is stored in `tui.toml`. A legacy `~/.local/share/sticky-notes/active-workspace` file is still read as a fallback for one release; writes no longer go there.
+
+---
+
 ## `todo tui [--db PATH]`
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
 
 **Keybindings** (selected): `w` focus tree, `b` focus board, `e` edit selected entity, `m` edit metadata on selected entity (task/workspace/project/group), `n` new resource, `s` switch workspace, `[`/`]` move task across statuses, `r` refresh, `ctrl+q` quit. The metadata editor is reached by pressing `m` on a focused kanban task card or any entity node in the workspace tree; it presents editable key/value rows with add/delete buttons and atomically bulk-replaces the entity's metadata blob on save via `service.replace_*_metadata`. Keys are normalized to lowercase before comparison so retyping a key's case is a no-op.
+
+Switching workspace via the left-panel tree is an in-session focus change only; it does not modify the active workspace persisted on disk. Use `todo workspace use` or `todo config set active_workspace` to change the terminal default.
 
 ---
 
@@ -520,5 +549,8 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `info` | `{"db": {"path": str, "exists": bool}, "wal": {...}, "shm": {...}, "active_workspace": {...}}` |
 | `task meta ls`, `workspace meta ls`, `project meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
 | `task meta get/set/del`, `workspace meta get/set/del`, `project meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
+| `config ls` | full TuiConfig dict: `{theme, show_task_descriptions, show_archived, confirm_archive, default_priority, auto_refresh_seconds, active_workspace, status_order}` |
+| `config get` | `{"key": str, "value": any}` |
+| `config set`, `config unset` | `{"key": str, "value": any}` — value after write |
 
 > **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}`) for full workspace snapshot.

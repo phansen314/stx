@@ -4,6 +4,8 @@ stdout."""
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
 from .models import Project, Status, Tag, Task, TaskHistory, Workspace
 from .service_models import (
@@ -321,4 +323,11 @@ def format_task_move_preview(preview: TaskMovePreview) -> str:
         lines.append(
             f"  project: {_fmt_diff_value(preview.from_project)} -> {_fmt_diff_value(preview.to_project)}"
         )
+    return "\n".join(lines)
+
+
+def format_config(config: object) -> str:
+    lines = ["config:"]
+    for f in fields(config):  # type: ignore[arg-type]
+        lines.append(f"  {f.name}: {getattr(config, f.name)!r}")
     return "\n".join(lines)

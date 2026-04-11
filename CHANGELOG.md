@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-04-11
+
 ### Added
+
+- **`todo config` command group.** `ls`, `get`, `set`, `unset` subcommands for managing TUI config. Editable fields: `auto_refresh_seconds` (positive integer) and `active_workspace` (workspace id or name). `todo config set active_workspace <name>` is equivalent to `todo workspace use <name>`. All fields are readable via `ls`/`get`; read is not restricted to the editable allowlist.
+
+- **Active workspace migrated into `tui.toml`.** `active_workspace` is now stored as a field in `~/.config/sticky-notes/tui.toml` instead of a separate `~/.local/share/sticky-notes/active-workspace` file. The legacy file is still read as a fallback for one release; writes no longer go there.
+
+- **TUI settings modal (`c` key).** Press `c` in the TUI to open an in-session settings editor for `theme` and `auto_refresh_seconds`. Changes apply live — theme swaps immediately, refresh timer is replaced without restart. Values are persisted to `tui.toml`. Also fixes a bug where the `theme` field in `tui.toml` was loaded but never actually applied to Textual's theme on startup.
+
+- **TUI: kanban status columns are now focusable widgets.** Click a column or press up-arrow from the topmost task card to focus the column. Left/right arrows cycle focus between columns (wrapping); shift+left/right reorder the focused column (no wrap at edges). Column focus is indicated by a round green border, consistent with task card focus. Column order persists to `~/.config/sticky-notes/tui.toml` `status_order`.
 
 - **TTY-aware output format.** CLI auto-detects whether stdout is a terminal: emits pretty text at a terminal, JSON when piped or redirected. Add `--json` to force JSON, `--text` to force text. Both flags are mutually exclusive. Archive commands now key off `sys.stdin.isatty()` for prompt gating — agents piping without `--force` receive an explicit error rather than silently auto-confirming.
 - **`--text` global flag** — forces text output even when stdout is piped. Complements the existing `--json`.
@@ -16,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`workspace show [name]`** accepts an optional workspace name positional, matching `workspace archive`. Defaults to active workspace / `-w`.
 
 ### Changed
+
+- **TUI: up-arrow from the top card no longer wraps to the bottom card** — it focuses the containing status column. Down-arrow from the bottom card is now a no-op (previously wrapped to top).
+
+### Fixed
+
+- **TUI: focus blip when moving a task across statuses** (`shift+left/right` on a focused task card). Focus briefly jumped to the containing `KanbanColumn` before snapping back to the card in its new column, causing a visible highlight flash. `_sync_cards` now pre-clears focus before removing the focused card so Textual has nothing to auto-relocate to.
+- **TUI: workspace switch reverted kanban columns to alphabetical order.** `on_workspace_tree_workspace_changed` called `tree.load()` after switching, which re-posted a `WorkspaceChanged` for the first workspace in insertion order; the re-entrant handler clobbered the kanban with the wrong workspace's model (no `status_order` applied). The redundant `tree.load()` is gone — the user's own tree navigation already leaves the tree in the correct state.
 
 - **`task ls --json`** returns `[{"status": {...}, "tasks": [...]}]` — a flat array of per-status buckets, each containing a full Status object and a `tasks` array of TaskListItem objects. Text output is unchanged. Use `workspace show` for the richer kanban context view (projects, tags, groups). Breaking from the prior `{workspace, statuses}` nested shape.
 - **`group assign` and `group unassign` `--json` now return full TaskDetail** instead of `{task, group_id}` wrapper. Hydrated `group` object includes `title`. Breaking.
@@ -56,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`project edit --name/-n`** removed; use the new `project rename` instead. `project edit` now only handles description changes.
 - **Dropped `-P` / `-s` short flags** from `task create` / `task ls` / `task edit`. They case-collided with `-p` (project) and `-S` (status), making shift-key typos silently do the wrong thing. Long forms `--priority` and `--search` remain. Breaking for any script relying on the shorts.
 
-[Unreleased]: https://github.com/phansen314/sticky-notes/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/phansen314/sticky-notes/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/phansen314/sticky-notes/releases/tag/v0.8.0
 [0.7.0]: https://github.com/phansen314/sticky-notes/releases/tag/v0.7.0
 
 ## [0.6.0] — 2026-04-10

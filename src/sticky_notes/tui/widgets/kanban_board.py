@@ -15,6 +15,37 @@ class _KanbanScrollable(ScrollableContainer):
     can_focus = False
 
 
+class KanbanColumn(Vertical):
+    can_focus = True
+
+    def __init__(self, status_id: int, *children, **kwargs) -> None:
+        self.status_id = status_id
+        super().__init__(*children, **kwargs)
+
+    def on_click(self) -> None:
+        self.focus()
+
+    def key_left(self, event: events.Key) -> None:
+        if not self.has_focus:
+            return
+        if self.parent._focus_neighbor_column(self, -1):
+            event.stop()
+
+    def key_right(self, event: events.Key) -> None:
+        if not self.has_focus:
+            return
+        if self.parent._focus_neighbor_column(self, 1):
+            event.stop()
+
+    def key_down(self, event: events.Key) -> None:
+        if not self.has_focus:
+            return
+        cards = list(self.query(TaskCard))
+        if cards:
+            self.screen.set_focus(cards[0])
+            event.stop()
+
+
 class KanbanBoard(Horizontal):
     _grid: list[list[TaskCard]] | None = None
     _status_names: dict[int, str] = {}
@@ -34,10 +65,11 @@ class KanbanBoard(Horizontal):
             self.new_status_id = new_status_id
             super().__init__()
 
-    def _build_column(self, status: Status, tasks: list[Task]) -> Vertical:
+    def _build_column(self, status: Status, tasks: list[Task]) -> KanbanColumn:
         title = f"({len(tasks)}) {escape_markup(status.name)}"
         cards = [TaskCard(t, classes="task-card") for t in tasks]
-        return Vertical(
+        return KanbanColumn(
+            status.id,
             Label(title, classes="status-col-title"),
             _KanbanScrollable(*cards),
             id=f"status-col-{status.id}",
@@ -86,6 +118,13 @@ class KanbanBoard(Horizontal):
                 await self._sync_cards(scrollable, bucket)
                 self._update_col_title(col, len(bucket))
 
+        # Reorder columns to match model.statuses order
+        col_map = {col.id: col for col in self.query(".status-col")}
+        for i, status in enumerate(model.statuses):
+            col = col_map.get(f"status-col-{status.id}")
+            if col is not None:
+                self.move_child(col, before=i)
+
         self._grid = None
 
     async def _sync_cards(self, scrollable: _KanbanScrollable, expected: list[Task]) -> None:
@@ -95,6 +134,8 @@ class KanbanBoard(Horizontal):
         # Remove cards no longer in this column
         for task_id, card in current_cards.items():
             if task_id not in expected_ids:
+                if card.has_focus:
+                    self.screen.set_focus(None)  # prevent auto-focus-to-parent blip
                 await card.remove()
 
         # Add new cards or update existing card data
@@ -158,10 +199,14 @@ class KanbanBoard(Horizontal):
             idx = (idx + col_delta) % len(non_empty)
             new_ci = non_empty[idx]
             new_ri = min(ri, len(grid[new_ci]) - 1)
-        # Row movement: wrap within column
+        # Row movement: clamp (no wrap); up-from-top focuses the column
         else:
             new_ci = ci
-            new_ri = (ri + row_delta) % len(grid[ci])
+            if row_delta == -1 and ri == 0:
+                col = self.query_one(f"#status-col-{focused.task_data.status_id}", KanbanColumn)
+                self.screen.set_focus(col)
+                return True
+            new_ri = max(0, min(ri + row_delta, len(grid[ci]) - 1))
         self.screen.set_focus(grid[new_ci][new_ri])
         return True
 
@@ -215,5 +260,14 @@ class KanbanBoard(Horizontal):
             return False
         status_id = int(cols[new_ci].id.removeprefix("status-col-"))
         self.post_message(self.TaskStatusMove(focused.task_data, status_id))
+        return True
+
+    def _focus_neighbor_column(self, col: KanbanColumn, delta: int) -> bool:
+        cols = list(self.query(".status-col"))
+        ci = next((i for i, c in enumerate(cols) if c is col), None)
+        if ci is None:
+            return False
+        new_ci = (ci + delta) % len(cols)
+        self.screen.set_focus(cols[new_ci])
         return True
 
