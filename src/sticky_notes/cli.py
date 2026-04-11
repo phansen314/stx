@@ -1187,11 +1187,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_wsh = workspace_sub.add_parser("show", help="workspace snapshot: statuses, tasks, projects, tags, groups")
     p_wsh.set_defaults(command="workspace_show")
-    p_wsh.add_argument("name", nargs="?", default=None, help="workspace name (default: active workspace or -w)")
+    p_wsh.add_argument("name", nargs="?", default=None, help="workspace name (default: active workspace)")
 
     p_warc = workspace_sub.add_parser("archive", help="cascade-archive workspace and all descendants")
     p_warc.set_defaults(command="workspace_archive")
-    p_warc.add_argument("name", nargs="?", default=None, help="workspace name (defaults to active)")
+    p_warc.add_argument("name", nargs="?", default=None, help="workspace name (default: active workspace)")
     p_warc.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_warc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
