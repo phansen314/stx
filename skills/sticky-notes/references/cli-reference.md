@@ -175,12 +175,12 @@ Markdown export (`todo export --md`) renders metadata under dedicated sections: 
 
 | Command | Args | Description |
 |---|---|---|
-| `task meta ls` | `task_num` | List all metadata entries; empty → `"no metadata"` |
-| `task meta get` | `task_num key` | Get the value for a key |
-| `task meta set` | `task_num key value` | Set (create or overwrite) a key's value |
-| `task meta del` | `task_num key` | Remove a key |
+| `task meta ls` | `task` | List all metadata entries; empty → `"no metadata"` |
+| `task meta get` | `task key` | Get the value for a key |
+| `task meta set` | `task key value` | Set (create or overwrite) a key's value |
+| `task meta del` | `task key` | Remove a key |
 
-`task_num` accepts numeric IDs or title strings — resolution is automatic. Metadata is also shown by `todo task show`. Cross-workspace `todo task transfer` copies task metadata verbatim to the new task.
+`task` accepts numeric IDs or title strings — resolution is automatic. Metadata is also shown by `todo task show`. Cross-workspace `todo task transfer` copies task metadata verbatim to the new task.
 
 ```sh
 todo task meta set task-0001 branch feat/kv
