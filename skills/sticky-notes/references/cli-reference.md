@@ -342,10 +342,10 @@ todo status archive "Old Status" --force
 
 Flags are explicit about direction: `--task X --blocked-by Y` means **X is blocked by Y**. No `dep ls` — use `todo task show <task>` to see `blocked_by` and `blocks` arrays.
 
-| Command | Flags | Description |
-|---|---|---|
-| `dep create` | `--task TASK --blocked-by TASK` (both required) | Add dependency |
-| `dep archive` | `--task TASK --blocked-by TASK` (both required) | Archive dependency (soft-delete) |
+| Command | Args | Flags | Description |
+|---|---|---|---|
+| `dep create` | — | `--task TASK --blocked-by TASK` (both required) | Add dependency |
+| `dep archive` | — | `--task TASK --blocked-by TASK` (both required) | Archive dependency (soft-delete) |
 
 ```sh
 todo dep create --task task-0003 --blocked-by task-0001   # task-0003 is blocked by task-0001
