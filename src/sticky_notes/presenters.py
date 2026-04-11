@@ -268,12 +268,14 @@ def _fmt_diff_value(value: object) -> str:
 
 def format_entity_update_preview(preview: EntityUpdatePreview) -> str:
     if preview.entity_type == "task":
-        header_id = format_task_num(preview.entity_id)
+        header = f"{format_task_num(preview.entity_id)} ({preview.label})"
     elif preview.entity_type == "group":
-        header_id = format_group_num(preview.entity_id)
+        header = f"{format_group_num(preview.entity_id)} ({preview.label})"
     else:
-        header_id = f"{preview.entity_type}-{preview.entity_id}"
-    lines = [f"dry-run: would update {header_id} ({preview.label})"]
+        # Projects don't have a numeric handle — names are unique within
+        # a workspace, so the label alone is the canonical identifier.
+        header = f"project '{preview.label}'"
+    lines = [f"dry-run: would update {header}"]
     has_body = False
     for key in preview.after:
         before = preview.before.get(key)

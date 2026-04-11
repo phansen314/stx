@@ -1781,6 +1781,7 @@ class TestEditDryRun:
     def test_project_edit_dry_run(self):
         out, _ = self.cli("project", "edit", "alpha", "--desc", "new description", "--dry-run")
         assert "dry-run" in out
+        assert "project 'alpha'" in out
         assert "description" in out
 
     def test_group_edit_dry_run(self):
