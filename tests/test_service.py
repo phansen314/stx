@@ -640,6 +640,26 @@ class TestTaskService:
         with pytest.raises(AttributeError):
             service._diff_fields(task, {"nonexistent_field": "x"})
 
+    def test_diff_fields_with_resolver(self, conn: sqlite3.Connection) -> None:
+        """_diff_fields resolvers map raw field values to display values
+        for both before and after. Verify the resolver is applied to both
+        sides and non-resolved keys pass through unchanged.
+        """
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        task = service.create_task(conn, bid, "t", cid, priority=2)
+        before, after = service._diff_fields(
+            task,
+            {"priority": 5, "status_id": 999},
+            resolvers={"status_id": lambda sid: f"status-{sid}"},
+        )
+        # priority has no resolver → raw values
+        assert before["priority"] == 2
+        assert after["priority"] == 5
+        # status_id uses resolver on both sides
+        assert before["status_id"] == f"status-{cid}"
+        assert after["status_id"] == "status-999"
+
     def test_preview_update_task_after_matches_real_update(self, conn: sqlite3.Connection) -> None:
         """Drift guard: preview's `after` dict must equal the actual field
         values written by update_task for the same changes.

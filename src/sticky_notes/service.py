@@ -1784,27 +1784,21 @@ def preview_update_group(
     changes: dict[str, Any],
 ) -> EntityUpdatePreview:
     """Compute a diff for `update_group` without writing. For `parent_id`
-    changes, the before/after values are parent group titles (or None).
+    changes, the diff renders parent group titles (or None) via a
+    resolver rather than exposing raw ids.
     """
     old = get_group(conn, group_id)
     if "parent_id" in changes:
         new_parent_id = changes["parent_id"]
         if new_parent_id is not None and _would_create_cycle(conn, group_id, new_parent_id):
             raise ValueError("reparenting would create a cycle")
-        before_parent = (
-            get_group(conn, old.parent_id).title if old.parent_id is not None else None
-        )
-        after_parent = (
-            get_group(conn, new_parent_id).title if new_parent_id is not None else None
-        )
-        # Rewrite so _diff_fields reports titles, not raw IDs.
-        changes_for_diff = {k: v for k, v in changes.items() if k != "parent_id"}
-        before, after = _diff_fields(old, changes_for_diff)
-        if before_parent != after_parent:
-            before["parent"] = before_parent
-            after["parent"] = after_parent
-    else:
-        before, after = _diff_fields(old, changes)
+
+    def _resolve_parent(pid: int | None) -> str | None:
+        if pid is None:
+            return None
+        return get_group(conn, pid).title
+
+    before, after = _diff_fields(old, changes, resolvers={"parent_id": _resolve_parent})
     return EntityUpdatePreview(
         entity_type="group",
         entity_id=group_id,
@@ -1814,21 +1808,37 @@ def preview_update_group(
     )
 
 
-def _diff_fields(entity: Any, changes: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _diff_fields(
+    entity: Any,
+    changes: dict[str, Any],
+    *,
+    resolvers: dict[str, Callable[[Any], Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (before, after) dicts containing only fields in `changes`
     whose new value differs from the entity's current value.
 
     Raises AttributeError if a key in `changes` doesn't exist on the
     entity — surfaces caller typos loudly instead of silently producing
     a bogus None-valued diff entry.
+
+    `resolvers` is an optional per-key mapping of callables applied to
+    both the before and after values before inclusion in the result.
+    Use for relational fields that store raw ids internally but should
+    render as display names in the diff (e.g. parent_id → parent title).
     """
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
+    resolvers = resolvers or {}
     for key, new_value in changes.items():
         current = getattr(entity, key)
         if current != new_value:
-            before[key] = current
-            after[key] = new_value
+            resolver = resolvers.get(key)
+            if resolver is not None:
+                before[key] = resolver(current)
+                after[key] = resolver(new_value)
+            else:
+                before[key] = current
+                after[key] = new_value
     return before, after
 
 
