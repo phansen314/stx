@@ -40,10 +40,8 @@ from .service_models import (
     EntityUpdatePreview,
     GroupDetail,
     GroupRef,
-    GroupTreeNode,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
     TaskListItem,
     TaskMovePreview,
@@ -1405,8 +1403,12 @@ def list_groups(
     project_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[GroupRef, ...]:
-    groups = repo.list_groups(conn, project_id, include_archived=include_archived)
+    groups = repo.list_groups(
+        conn, project_id,
+        include_archived=include_archived, only_archived=only_archived,
+    )
     if not groups:
         return ()
     group_ids = tuple(g.id for g in groups)
@@ -1417,33 +1419,6 @@ def list_groups(
     return tuple(
         group_to_ref(g, task_ids=task_ids_map.get(g.id, ()), child_ids=child_ids_map.get(g.id, ()))
         for g in groups
-    )
-
-
-def build_group_tree(
-    conn: sqlite3.Connection,
-    project_id: int,
-    *,
-    include_archived: bool = False,
-) -> ProjectGroupTree:
-    """Assemble the group hierarchy for a project as a tree of GroupTreeNodes."""
-    refs = list_groups(conn, project_id, include_archived=include_archived)
-    children_map: dict[int | None, list[GroupRef]] = {}
-    for ref in refs:
-        children_map.setdefault(ref.parent_id, []).append(ref)
-
-    def _build(ref: GroupRef) -> GroupTreeNode:
-        return GroupTreeNode(
-            group=ref,
-            children=tuple(_build(c) for c in children_map.get(ref.id, [])),
-        )
-
-    roots = tuple(_build(r) for r in children_map.get(None, []))
-    ungrouped_count = len(repo.list_ungrouped_task_ids(conn, project_id))
-    return ProjectGroupTree(
-        project_id=project_id,
-        roots=roots,
-        ungrouped_task_count=ungrouped_count,
     )
 
 

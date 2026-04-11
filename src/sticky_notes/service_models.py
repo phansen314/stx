@@ -194,14 +194,3 @@ class TaskMovePreview:
     project_changed: bool
 
 
-@dataclass(frozen=True)
-class GroupTreeNode:
-    group: GroupRef
-    children: tuple["GroupTreeNode", ...]
-
-
-@dataclass(frozen=True)
-class ProjectGroupTree:
-    project_id: int
-    roots: tuple[GroupTreeNode, ...]
-    ungrouped_task_count: int

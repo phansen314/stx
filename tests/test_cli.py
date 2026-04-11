@@ -801,16 +801,6 @@ class TestGroupCLI:
         out, _ = self.cli("group", "ls", "--project", "sprint1")
         assert "no groups" in out
 
-    def test_list_groups_tree(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "ls", "--project", "sprint1", "--tree")
-        assert "Frontend" in out
-        assert "Components" in out
-        assert "task-0001" in out
-
     def test_show_group(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
@@ -1870,7 +1860,7 @@ class TestArchiveCascade:
         assert "top" not in out2
         assert "child" not in out2
         # But visible with --all
-        out3, _ = self.cli("group", "ls", "--project", "proj", "--all")
+        out3, _ = self.cli("group", "ls", "--project", "proj", "--archived", "include")
         assert "top" in out3
         assert "child" in out3
 
@@ -2165,11 +2155,6 @@ class TestEndToEndSmoke:
         assert "api" in out
         assert "endpoints" in out
         assert "db" in out
-
-        out, _ = self.cli("group", "ls", "--project", "backend", "--tree")
-        # Tree output indents children under parents
-        assert "api" in out
-        assert "endpoints" in out
 
         out, _ = self.cli("tag", "ls")
         assert "bug" in out

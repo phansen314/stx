@@ -545,29 +545,21 @@ def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Pa
         projects = service.list_projects(conn, workspace.id)
     if not projects:
         return Ok(data=[], text=presenters.format_group_list(()))
-    if args.tree:
-        sections: list = []
-        for proj in projects:
-            tree = service.build_group_tree(conn, proj.id, include_archived=args.all)
-            task_ids = _collect_tree_task_ids(tree)
-            tasks = service.list_tasks_by_ids(conn, task_ids)
-            sections.append((proj, tree, {t.id: t for t in tasks}))
-        payload = [tree for _, tree, _ in sections]
-        return Ok(data=payload, text=presenters.format_group_trees(tuple(sections)))
+    include_archived = args.archived in ("include", "only")
+    only_archived = args.archived == "only"
     refs_sections = tuple(
-        (proj, service.list_groups(conn, proj.id, include_archived=args.all))
+        (
+            proj,
+            service.list_groups(
+                conn, proj.id,
+                include_archived=include_archived,
+                only_archived=only_archived,
+            ),
+        )
         for proj in projects
     )
     all_refs = [r for _, refs in refs_sections for r in refs]
     return Ok(data=all_refs, text=presenters.format_group_list(refs_sections))
-
-
-def _collect_tree_task_ids(tree) -> tuple[int, ...]:
-    def _iter(nodes):
-        for n in nodes:
-            yield from n.group.task_ids
-            yield from _iter(n.children)
-    return tuple(_iter(tree.roots))
 
 
 def cmd_group_show(conn: sqlite3.Connection, args: argparse.Namespace, db_path: Path) -> CmdResult:
@@ -1284,8 +1276,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gl = grp_sub.add_parser("ls", help="list groups")
     p_gl.set_defaults(command="group_ls")
     p_gl.add_argument("--project", "-p", default=None, help="filter by project name (optional; lists all projects when omitted)")
-    p_gl.add_argument("--all", "-a", action="store_true", help="include archived")
-    p_gl.add_argument("--tree", action="store_true", help="tree view")
+    p_gl.add_argument("--archived", choices=["hide", "include", "only"], default="hide", help="archived visibility: hide (default), include, or only")
 
     p_gs = grp_sub.add_parser("show", help="show group detail")
     p_gs.set_defaults(command="group_show")

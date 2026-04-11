@@ -1243,48 +1243,6 @@ class TestGroupService:
         assert len(refs) == 2
         assert all(isinstance(r, GroupRef) for r in refs)
 
-    def test_build_tree_flat(self, conn: sqlite3.Connection) -> None:
-        _, _, pid = self._setup(conn)
-        g1 = service.create_group(conn, pid, "a")
-        g2 = service.create_group(conn, pid, "b")
-        tree = service.build_group_tree(conn, pid)
-        assert tree.project_id == pid
-        assert len(tree.roots) == 2
-        assert {r.group.id for r in tree.roots} == {g1.id, g2.id}
-        assert all(r.children == () for r in tree.roots)
-        assert tree.ungrouped_task_count == 0
-
-    def test_build_tree_nested(self, conn: sqlite3.Connection) -> None:
-        _, _, pid = self._setup(conn)
-        root = service.create_group(conn, pid, "root")
-        mid = service.create_group(conn, pid, "mid", parent_id=root.id)
-        leaf = service.create_group(conn, pid, "leaf", parent_id=mid.id)
-        tree = service.build_group_tree(conn, pid)
-        assert len(tree.roots) == 1
-        assert tree.roots[0].group.id == root.id
-        assert len(tree.roots[0].children) == 1
-        assert tree.roots[0].children[0].group.id == mid.id
-        assert tree.roots[0].children[0].children[0].group.id == leaf.id
-
-    def test_build_tree_with_ungrouped_count(self, conn: sqlite3.Connection) -> None:
-        bid, cid, pid = self._setup(conn)
-        grp = service.create_group(conn, pid, "g")
-        t1 = insert_task(conn, bid, "t1", cid, project_id=pid)
-        insert_task(conn, bid, "t2", cid, project_id=pid)
-        service.assign_task_to_group(conn, t1, grp.id, source="test")
-        tree = service.build_group_tree(conn, pid)
-        assert tree.ungrouped_task_count == 1
-
-    def test_build_tree_archived_filter(self, conn: sqlite3.Connection) -> None:
-        _, _, pid = self._setup(conn)
-        service.create_group(conn, pid, "live")
-        arch = service.create_group(conn, pid, "arch")
-        service.cascade_archive_group(conn, arch.id, source="test")
-        tree_default = service.build_group_tree(conn, pid)
-        assert len(tree_default.roots) == 1
-        tree_all = service.build_group_tree(conn, pid, include_archived=True)
-        assert len(tree_all.roots) == 2
-
     def test_update_group(self, conn: sqlite3.Connection) -> None:
         _, _, pid = self._setup(conn)
         grp = service.create_group(conn, pid, "old")

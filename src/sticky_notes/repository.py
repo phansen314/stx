@@ -945,8 +945,14 @@ def list_groups(
     project_id: int,
     *,
     include_archived: bool = False,
+    only_archived: bool = False,
 ) -> tuple[Group, ...]:
-    archive_clause = "" if include_archived else " AND archived = 0"
+    if only_archived:
+        archive_clause = " AND archived = 1"
+    elif include_archived:
+        archive_clause = ""
+    else:
+        archive_clause = " AND archived = 0"
     rows = conn.execute(
         f"SELECT * FROM groups WHERE project_id = ?{archive_clause} ORDER BY position, id",
         (project_id,),

@@ -383,7 +383,7 @@ Groups are project-scoped hierarchical collections of tasks. All group commands 
 | Command | Args | Flags | Description |
 |---|---|---|---|
 | `group create` | `title` | `--project/-p` (**required**), `--parent TITLE`, `--desc/-d` | Create group; optionally nested under parent |
-| `group ls` | — | `--project/-p`, `--all/-a`, `--tree` | List (flat or tree view) |
+| `group ls` | — | `--project/-p`, `--archived {hide,include,only}` (default `hide`) | List groups (flat) |
 | `group show` | `title` | `--project/-p` | Show detail with ancestry |
 | `group rename` | `title new_title` | `--project/-p`, `--dry-run` | Rename; `--dry-run` previews the diff |
 | `group edit` | `title` | `--desc/-d`, `--project/-p`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
@@ -398,7 +398,7 @@ Groups are project-scoped hierarchical collections of tasks. All group commands 
 todo group create "Backend" --project "API rewrite" --desc "Core API services"
 todo group create "Auth" --project "API rewrite" --parent "Backend"
 todo group assign task-0005 "Auth" --project "API rewrite"
-todo group ls --project "API rewrite" --tree
+todo group ls --project "API rewrite"
 todo group mv "Auth" --parent "Frontend" --project "API rewrite"
 todo group mv "Backend" --to-top --project "API rewrite"  # promote to top-level
 todo group dep create "Sprint 2" "Sprint 1"   # Sprint 2 blocked by Sprint 1

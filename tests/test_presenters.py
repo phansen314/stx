@@ -18,10 +18,8 @@ from sticky_notes.service_models import (
     WorkspaceListView,
     GroupDetail,
     GroupRef,
-    GroupTreeNode,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
     TaskListItem,
 )
@@ -386,58 +384,6 @@ class TestFormatGroupList:
         sections = ((_project(1, "P"), (self._ref(1, "G", archived=True),)),)
         out = presenters.format_group_list(sections)
         assert "(archived)" in out
-
-
-# ---- format_group_trees ----
-
-
-class TestFormatGroupTrees:
-    def _node(self, id: int, title: str, children=()) -> GroupTreeNode:
-        ref = GroupRef(
-            id=id, workspace_id=1, project_id=1, title=title, description=None, parent_id=None, position=0,
-            archived=False, created_at=0, metadata={}, task_ids=(), child_ids=(),
-        )
-        return GroupTreeNode(group=ref, children=children)
-
-    def test_empty(self):
-        assert presenters.format_group_trees(()) == "no projects"
-
-    def test_single_root(self):
-        tree = ProjectGroupTree(project_id=1, roots=(self._node(1, "Root"),), ungrouped_task_count=0)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "group-0001" in out
-        assert "Root" in out
-
-    def test_nested(self):
-        # Tree rendering preserves existing behavior: top-level children
-        # render without connectors/indentation (prefix="" stays "").
-        grandchild = self._node(3, "GrandChild")
-        child = self._node(2, "Child", children=(grandchild,))
-        root = self._node(1, "Root", children=(child,))
-        tree = ProjectGroupTree(project_id=1, roots=(root,), ungrouped_task_count=0)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "group-0001  Root" in out
-        assert "group-0002  Child" in out
-        assert "group-0003  GrandChild" in out
-
-    def test_ungrouped_count_shown(self):
-        tree = ProjectGroupTree(project_id=1, roots=(self._node(1, "R"),), ungrouped_task_count=3)
-        sections = ((_project(1, "P"), tree, {}),)
-        out = presenters.format_group_trees(sections)
-        assert "3 ungrouped tasks" in out
-
-    def test_multi_project_headers(self):
-        t1 = ProjectGroupTree(project_id=1, roots=(self._node(1, "R1"),), ungrouped_task_count=0)
-        t2 = ProjectGroupTree(project_id=2, roots=(self._node(2, "R2"),), ungrouped_task_count=0)
-        sections = (
-            (_project(1, "P1"), t1, {}),
-            (_project(2, "P2"), t2, {}),
-        )
-        out = presenters.format_group_trees(sections)
-        assert "== P1 ==" in out
-        assert "== P2 ==" in out
 
 
 # ---- format_group_detail ----

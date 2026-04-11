@@ -1167,6 +1167,15 @@ class TestGroupRepository:
         assert len(list_groups(conn, proj.id)) == 1
         assert len(list_groups(conn, proj.id, include_archived=True)) == 2
 
+    def test_list_groups_only_archived(self, conn: sqlite3.Connection) -> None:
+        _, proj = self._setup(conn)
+        insert_group(conn, NewGroup(workspace_id=proj.workspace_id, project_id=proj.id, title="active"))
+        g2 = insert_group(conn, NewGroup(workspace_id=proj.workspace_id, project_id=proj.id, title="gone"))
+        update_group(conn, g2.id, {"archived": True})
+        groups = list_groups(conn, proj.id, only_archived=True)
+        assert len(groups) == 1
+        assert groups[0].title == "gone"
+
     def test_list_groups_ordered_by_position(self, conn: sqlite3.Connection) -> None:
         _, proj = self._setup(conn)
         g1 = insert_group(conn, NewGroup(workspace_id=proj.workspace_id, project_id=proj.id, title="second", position=1))

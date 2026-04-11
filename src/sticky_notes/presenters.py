@@ -13,7 +13,6 @@ from .service_models import (
     GroupRef,
     MoveToWorkspacePreview,
     ProjectDetail,
-    ProjectGroupTree,
     TaskDetail,
     TaskMovePreview,
     WorkspaceContext,
@@ -180,52 +179,6 @@ def format_group_list(
                 f"({len(ref.task_ids)} tasks){archived}"
             )
     return "\n".join(lines)
-
-
-def format_group_trees(
-    sections: tuple[tuple[Project, ProjectGroupTree, dict[int, Task]], ...],
-) -> str:
-    if not sections:
-        return _empty("project")
-    show_headers = len(sections) > 1
-    lines: list[str] = []
-    for proj, tree, task_by_id in sections:
-        if not tree.roots and not tree.ungrouped_task_count:
-            continue
-        if show_headers:
-            lines.append(f"\n== {proj.name} ==")
-        lines.extend(_format_group_tree_lines(tree, task_by_id))
-    if not lines and len(sections) == 1:
-        return _empty("group")
-    return "\n".join(lines)
-
-
-def _format_group_tree_lines(
-    tree: ProjectGroupTree,
-    task_by_id: dict[int, Task],
-) -> list[str]:
-    lines: list[str] = []
-
-    def _format_subtree(node, prefix: str, is_last: bool) -> None:
-        ref = node.group
-        connector = "+-- " if prefix else ""
-        archived = " (archived)" if ref.archived else ""
-        lines.append(f"{prefix}{connector}{format_group_num(ref.id)}  {ref.title}{archived}")
-        child_prefix = prefix + ("|   " if not is_last and prefix else "    ") if prefix else ""
-        for tid in ref.task_ids:
-            task = task_by_id.get(tid)
-            if task is None:
-                continue
-            lines.append(f"{child_prefix}+-- {format_task_num(task.id)}: {task.title}")
-        for i, child in enumerate(node.children):
-            _format_subtree(child, child_prefix, i == len(node.children) - 1)
-
-    for i, root in enumerate(tree.roots):
-        _format_subtree(root, "", i == len(tree.roots) - 1)
-
-    if tree.ungrouped_task_count:
-        lines.append(f"\n({tree.ungrouped_task_count} ungrouped tasks)")
-    return lines
 
 
 def format_group_detail(
