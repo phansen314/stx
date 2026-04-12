@@ -5,13 +5,13 @@ from __future__ import annotations
 from helpers import ModalTestApp
 from textual.widgets import Input, Static, TextArea
 
-from sticky_notes.models import Workspace
-from sticky_notes.service_models import GroupDetail, ProjectDetail
-from sticky_notes.tui.screens.group_edit import GroupEditModal
-from sticky_notes.tui.screens.project_create import ProjectCreateModal
-from sticky_notes.tui.screens.project_edit import ProjectEditModal
-from sticky_notes.tui.screens.workspace_create import WorkspaceCreateModal
-from sticky_notes.tui.screens.workspace_edit import WorkspaceEditModal
+from stx.models import Workspace
+from stx.service_models import GroupDetail, ProjectDetail
+from stx.tui.screens.group_edit import GroupEditModal
+from stx.tui.screens.project_create import ProjectCreateModal
+from stx.tui.screens.project_edit import ProjectEditModal
+from stx.tui.screens.workspace_create import WorkspaceCreateModal
+from stx.tui.screens.workspace_edit import WorkspaceEditModal
 
 # ---- Factories ----
 

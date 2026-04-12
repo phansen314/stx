@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.app import App, ComposeResult
 from textual.widgets import ContentSwitcher, TextArea
 
-from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
+from stx.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class EditorTestApp(App):

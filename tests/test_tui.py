@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Input
 
-from sticky_notes import service
-from sticky_notes.active_workspace import set_active_workspace_id
-from sticky_notes.connection import get_connection, init_db
-from sticky_notes.models import Group, Project, Task, Workspace
-from sticky_notes.tui.app import StickyNotesApp
-from sticky_notes.tui.config import TuiConfig
-from sticky_notes.tui.screens import (
+from stx import service
+from stx.active_workspace import set_active_workspace_id
+from stx.connection import get_connection, init_db
+from stx.models import Group, Project, Task, Workspace
+from stx.tui.app import StxApp
+from stx.tui.config import TuiConfig
+from stx.tui.screens import (
     MetadataModal,
     NewResourceModal,
     ProjectCreateModal,
@@ -17,17 +17,17 @@ from sticky_notes.tui.screens import (
     TaskCreateModal,
     WorkspaceCreateModal,
 )
-from sticky_notes.tui.screens.project_edit import ProjectEditModal
-from sticky_notes.tui.screens.task_edit import TaskEditModal
-from sticky_notes.tui.screens.workspace_edit import WorkspaceEditModal
-from sticky_notes.tui.widgets import KanbanColumn, TaskCard
+from stx.tui.screens.project_edit import ProjectEditModal
+from stx.tui.screens.task_edit import TaskEditModal
+from stx.tui.screens.workspace_edit import WorkspaceEditModal
+from stx.tui.widgets import KanbanColumn, TaskCard
 
 
 class TestTreePopulation:
     @pytest.fixture
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        return StickyNotesApp(db_path=db_path, config=TuiConfig())
+        return StxApp(db_path=db_path, config=TuiConfig())
 
     async def test_root_label_is_workspaces(self, app):
         async with app.run_test():
@@ -84,7 +84,7 @@ class TestTreeReload:
     @pytest.fixture
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        return StickyNotesApp(db_path=db_path, config=TuiConfig())
+        return StxApp(db_path=db_path, config=TuiConfig())
 
     async def test_reload_is_idempotent(self, app, seeded_tui_db):
         db_path, ids = seeded_tui_db
@@ -105,7 +105,7 @@ class TestTreeNoWorkspaces:
         conn = get_connection(db_path)
         init_db(conn)
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             assert str(tree.root.label) == "No workspaces"
@@ -121,7 +121,7 @@ class TestTreeNoWorkspaces:
         set_active_workspace_id(db_path.parent / "tui.toml", good.id)
         conn.close()
 
-        from sticky_notes.tui import model as tui_model
+        from stx.tui import model as tui_model
 
         _real = tui_model.load_workspace_model
 
@@ -132,11 +132,11 @@ class TestTreeNoWorkspaces:
 
         monkeypatch.setattr(tui_model, "load_workspace_model", _failing_load)
         # Also patch the import in app.py
-        from sticky_notes.tui import app as tui_app
+        from stx.tui import app as tui_app
 
         monkeypatch.setattr(tui_app, "load_workspace_model", _failing_load)
 
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_nodes = list(tree.root.children)
@@ -165,7 +165,7 @@ class TestTreeWithGroups:
         return db_path
 
     async def test_group_nodes_before_ungrouped(self, grouped_tui_db):
-        app = StickyNotesApp(db_path=grouped_tui_db, config=TuiConfig())
+        app = StxApp(db_path=grouped_tui_db, config=TuiConfig())
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -178,7 +178,7 @@ class TestTreeWithGroups:
             assert isinstance(children[-1].data, Task)
 
     async def test_nested_groups(self, grouped_tui_db):
-        app = StickyNotesApp(db_path=grouped_tui_db, config=TuiConfig())
+        app = StxApp(db_path=grouped_tui_db, config=TuiConfig())
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -194,7 +194,7 @@ class TestTreeWithGroups:
             assert not task_leaves[0].allow_expand
 
     async def test_refresh_preserves_expanded_group(self, grouped_tui_db):
-        app = StickyNotesApp(db_path=grouped_tui_db, config=TuiConfig())
+        app = StxApp(db_path=grouped_tui_db, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -214,7 +214,7 @@ class TestTreeWithGroups:
             assert parent_node.is_expanded
 
     async def test_refresh_preserves_collapsed_project(self, grouped_tui_db):
-        app = StickyNotesApp(db_path=grouped_tui_db, config=TuiConfig())
+        app = StxApp(db_path=grouped_tui_db, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -238,7 +238,7 @@ class TestKanbanColumns:
     @pytest.fixture
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        return StickyNotesApp(db_path=db_path, config=TuiConfig()), ids
+        return StxApp(db_path=db_path, config=TuiConfig()), ids
 
     async def test_status_columns_rendered(self, app):
         app, ids = app
@@ -287,7 +287,7 @@ class TestKanbanColumns:
         conn = get_connection(db_path)
         init_db(conn)
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             cols = app.query(".status-col")
             assert len(cols) == 0
@@ -305,7 +305,7 @@ class TestStatusMove:
                 ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
             }
         )
-        return StickyNotesApp(db_path=db_path, config=config), ids
+        return StxApp(db_path=db_path, config=config), ids
 
     def _col_title(self, app, status_id: int) -> str:
         col = app.query_one(f"#status-col-{status_id}")
@@ -470,7 +470,7 @@ class TestMultiWorkspaceTree:
     @pytest.fixture
     def app(self, multi_workspace_tui_db):
         db_path, ids = multi_workspace_tui_db
-        return StickyNotesApp(db_path=db_path, config=TuiConfig()), ids
+        return StxApp(db_path=db_path, config=TuiConfig()), ids
 
     async def test_root_has_two_workspace_children(self, app):
         app, ids = app
@@ -545,7 +545,7 @@ class TestRefreshWorkspaceReconciliation:
 
     async def test_refresh_picks_up_new_workspace(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             assert len(tree.root.children) == 1
@@ -565,7 +565,7 @@ class TestRefreshWorkspaceReconciliation:
         ws2 = service.create_workspace(conn, "Second")
         service.create_status(conn, ws2.id, "Todo")
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             assert len(tree.root.children) == 2
@@ -586,7 +586,7 @@ class TestRefreshWorkspaceReconciliation:
         ws2 = service.create_workspace(conn, "Second")
         service.create_status(conn, ws2.id, "Todo")
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             # Make ws2 active
             app._active_workspace_id = ws2.id
@@ -603,7 +603,7 @@ class TestMetadataKeybinding:
     @pytest.fixture
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        return StickyNotesApp(db_path=db_path, config=TuiConfig()), ids
+        return StxApp(db_path=db_path, config=TuiConfig()), ids
 
     async def test_m_on_task_card_opens_metadata_modal(self, app):
         app, ids = app
@@ -798,7 +798,7 @@ class TestColumnFocus:
                 ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
             }
         )
-        return StickyNotesApp(db_path=db_path, config=config), ids
+        return StxApp(db_path=db_path, config=config), ids
 
     def _col_title(self, app, status_id: int) -> str:
         col = app.query_one(f"#status-col-{status_id}")
@@ -912,7 +912,7 @@ class TestColumnFocus:
                 ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
             }
         )
-        app = StickyNotesApp(db_path=db_path, config=config)
+        app = StxApp(db_path=db_path, config=config)
         async with app.run_test() as pilot:
             ip_id = sids["in_progress"]
             col = app.query_one(f"#status-col-{ip_id}", KanbanColumn)
@@ -978,7 +978,7 @@ class TestColumnFocus:
                 ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
             }
         )
-        app = StickyNotesApp(db_path=db_path, config=config, config_path=toml_path)
+        app = StxApp(db_path=db_path, config=config, config_path=toml_path)
         async with app.run_test() as pilot:
             sids = ids["status_ids"]
             ws_id = ids["workspace_id"]
@@ -1002,7 +1002,7 @@ class TestColumnFocus:
         db_path, ids = seeded_tui_db
         toml_path = tmp_path / "tui.toml"
         # Start with empty status_order so _reorder_column must materialize all IDs
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+        app = StxApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
         sids = ids["status_ids"]
         ws_id = ids["workspace_id"]
         async with app.run_test() as pilot:
@@ -1028,7 +1028,7 @@ class TestColumnFocus:
         ws_id = ids["workspace_id"]
 
         # Session 1: reorder columns
-        app1 = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+        app1 = StxApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
         async with app1.run_test() as pilot:
             await pilot.pause()
             first_col = app1.query(KanbanColumn).first()
@@ -1040,7 +1040,7 @@ class TestColumnFocus:
             order_session1 = [s.id for s in app1._active_model.statuses]
 
         # Session 2: load config from file (production code path)
-        app2 = StickyNotesApp(db_path=db_path, config_path=toml_path)
+        app2 = StxApp(db_path=db_path, config_path=toml_path)
         async with app2.run_test() as pilot:
             await pilot.pause()
             order_session2 = [s.id for s in app2._active_model.statuses]
@@ -1086,7 +1086,7 @@ class TestActiveWorkspaceInvariant:
         self, multi_workspace_tui_db, tmp_path
     ):
         """Navigating to a different workspace in the tree must not update tui.toml."""
-        from sticky_notes.tui.config import load_config, save_config
+        from stx.tui.config import load_config, save_config
 
         db_path, ids = multi_workspace_tui_db
         ws1_id = ids["ws1"]["workspace_id"]
@@ -1098,7 +1098,7 @@ class TestActiveWorkspaceInvariant:
         save_config(initial_cfg, cfg_path)
         assert load_config(cfg_path).active_workspace == ws1_id
 
-        app = StickyNotesApp(db_path=db_path, config=initial_cfg, config_path=cfg_path)
+        app = StxApp(db_path=db_path, config=initial_cfg, config_path=cfg_path)
         async with app.run_test() as pilot:
             assert app._active_workspace_id == ws1_id
             # Navigate tree to workspace 2
@@ -1122,10 +1122,10 @@ class TestActiveWorkspaceInvariant:
         db_path, ids = multi_workspace_tui_db
 
         save_config_mock = MagicMock()
-        monkeypatch.setattr("sticky_notes.tui.app.save_config", save_config_mock)
+        monkeypatch.setattr("stx.tui.app.save_config", save_config_mock)
 
         cfg_path = tmp_path / "tui.toml"
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
+        app = StxApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
         async with app.run_test() as pilot:
             # Drive a workspace tree switch
             tree = app.query_one("#workspaces-tree")
@@ -1152,7 +1152,7 @@ class TestActiveWorkspaceInvariant:
         ws2_id = ids["ws2"]["workspace_id"]
 
         cfg_path = tmp_path / "tui.toml"
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
+        app = StxApp(db_path=db_path, config=TuiConfig(), config_path=cfg_path)
         async with app.run_test() as pilot:
             # Navigate tree to workspace 2
             tree = app.query_one("#workspaces-tree")
@@ -1185,11 +1185,11 @@ class TestConfigModal:
         db_path, ids = seeded_tui_db
         # Use a distinct name to avoid collision with seed_workspace's tui.toml write
         toml_path = tmp_path / "config-modal-test.toml"
-        return StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path), toml_path
+        return StxApp(db_path=db_path, config=TuiConfig(), config_path=toml_path), toml_path
 
     @pytest.mark.asyncio
     async def test_open_config_modal_via_c_key(self, app):
-        from sticky_notes.tui.screens.config_modal import ConfigModal
+        from stx.tui.screens.config_modal import ConfigModal
 
         app, _ = app
         async with app.run_test() as pilot:
@@ -1213,7 +1213,7 @@ class TestConfigModal:
     async def test_change_theme_live_applies_and_persists(self, app):
         from textual.widgets import Select
 
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         app, toml_path = app
         async with app.run_test() as pilot:
@@ -1235,12 +1235,12 @@ class TestConfigModal:
 
     @pytest.mark.asyncio
     async def test_startup_applies_stored_theme(self, seeded_tui_db, tmp_path):
-        from sticky_notes.tui.config import load_config, save_config
+        from stx.tui.config import load_config, save_config
 
         db_path, _ = seeded_tui_db
         toml_path = tmp_path / "startup_theme.toml"
         # Discover available themes from a disposable app instance
-        probe = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        probe = StxApp(db_path=db_path, config=TuiConfig())
         async with probe.run_test():
             all_themes = list(probe.available_themes.keys())
         # Pick a theme that's definitively not the Textual default
@@ -1249,21 +1249,21 @@ class TestConfigModal:
         cfg = TuiConfig(theme=new_theme)
         save_config(cfg, toml_path)
         loaded = load_config(toml_path)
-        app2 = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        app2 = StxApp(db_path=db_path, config=loaded, config_path=toml_path)
         async with app2.run_test() as pilot:
             await pilot.pause()
             assert app2.theme == new_theme
 
     @pytest.mark.asyncio
     async def test_startup_ignores_unknown_theme(self, seeded_tui_db, tmp_path):
-        from sticky_notes.tui.config import load_config, save_config
+        from stx.tui.config import load_config, save_config
 
         db_path, _ = seeded_tui_db
         toml_path = tmp_path / "bad_theme.toml"
         cfg = TuiConfig(theme="totally-not-a-real-theme-xyz")
         save_config(cfg, toml_path)
         loaded = load_config(toml_path)
-        app = StickyNotesApp(db_path=db_path, config=loaded, config_path=toml_path)
+        app = StxApp(db_path=db_path, config=loaded, config_path=toml_path)
         # Should not raise
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -1273,7 +1273,7 @@ class TestConfigModal:
     async def test_change_auto_refresh_swaps_timer(self, app):
         from textual.widgets import Input
 
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         app, toml_path = app
         async with app.run_test() as pilot:
@@ -1295,12 +1295,12 @@ class TestConfigModal:
     async def test_invalid_auto_refresh_shows_error(self, seeded_tui_db, tmp_path):
         from textual.widgets import Input, Static
 
-        from sticky_notes.tui.screens.config_modal import ConfigModal
+        from stx.tui.screens.config_modal import ConfigModal
 
         db_path, _ = seeded_tui_db
         for bad_value in ("abc", "0", "-3"):
             toml_path = tmp_path / f"cfg-{bad_value}.toml"
-            app = StickyNotesApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
+            app = StxApp(db_path=db_path, config=TuiConfig(), config_path=toml_path)
             async with app.run_test() as pilot:
                 await pilot.press("c")
                 await pilot.pause()
@@ -1324,7 +1324,7 @@ class TestTaskCardClick:
         from unittest.mock import MagicMock
 
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             card = app.query(TaskCard).first()
             await pilot.pause()
@@ -1338,7 +1338,7 @@ class TestTaskCardClick:
         from unittest.mock import MagicMock
 
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             card = app.query(TaskCard).first()
             await pilot.pause()
@@ -1358,7 +1358,7 @@ class TestKanbanColumnFocus:
     async def test_on_click_focuses_column(self, seeded_tui_db):
         """Call KanbanColumn.on_click() directly to cover line 26."""
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cols = list(app.query(KanbanColumn))
             assert cols
@@ -1369,7 +1369,7 @@ class TestKanbanColumnFocus:
 
     async def test_column_key_right_moves_focus(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cols = list(app.query(KanbanColumn))
             assert len(cols) >= 2
@@ -1381,7 +1381,7 @@ class TestKanbanColumnFocus:
 
     async def test_column_key_left_wraps_to_last(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cols = list(app.query(KanbanColumn))
             app.set_focus(cols[0])
@@ -1397,7 +1397,7 @@ class TestKanbanNavigation:
 
     async def test_down_key_moves_to_next_card(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cards = list(app.query(TaskCard))
             assert len(cards) >= 2
@@ -1410,7 +1410,7 @@ class TestKanbanNavigation:
 
     async def test_up_from_first_card_focuses_column(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             # Find the first card in the Todo column (status_id = todo)
             todo_id = ids["status_ids"]["todo"]
@@ -1425,7 +1425,7 @@ class TestKanbanNavigation:
 
     async def test_left_key_moves_between_columns(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             in_progress_id = ids["status_ids"]["in_progress"]
             col = app.query_one(f"#status-col-{in_progress_id}", KanbanColumn)
@@ -1439,7 +1439,7 @@ class TestKanbanNavigation:
 
     async def test_j_key_navigates_left(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             in_progress_id = ids["status_ids"]["in_progress"]
             col = app.query_one(f"#status-col-{in_progress_id}", KanbanColumn)
@@ -1453,7 +1453,7 @@ class TestKanbanNavigation:
 
     async def test_l_key_navigates_right(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             todo_id = ids["status_ids"]["todo"]
             col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
@@ -1467,7 +1467,7 @@ class TestKanbanNavigation:
 
     async def test_i_key_navigates_up(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cards = list(app.query(TaskCard))
             assert cards
@@ -1479,7 +1479,7 @@ class TestKanbanNavigation:
 
     async def test_k_key_navigates_down(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             cards = list(app.query(TaskCard))
             assert cards
@@ -1495,7 +1495,7 @@ class TestAppActionEdit:
 
     async def test_e_on_task_tree_node_opens_task_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -1510,7 +1510,7 @@ class TestAppActionEdit:
 
     async def test_e_on_project_tree_node_opens_project_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -1524,7 +1524,7 @@ class TestAppActionEdit:
 
     async def test_e_on_workspace_tree_node_opens_workspace_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
@@ -1537,7 +1537,7 @@ class TestAppActionEdit:
 
     async def test_e_on_kanban_task_card_opens_task_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             card = app.query(TaskCard).first()
             app.set_focus(card)
@@ -1552,7 +1552,7 @@ class TestAppActionNew:
 
     async def test_n_opens_new_resource_modal(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1560,7 +1560,7 @@ class TestAppActionNew:
 
     async def test_n_then_s_opens_status_create(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1571,7 +1571,7 @@ class TestAppActionNew:
 
     async def test_n_then_w_opens_workspace_create(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1582,7 +1582,7 @@ class TestAppActionNew:
 
     async def test_n_then_t_opens_task_create(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1593,7 +1593,7 @@ class TestAppActionNew:
 
     async def test_n_then_p_opens_project_create(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1608,7 +1608,7 @@ class TestAppDismissCallbackError:
 
     async def test_value_error_is_caught_and_notified(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             notified: list[str] = []
             original_notify = app.notify
@@ -1623,7 +1623,7 @@ class TestAppFocusKanban:
 
     async def test_b_key_focuses_a_task_card(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             # Start with tree focused
             await pilot.press("w")
@@ -1639,103 +1639,103 @@ class TestDismissNullPaths:
 
     async def test_task_edit_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_task_edit_dismiss(None)  # no-op
 
     async def test_project_edit_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_project_edit_dismiss(None)
 
     async def test_group_edit_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_group_edit_dismiss(None)
 
     async def test_workspace_edit_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_workspace_edit_dismiss(None)
 
     async def test_task_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_task_create_dismiss(None)
 
     async def test_project_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_project_create_dismiss(None)
 
     async def test_group_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_group_create_dismiss(None)
 
     async def test_status_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_status_create_dismiss(None)
 
     async def test_workspace_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_workspace_create_dismiss(None)
 
     async def test_task_metadata_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_task_metadata_dismiss(None)
 
     async def test_workspace_metadata_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_workspace_metadata_dismiss(None)
 
     async def test_project_metadata_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_project_metadata_dismiss(None)
 
     async def test_group_metadata_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_group_metadata_dismiss(None)
 
     async def test_archive_task_dismiss_not_confirmed(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_archive_task_dismiss(ids["task_ids"]["design_api"], None)
 
     async def test_archive_group_dismiss_not_confirmed(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_archive_group_dismiss(1, None)
 
     async def test_archive_project_dismiss_not_confirmed(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_archive_project_dismiss(ids["project_id"], None)
 
     async def test_archive_workspace_dismiss_not_confirmed(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_archive_workspace_dismiss(ids["workspace_id"], "Coding", None)
 
@@ -1751,7 +1751,7 @@ class TestMiscActionPaths:
         ws = service.create_workspace(conn, "Empty")
         service.create_status(conn, ws.id, "Todo")
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             notifications: list[str] = []
             app.notify = lambda msg, **kw: notifications.append(str(msg))  # type: ignore[method-assign]
@@ -1761,7 +1761,7 @@ class TestMiscActionPaths:
     async def test_archive_task_already_archived_notifies(self, seeded_tui_db):
         """_open_archive_task notifies when task already archived."""
         db_path, ids = seeded_tui_db
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             task_id = ids["task_ids"]["design_api"]
             service.archive_task(app.conn, task_id, source="test")
@@ -1779,7 +1779,7 @@ class TestMiscActionPaths:
         ws = service.create_workspace(conn, "Empty")
         service.create_status(conn, ws.id, "Todo")
         conn.close()
-        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
             await pilot.pause()
@@ -1787,13 +1787,13 @@ class TestMiscActionPaths:
             await pilot.pause()
             await pilot.pause()
             # No GroupCreateModal — warning was shown instead
-            from sticky_notes.tui.screens.group_create import GroupCreateModal
+            from stx.tui.screens.group_create import GroupCreateModal
 
             assert not isinstance(app.screen, GroupCreateModal)
 
 
 def test_main_module_importable():
     """Importing __main__ covers the module-level `import sys` line."""
-    import sticky_notes.__main__  # noqa: F401
+    import stx.__main__  # noqa: F401
 
-    assert sticky_notes.__main__.main is not None
+    assert stx.__main__.main is not None

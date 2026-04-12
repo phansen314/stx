@@ -1,12 +1,12 @@
 {
-  "name": "sticky-notes",
+  "name": "stx",
   "owner": {
     "name": "phansen314"
   },
   "plugins": [
     {
-      "name": "sticky-notes",
-      "description": "Local kanban/task tracking via the todo CLI",
+      "name": "stx",
+      "description": "Structured context management and task tracking via the stx CLI",
       "source": "./"
     }
   ]

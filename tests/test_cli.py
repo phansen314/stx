@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from sticky_notes.active_workspace import (
+from stx.active_workspace import (
     active_workspace_path,
     get_active_workspace_id,
     set_active_workspace_id,
 )
-from sticky_notes.cli import main
-from sticky_notes.formatting import (
+from stx.cli import main
+from stx.formatting import (
     format_priority,
     format_task_num,
     format_timestamp,
@@ -30,8 +30,8 @@ def cli(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # Default to TTY so existing text-mode assertions keep working.
-    # Individual tests override sticky_notes.cli._stdout_is_tty via their own monkeypatch.
-    monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: True)
+    # Individual tests override stx.cli._stdout_is_tty via their own monkeypatch.
+    monkeypatch.setattr("stx.cli._stdout_is_tty", lambda: True)
 
     def run(*args: str, expect_exit: int = 0) -> tuple[str, str]:
         argv = ["--db", str(db_path), "--config", str(config_path), *args]
@@ -246,7 +246,7 @@ class TestStatusCommands:
         content = config_path.read_text()
         assert "[status_order]" in content
         # All three status ids listed in the right order
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         config = load_config(config_path)
         assert 1 in config.status_order
@@ -1572,7 +1572,7 @@ class TestJsonOutput:
         assert data["ok"] is True
         payload = data["data"]
         assert "markdown" in payload
-        assert "# Sticky Notes Export" in payload["markdown"]
+        assert "# stx Export" in payload["markdown"]
 
     # -- Group assign/unassign --
 
@@ -1648,7 +1648,7 @@ class TestErrorHandlingExtended:
     def test_keyboard_interrupt_exits_130(self, db_path, monkeypatch):
         """KeyboardInterrupt during a command must exit 130 without output."""
 
-        from sticky_notes.cli import HANDLERS, main
+        from stx.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
         monkeypatch.setitem(
@@ -1663,7 +1663,7 @@ class TestErrorHandlingExtended:
         """sqlite3.OperationalError must print a friendly message and exit 2."""
         import sqlite3
 
-        from sticky_notes.cli import HANDLERS, main
+        from stx.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
         monkeypatch.setitem(
@@ -1684,7 +1684,7 @@ class TestErrorHandlingExtended:
         import json
         import sqlite3
 
-        from sticky_notes.cli import HANDLERS, main
+        from stx.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
         monkeypatch.setitem(
@@ -1740,14 +1740,14 @@ class TestExportJson:
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         out, _ = cli("export", "--md")
-        assert "# Sticky Notes Export" in out
+        assert "# stx Export" in out
 
     def test_export_md_to_file(self, cli, tmp_path):
         cli("workspace", "create", "B")
         output = tmp_path / "new" / "sub" / "out.md"
         cli("export", "--md", "-o", str(output))
         assert output.exists()
-        assert "# Sticky Notes Export" in output.read_text()
+        assert "# stx Export" in output.read_text()
 
     def test_export_json_creates_parent_dirs(self, cli, tmp_path):
         import json
@@ -1782,7 +1782,7 @@ class TestExportJson:
         out_file = tmp_path / "dump.md"
         out_file.write_text("old")
         cli("export", "--md", "-o", str(out_file), "--overwrite")
-        assert "# Sticky Notes Export" in out_file.read_text()
+        assert "# stx Export" in out_file.read_text()
 
     def test_export_md_refuses_overwrite_by_default(self, cli, tmp_path):
         cli("workspace", "create", "B")
@@ -1799,7 +1799,7 @@ class TestExportParentDir:
         output = tmp_path / "new" / "sub" / "out.md"
         out, _ = cli("export", "--md", "-o", str(output))
         assert output.exists()
-        assert "# Sticky Notes Export" in output.read_text()
+        assert "# stx Export" in output.read_text()
 
 
 class TestBackup:
@@ -2070,7 +2070,7 @@ class TestArchiveConfirmation:
     @pytest.fixture(autouse=True)
     def _setup(self, cli, monkeypatch):
         self.cli = cli
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
 
@@ -2133,7 +2133,7 @@ class TestStatusArchiveConfirmation:
     @pytest.fixture(autouse=True)
     def _setup(self, cli, monkeypatch):
         self.cli = cli
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
@@ -2157,12 +2157,12 @@ class TestStatusArchiveConfirmation:
 
     def test_force_non_tty_succeeds(self, monkeypatch):
         # regression: pipe stdin + --force used to raise ValueError telling user to pass --force
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: False)
         out, _ = self.cli("status", "archive", "todo", "--force")
         assert "archived status 'todo'" in out
 
     def test_reassign_to_non_tty_succeeds_without_force(self, monkeypatch):
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: False)
         out, _ = self.cli("status", "archive", "todo", "--reassign-to", "done")
         assert "archived status 'todo'" in out
 
@@ -2171,7 +2171,7 @@ class TestTagArchiveConfirmation:
     @pytest.fixture(autouse=True)
     def _setup(self, cli, monkeypatch):
         self.cli = cli
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: True)
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("tag", "create", "bug")
@@ -2904,7 +2904,7 @@ class TestArchivePreviewPrefixSeparation:
         assert out.startswith("dry-run:")
 
     def test_confirm_prompt_no_dry_run_prefix(self):
-        self.monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: True)
+        self.monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: True)
         # Capture stderr where preview is printed
         seen = []
         original_print = __builtins__["print"] if isinstance(__builtins__, dict) else print
@@ -2970,7 +2970,7 @@ class TestTtyAwareOutput:
             pass
 
     def test_piped_stdout_defaults_to_json(self, monkeypatch):
-        monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdout_is_tty", lambda: False)
         out, _ = self.cli("task", "ls")
         data = json.loads(out)
         assert data["ok"] is True
@@ -2982,7 +2982,7 @@ class TestTtyAwareOutput:
         assert data["ok"] is True
 
     def test_text_flag_overrides_pipe(self, monkeypatch):
-        monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdout_is_tty", lambda: False)
         out, _ = self.cli("--text", "task", "ls")
         try:
             json.loads(out)
@@ -2994,13 +2994,13 @@ class TestTtyAwareOutput:
         self.cli("--json", "--text", "task", "ls", expect_exit=2)
 
     def test_confirm_archive_non_tty_stdin_raises(self, monkeypatch):
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: False)
         _, err = self.cli("task", "archive", "1", expect_exit=4)
         assert "non-interactive" in err
         assert "--force" in err
 
     def test_confirm_archive_non_tty_with_force(self, monkeypatch):
-        monkeypatch.setattr("sticky_notes.cli._stdin_is_tty", lambda: False)
+        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: False)
         out, _ = self.cli("task", "archive", "1", "--force")
         assert "archived task-0001" in out
 
@@ -3038,7 +3038,7 @@ class TestConfigCommands:
     def test_config_set_auto_refresh_seconds(self):
         out, _ = self.cli("config", "set", "auto_refresh_seconds", "5")
         assert "5" in out
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).auto_refresh_seconds == 5
 
@@ -3046,7 +3046,7 @@ class TestConfigCommands:
         _, err = self.cli("config", "set", "auto_refresh_seconds", "0", expect_exit=4)
         assert "positive integer" in err
         # file should not exist / value unchanged
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).auto_refresh_seconds == 30
 
@@ -3062,13 +3062,13 @@ class TestConfigCommands:
         out, _ = self.cli("--json", "workspace", "ls")
         ws_id = json.loads(out)["data"][0]["id"]
         self.cli("config", "set", "active_workspace", str(ws_id))
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).active_workspace == ws_id
 
     def test_config_set_active_workspace_by_name(self):
         self.cli("config", "set", "active_workspace", "dev")
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).active_workspace is not None
 
@@ -3083,7 +3083,7 @@ class TestConfigCommands:
     def test_config_unset_resets_auto_refresh_to_default(self):
         self.cli("config", "set", "auto_refresh_seconds", "10")
         self.cli("config", "unset", "auto_refresh_seconds")
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).auto_refresh_seconds == 30
 
@@ -3094,7 +3094,7 @@ class TestConfigCommands:
     def test_config_set_active_workspace_via_workspace_use_matches(self):
         """todo workspace use and todo config set active_workspace produce same tui.toml value."""
         self.cli("workspace", "use", "dev")
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         via_use = load_config(self.cfg_path).active_workspace
         # reset
@@ -3105,7 +3105,7 @@ class TestConfigCommands:
 
     def test_active_workspace_legacy_file_fallback(self, db_path):
         """get_active_workspace_id falls back to legacy file when tui.toml has no value."""
-        from sticky_notes.active_workspace import get_active_workspace_id
+        from stx.active_workspace import get_active_workspace_id
 
         legacy_file = db_path.parent / "active-workspace"
         legacy_file.write_text("999")
@@ -3116,7 +3116,7 @@ class TestConfigCommands:
 
     def test_active_workspace_tui_toml_wins_over_legacy_file(self, db_path):
         """tui.toml active_workspace takes priority over legacy file."""
-        from sticky_notes.active_workspace import get_active_workspace_id
+        from stx.active_workspace import get_active_workspace_id
 
         legacy_file = db_path.parent / "active-workspace"
         legacy_file.write_text("999")
@@ -3131,6 +3131,6 @@ class TestConfigCommands:
             legacy_file.unlink()
         self.cli("workspace", "use", "dev")
         assert not legacy_file.exists(), "legacy active-workspace file must not be written"
-        from sticky_notes.tui.config import load_config
+        from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).active_workspace is not None

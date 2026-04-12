@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from helpers import insert_status, insert_task, insert_workspace
 
-from sticky_notes.connection import (
+from stx.connection import (
     SCHEMA_VERSION,
     _run_migrations,
     get_connection,
@@ -1016,7 +1016,7 @@ class TestMigrationFileStructure:
         """SCHEMA_VERSION must equal the highest numbered migration file."""
         import importlib.resources
 
-        pkg = importlib.resources.files("sticky_notes.migrations")
+        pkg = importlib.resources.files("stx.migrations")
         versions = [
             int(r.name[:3])
             for r in pkg.iterdir()
@@ -1029,7 +1029,7 @@ class TestMigrationFileStructure:
         """Migration SQL files must not contain PRAGMAs or transaction control."""
         import importlib.resources
 
-        pkg = importlib.resources.files("sticky_notes.migrations")
+        pkg = importlib.resources.files("stx.migrations")
         for resource in pkg.iterdir():
             if not resource.name.endswith(".sql"):
                 continue
@@ -1043,7 +1043,7 @@ class TestMigrationFileStructure:
         """Migration file version numbers must form a contiguous sequence 1..N."""
         import importlib.resources
 
-        pkg = importlib.resources.files("sticky_notes.migrations")
+        pkg = importlib.resources.files("stx.migrations")
         versions = sorted(
             int(r.name[:3])
             for r in pkg.iterdir()

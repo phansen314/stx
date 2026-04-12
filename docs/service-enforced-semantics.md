@@ -112,7 +112,7 @@ NOT carried over:
   it never fails with "tag not found."
 - **Assigning a task to a group auto-sets the task's project** if the task has no
   project. This convenience lives in the `assign_task_to_group` wrapper (used by
-  `todo group assign`) — the underlying `update_task` is strict and requires the
+  `stx group assign`) — the underlying `update_task` is strict and requires the
   caller to supply a consistent `project_id` alongside `group_id` when the task
   has none.
 

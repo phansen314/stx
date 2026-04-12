@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from sticky_notes.models import (
+from stx.models import (
     Group,
     NewGroup,
     NewProject,
@@ -22,7 +22,7 @@ from sticky_notes.models import (
     TaskHistory,
     Workspace,
 )
-from sticky_notes.repository import (
+from stx.repository import (
     add_dependency,
     add_group_dependency,
     add_tag_to_task,
@@ -179,7 +179,7 @@ class TestWorkspaceRepository:
         workspace = insert_workspace(conn, NewWorkspace(name="x"))
         with pytest.raises(ValueError, match="invalid column name"):
             # Bypass allowlist with a patched frozenset to test the regex guard
-            from sticky_notes import repository
+            from stx import repository
 
             orig = repository._WORKSPACE_UPDATABLE
             repository._WORKSPACE_UPDATABLE = frozenset({"name; DROP TABLE workspaces--"})

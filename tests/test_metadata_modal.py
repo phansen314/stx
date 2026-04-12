@@ -3,7 +3,7 @@ from __future__ import annotations
 from helpers import ModalTestApp
 from textual.widgets import Button, Input, Static
 
-from sticky_notes.tui.screens.metadata import MetadataModal
+from stx.tui.screens.metadata import MetadataModal
 
 
 def _make_app(

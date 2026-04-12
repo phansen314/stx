@@ -1,10 +1,10 @@
 {
-  "name": "sticky-notes",
-  "version": "0.9.0",
-  "description": "Local kanban/task tracking via the todo CLI",
+  "name": "stx",
+  "version": "0.10.0",
+  "description": "Structured context management and task tracking via the stx CLI",
   "author": {
     "name": "phansen314"
   },
-  "repository": "https://github.com/phansen314/sticky-notes",
-  "keywords": ["kanban", "todo", "tasks", "productivity"]
+  "repository": "https://github.com/phansen314/stx",
+  "keywords": ["context", "tasks", "hierarchy", "agents", "productivity"]
 }

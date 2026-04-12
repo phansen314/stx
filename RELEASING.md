@@ -1,6 +1,6 @@
 # Releasing
 
-Checklist for cutting a new `sticky-notes` release. The version lives in two files that must move together: `pyproject.toml` (the Python package) and `.claude-plugin/plugin.json` (the Claude Code plugin). Missing one silently ships a mismatched release.
+Checklist for cutting a new `stx` release. The version lives in two files that must move together: `pyproject.toml` (the Python package) and `.claude-plugin/plugin.json` (the Claude Code plugin). Missing one silently ships a mismatched release.
 
 ## 1. Pre-release checks
 
@@ -28,7 +28,7 @@ In `CHANGELOG.md`:
 1. Rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD` (today's date)
 2. Add a fresh empty `## [Unreleased]` section above it
 3. Confirm the new version block has the right subsections (`Added` / `Changed` / `Fixed` / `Removed` / `Deprecated` / `Security` — include only the ones that apply)
-4. Add a new link reference at the bottom: `[X.Y.Z]: https://github.com/phansen314/sticky-notes/releases/tag/vX.Y.Z`
+4. Add a new link reference at the bottom: `[X.Y.Z]: https://github.com/phansen314/stx/releases/tag/vX.Y.Z`
 5. Update the `[Unreleased]` compare link to point from the new version: `.../compare/vX.Y.Z...HEAD`
 
 ## 4. Commit, tag, push
