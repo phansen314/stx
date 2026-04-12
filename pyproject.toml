@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sticky-notes"
+name = "stx"
 version = "0.9.0"
-description = "A local todo/kanban app with CLI and TUI interfaces"
+description = "Structured context management with CLI-first agent integration and a human-friendly TUI"
 requires-python = ">=3.12"
 dependencies = [
     "textual>=0.50.0",
@@ -15,8 +15,8 @@ dependencies = [
 dev = ["pytest>=8.0", "pytest-cov>=6.0", "pytest-asyncio>=1.0", "pytest-xdist>=3.0", "ruff>=0.9", "mypy>=1.0"]
 
 [project.scripts]
-todo = "sticky_notes.__main__:main"
-todo-tui = "sticky_notes.tui:main"
+stx = "stx.__main__:main"
+stx-tui = "stx.tui:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
@@ -24,7 +24,7 @@ asyncio_mode = "auto"
 addopts = "-n auto --cov-report=term-missing"
 
 [tool.coverage.run]
-source_pkgs = ["sticky_notes"]
+source_pkgs = ["stx"]
 branch = true
 parallel = true
 
@@ -41,7 +41,7 @@ select = ["E", "F", "I", "UP", "W"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["sticky_notes"]
+known-first-party = ["stx"]
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]   # re-export modules
@@ -56,4 +56,4 @@ warn_unused_ignores = true
 disable_error_code = ["no-any-return"]  # SQLite Row fields are inherently Any
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/sticky_notes"]
+packages = ["src/stx"]

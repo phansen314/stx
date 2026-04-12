@@ -3,9 +3,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from sticky_notes import service
-from sticky_notes.active_workspace import set_active_workspace_id
-from sticky_notes.connection import get_connection, init_db
+from stx import service
+from stx.active_workspace import set_active_workspace_id
+from stx.connection import get_connection, init_db
 
 
 def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:

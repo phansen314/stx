@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-from sticky_notes import service
-from sticky_notes.models import (
+from stx import service
+from stx.models import (
     Group,
     Project,
     Status,
@@ -15,7 +15,7 @@ from sticky_notes.models import (
     TaskHistory,
     Workspace,
 )
-from sticky_notes.service_models import (
+from stx.service_models import (
     GroupDetail,
     GroupRef,
     ProjectDetail,
@@ -1384,7 +1384,7 @@ class TestGroupService:
     def test_cascade_archive_group_integrity_error_becomes_value_error(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from sticky_notes import repository as repo_mod
+        from stx import repository as repo_mod
 
         _, _, pid = self._setup(conn)
         grp = service.create_group(conn, pid, "g")
@@ -1706,7 +1706,7 @@ class TestTagService:
     def test_archive_tag_integrity_error_becomes_value_error(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from sticky_notes import repository as repo_mod
+        from stx import repository as repo_mod
 
         bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
@@ -2275,7 +2275,7 @@ class TestArchivePreviewAndCascade:
         assert service.get_group(conn, g1).archived is True
         assert service.get_task(conn, t1).archived is True
         # All statuses archived
-        from sticky_notes import repository as repo
+        from stx import repository as repo
 
         statuses = repo.list_statuses(conn, bid, include_archived=True)
         assert all(s.archived for s in statuses)

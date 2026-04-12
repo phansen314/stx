@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_PATH = PROJECT_ROOT / "src" / "sticky_notes" / "schema.sql"
+SCHEMA_PATH = PROJECT_ROOT / "src" / "stx" / "schema.sql"
 OUTPUT_PATH = PROJECT_ROOT / "docs" / "erd.md"
 
 # Patterns

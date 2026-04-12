@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sticky_notes.models import Group
-from sticky_notes.tui.model import (
+from stx.models import Group
+from stx.tui.model import (
     GroupNode,
     flatten_group_tree,
     load_workspace_model,

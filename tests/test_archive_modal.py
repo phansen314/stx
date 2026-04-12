@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from sticky_notes import service
-from sticky_notes.models import Group, Task
-from sticky_notes.tui.app import StickyNotesApp
-from sticky_notes.tui.config import TuiConfig
-from sticky_notes.tui.screens.archive_confirm import ArchiveConfirmModal
-from sticky_notes.tui.widgets import KanbanColumn, TaskCard
+from stx import service
+from stx.models import Group, Task
+from stx.tui.app import StxApp
+from stx.tui.config import TuiConfig
+from stx.tui.screens.archive_confirm import ArchiveConfirmModal
+from stx.tui.widgets import KanbanColumn, TaskCard
 
 # ---------------------------------------------------------------------------
 # ArchiveConfirmModal unit tests
@@ -17,7 +17,7 @@ from sticky_notes.tui.widgets import KanbanColumn, TaskCard
 class TestArchiveConfirmModal:
     def _make_app(
         self, preview_text: str = "would archive task 'Foo'", entity_label: str = "task-0001 — Foo"
-    ) -> StickyNotesApp:
+    ) -> StxApp:
         from helpers import ModalTestApp
 
         modal = ArchiveConfirmModal(preview_text=preview_text, entity_label=entity_label)
@@ -87,14 +87,14 @@ class TestArchiveConfirmModal:
 
 
 # ---------------------------------------------------------------------------
-# Integration: 'a' key dispatch on StickyNotesApp
+# Integration: 'a' key dispatch on StxApp
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def app_and_ids(seeded_tui_db):
     db_path, ids = seeded_tui_db
-    app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+    app = StxApp(db_path=db_path, config=TuiConfig())
     return app, ids, db_path
 
 
@@ -395,7 +395,7 @@ class TestArchiveConfirm:
 # ---------------------------------------------------------------------------
 
 
-def _find_group_node(app: StickyNotesApp, group_id: int):
+def _find_group_node(app: StxApp, group_id: int):
     tree = app.query_one("#workspaces-tree")
     for ws_node in tree.root.children:
         for proj_node in ws_node.children:

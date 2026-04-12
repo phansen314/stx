@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Delete a sticky-notes database and its associated files.
+"""Delete an stx database and its associated files.
 
 Usage:
     python scripts/wipe_db.py [DB_PATH] [--yes]
 
 Deletes: <DB_PATH>, <DB_PATH>-wal, <DB_PATH>-shm, and <DB_DIR>/active-workspace.
-This is intentionally NOT a `todo` subcommand — destructive operations are
+This is intentionally NOT an `stx` subcommand — destructive operations are
 kept off the agent-accessible CLI surface.
 
 Defaults:
-    DB_PATH  ~/.local/share/sticky-notes/sticky-notes.db
+    DB_PATH  ~/.local/share/stx/stx.db
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from sticky_notes.active_workspace import active_workspace_path
-from sticky_notes.connection import DEFAULT_DB_PATH
+from stx.active_workspace import active_workspace_path
+from stx.connection import DEFAULT_DB_PATH
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Delete the sticky-notes database and active-workspace pointer."
+        description="Delete the stx database and active-workspace pointer."
     )
     parser.add_argument(
         "db",
@@ -45,7 +45,7 @@ def main() -> None:
 
     existing = [p for p in targets if p.exists()]
     if not existing:
-        print("Nothing to delete — no sticky-notes files found at:")
+        print("Nothing to delete — no stx files found at:")
         for p in targets:
             print(f"  {p}")
         return
@@ -69,8 +69,8 @@ def main() -> None:
 
     print()
     print("To recreate a workspace, run one of:")
-    print("  todo workspace create <name>")
-    print("  todo workspace use <existing-name>")
+    print("  stx workspace create <name>")
+    print("  stx workspace use <existing-name>")
 
 
 if __name__ == "__main__":

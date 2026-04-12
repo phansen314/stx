@@ -17,9 +17,9 @@ from helpers import (
     insert_workspace,
 )
 
-from sticky_notes.connection import SCHEMA_VERSION, transaction
-from sticky_notes.export import _md_escape, export_full_json, export_markdown
-from sticky_notes.repository import set_task_group_id
+from stx.connection import SCHEMA_VERSION, transaction
+from stx.export import _md_escape, export_full_json, export_markdown
+from stx.repository import set_task_group_id
 
 # ---- Helpers ----
 
@@ -51,7 +51,7 @@ def _seed_workspace(conn: sqlite3.Connection) -> int:
 class TestExportEmpty:
     def test_no_workspaces(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert "# Sticky Notes Export" in md
+        assert "# stx Export" in md
         assert "## Workspace" not in md
 
     def test_archived_workspace_excluded(self, conn: sqlite3.Connection) -> None:
@@ -70,7 +70,7 @@ class TestExportFull:
 
     def test_header(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert md.startswith("# Sticky Notes Export\n")
+        assert md.startswith("# stx Export\n")
         assert f"Generated: {datetime.date.today().isoformat()}" in md
 
     def test_workspace_heading(self, conn: sqlite3.Connection) -> None:

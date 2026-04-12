@@ -14,8 +14,8 @@ from helpers import (
     insert_workspace,
 )
 
-from sticky_notes.connection import read_schema, transaction
-from sticky_notes.mappers import (
+from stx.connection import read_schema, transaction
+from stx.mappers import (
     group_to_detail,
     group_to_ref,
     project_to_detail,
@@ -28,7 +28,7 @@ from sticky_notes.mappers import (
     task_to_detail,
     task_to_list_item,
 )
-from sticky_notes.models import (
+from stx.models import (
     Group,
     NewProject,
     NewStatus,
@@ -42,7 +42,7 @@ from sticky_notes.models import (
     TaskHistory,
     Workspace,
 )
-from sticky_notes.service_models import (
+from stx.service_models import (
     GroupDetail,
     GroupRef,
     ProjectDetail,

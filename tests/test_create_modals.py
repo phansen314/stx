@@ -5,13 +5,13 @@ from __future__ import annotations
 from helpers import ModalTestApp
 from textual.widgets import Input, Select, Static, TextArea
 
-from sticky_notes.models import Group, Project, Status, Workspace
-from sticky_notes.tui.model import GroupNode, ProjectNode
-from sticky_notes.tui.screens.group_create import GroupCreateModal
-from sticky_notes.tui.screens.new_resource import NewResourceModal
-from sticky_notes.tui.screens.project_create import ProjectCreateModal
-from sticky_notes.tui.screens.status_create import StatusCreateModal
-from sticky_notes.tui.screens.task_create import TaskCreateModal
+from stx.models import Group, Project, Status, Workspace
+from stx.tui.model import GroupNode, ProjectNode
+from stx.tui.screens.group_create import GroupCreateModal
+from stx.tui.screens.new_resource import NewResourceModal
+from stx.tui.screens.project_create import ProjectCreateModal
+from stx.tui.screens.status_create import StatusCreateModal
+from stx.tui.screens.task_create import TaskCreateModal
 
 # ---- Factories ----
 
@@ -354,7 +354,7 @@ class TestStatusCreateModal:
 
 # ---- WorkspaceCreateModal tests ----
 
-from sticky_notes.tui.screens.workspace_create import WorkspaceCreateModal  # noqa: E402
+from stx.tui.screens.workspace_create import WorkspaceCreateModal  # noqa: E402
 
 
 class TestWorkspaceCreateModal:
@@ -396,7 +396,7 @@ class TestWorkspaceCreateModal:
 
 # ---- WorkspaceSwitchModal tests ----
 
-from sticky_notes.tui.screens.workspace_switch import WorkspaceSwitchModal  # noqa: E402
+from stx.tui.screens.workspace_switch import WorkspaceSwitchModal  # noqa: E402
 
 
 class TestWorkspaceSwitchModal:

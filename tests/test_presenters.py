@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sticky_notes import presenters
-from sticky_notes.models import (
+from stx import presenters
+from stx.models import (
     Group,
     Project,
     Status,
@@ -11,7 +11,7 @@ from sticky_notes.models import (
     TaskHistory,
     Workspace,
 )
-from sticky_notes.service_models import (
+from stx.service_models import (
     ArchivePreview,
     GroupDetail,
     GroupRef,
