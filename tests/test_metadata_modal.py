@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from helpers import ModalTestApp
 from textual.widgets import Button, Input, Static
 
 from sticky_notes.tui.screens.metadata import MetadataModal
-
-from helpers import ModalTestApp
 
 
 def _make_app(

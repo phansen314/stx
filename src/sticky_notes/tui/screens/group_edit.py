@@ -51,7 +51,12 @@ class GroupEditModal(BaseEditModal):
         desc_text = self.query_one("#group-edit-desc", MarkdownEditor).text.strip()
         description = desc_text or None
 
-        self._diff_and_dismiss("group_id", self.detail.id, self.detail, {
-            "title": title,
-            "description": description,
-        })
+        self._diff_and_dismiss(
+            "group_id",
+            self.detail.id,
+            self.detail,
+            {
+                "title": title,
+                "description": description,
+            },
+        )

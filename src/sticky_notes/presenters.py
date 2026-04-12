@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import Project, Status, Tag, Task, TaskHistory, Workspace
+from .models import Project, Status, Tag, TaskHistory, Workspace
 from .service_models import (
     ArchivePreview,
     EntityUpdatePreview,
@@ -191,8 +191,7 @@ def format_group_list(
         for ref in refs:
             archived = " (archived)" if ref.archived else ""
             lines.append(
-                f"  {format_group_num(ref.id)}  {ref.title}  "
-                f"({len(ref.task_ids)} tasks){archived}"
+                f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}"
             )
     return "\n".join(lines)
 
@@ -218,9 +217,7 @@ def format_group_detail(
         lines.append("")
         for t in detail.tasks:
             due = f"  due: {format_timestamp(t.due_date)}" if t.due_date else ""
-            lines.append(
-                f"  {format_task_num(t.id)}  {format_priority(t.priority)} {t.title}{due}"
-            )
+            lines.append(f"  {format_task_num(t.id)}  {format_priority(t.priority)} {t.title}{due}")
     return "\n".join(lines)
 
 

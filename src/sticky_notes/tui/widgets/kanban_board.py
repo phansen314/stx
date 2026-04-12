@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from textual import events
-from textual.containers import Horizontal, Vertical, ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.widgets import Label
 
@@ -28,13 +28,13 @@ class KanbanColumn(Vertical):
     def key_left(self, event: events.Key) -> None:
         if not self.has_focus:
             return
-        if self.parent._focus_neighbor_column(self, -1):
+        if self.parent._focus_neighbor_column(self, -1):  # type: ignore[union-attr]
             event.stop()
 
     def key_right(self, event: events.Key) -> None:
         if not self.has_focus:
             return
-        if self.parent._focus_neighbor_column(self, 1):
+        if self.parent._focus_neighbor_column(self, 1):  # type: ignore[union-attr]
             event.stop()
 
     def key_down(self, event: events.Key) -> None:
@@ -121,7 +121,7 @@ class KanbanBoard(Horizontal):
         # Reorder columns to match model.statuses order
         col_map = {col.id: col for col in self.query(".status-col")}
         for i, status in enumerate(model.statuses):
-            col = col_map.get(f"status-col-{status.id}")
+            col = col_map.get(f"status-col-{status.id}")  # type: ignore[assignment]
             if col is not None:
                 self.move_child(col, before=i)
 
@@ -153,6 +153,7 @@ class KanbanBoard(Horizontal):
             scrollable.move_child(card_map[task.id], before=i)
 
     def _update_col_title(self, col, count: int) -> None:
+        assert col.id is not None
         status_id = int(col.id.removeprefix("status-col-"))
         name = escape_markup(self._status_names[status_id])
         col.query_one(".status-col-title", Label).update(f"({count}) {name}")
@@ -258,7 +259,9 @@ class KanbanBoard(Horizontal):
         new_ci = ci + delta
         if new_ci < 0 or new_ci >= len(cols):
             return False
-        status_id = int(cols[new_ci].id.removeprefix("status-col-"))
+        col_id = cols[new_ci].id
+        assert col_id is not None
+        status_id = int(col_id.removeprefix("status-col-"))
         self.post_message(self.TaskStatusMove(focused.task_data, status_id))
         return True
 
@@ -270,4 +273,3 @@ class KanbanBoard(Horizontal):
         new_ci = (ci + delta) % len(cols)
         self.screen.set_focus(cols[new_ci])
         return True
-

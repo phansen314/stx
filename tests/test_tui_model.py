@@ -5,8 +5,6 @@ import pytest
 from sticky_notes.models import Group
 from sticky_notes.tui.model import (
     GroupNode,
-    ProjectNode,
-    WorkspaceModel,
     flatten_group_tree,
     load_workspace_model,
 )
@@ -279,8 +277,16 @@ class TestDependencyOrdering:
 class TestFlattenGroupTree:
     def _group(self, id: int, title: str) -> Group:
         return Group(
-            id=id, workspace_id=1, project_id=1, title=title, description=None,
-            parent_id=None, position=0, archived=False, created_at=0, metadata={},
+            id=id,
+            workspace_id=1,
+            project_id=1,
+            title=title,
+            description=None,
+            parent_id=None,
+            position=0,
+            archived=False,
+            created_at=0,
+            metadata={},
         )
 
     def _node(self, id: int, title: str, children: tuple[GroupNode, ...] = ()) -> GroupNode:

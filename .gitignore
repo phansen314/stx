@@ -7,5 +7,7 @@ build/
 .pytest_cache/
 tmp/
 .coverage
+.coverage.*
+uv.lock
 settings.local.json
 /.claude/

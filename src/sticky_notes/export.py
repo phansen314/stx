@@ -155,11 +155,7 @@ def _render_tasks_section(
             pri = f"P{t.priority}" if t.priority else ""
             proj = _md_escape(proj_map.get(t.project_id, ""))
             task_tags = _md_escape(
-                ", ".join(
-                    tag_map[tid]
-                    for tid in task_tag_map.get(t.id, ())
-                    if tid in tag_map
-                )
+                ", ".join(tag_map[tid] for tid in task_tag_map.get(t.id, ()) if tid in tag_map)
             )
             due = format_timestamp(t.due_date) if t.due_date else ""
             lines.append(
@@ -295,12 +291,10 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
                 for p in service.list_projects(conn, bid, include_archived=True)
             )
             tasks.extend(
-                dataclasses.asdict(t)
-                for t in service.list_tasks(conn, bid, include_archived=True)
+                dataclasses.asdict(t) for t in service.list_tasks(conn, bid, include_archived=True)
             )
             tags.extend(
-                dataclasses.asdict(t)
-                for t in service.list_tags(conn, bid, include_archived=True)
+                dataclasses.asdict(t) for t in service.list_tags(conn, bid, include_archived=True)
             )
             groups.extend(
                 dataclasses.asdict(g)
@@ -309,9 +303,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
 
         task_tags = list(repo.list_all_task_tags(conn))
         task_dependencies = list(repo.list_all_task_dependencies(conn))
-        task_history = [
-            dataclasses.asdict(h) for h in repo.list_all_task_history(conn)
-        ]
+        task_history = [dataclasses.asdict(h) for h in repo.list_all_task_history(conn)]
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -370,9 +362,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_task_metadata_section(tasks)
 
         workspace_deps = [
-            (tid, did)
-            for tid, did in all_deps
-            if tid in task_ids and did in task_ids
+            (tid, did) for tid, did in all_deps if tid in task_ids and did in task_ids
         ]
         lines += _render_deps_section(workspace_deps)
 

@@ -93,7 +93,7 @@ class MetadataModal(BaseEditModal):
         event.stop()
         node = event.button
         while node is not None and "metadata-row" not in node.classes:
-            node = node.parent
+            node = node.parent  # type: ignore[assignment]
         if node is not None:
             node.remove()
 

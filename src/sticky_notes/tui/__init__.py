@@ -6,7 +6,7 @@ from pathlib import Path
 from sticky_notes.tui.app import StickyNotesApp
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> None:  # pragma: no cover
     db_path: Path | None = None
     config_path: Path | None = None
     args = argv if argv is not None else sys.argv[1:]

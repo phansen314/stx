@@ -12,6 +12,8 @@ class NewResourceModal(ModalScreen[str | None]):
         Binding("t", "select('task')", "Task", show=True),
         Binding("g", "select('group')", "Group", show=True),
         Binding("p", "select('project')", "Project", show=True),
+        Binding("s", "select('status')", "Status", show=True),
+        Binding("w", "select('workspace')", "Workspace", show=True),
         Binding("escape", "dismiss", "Close", priority=True),
     ]
 
@@ -22,6 +24,8 @@ class NewResourceModal(ModalScreen[str | None]):
                 yield Button("(t)ask", id="new-task")
                 yield Button("(g)roup", id="new-group")
                 yield Button("(p)roject", id="new-project")
+                yield Button("(s)tatus", id="new-status")
+                yield Button("(w)orkspace", id="new-workspace")
         yield Footer()
 
     def action_select(self, resource_type: str) -> None:
@@ -32,7 +36,9 @@ class NewResourceModal(ModalScreen[str | None]):
             "new-task": "task",
             "new-group": "group",
             "new-project": "project",
+            "new-status": "status",
+            "new-workspace": "workspace",
         }
-        resource_type = mapping.get(event.button.id)
+        resource_type = mapping.get(event.button.id)  # type: ignore[arg-type]
         if resource_type is not None:
             self.dismiss(resource_type)

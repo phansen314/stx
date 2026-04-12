@@ -1,18 +1,17 @@
 """Tests for project, group, and workspace edit modals."""
+
 from __future__ import annotations
 
-import pytest
-
+from helpers import ModalTestApp
 from textual.widgets import Input, Static, TextArea
 
-from sticky_notes.models import Group, Workspace
+from sticky_notes.models import Workspace
 from sticky_notes.service_models import GroupDetail, ProjectDetail
 from sticky_notes.tui.screens.group_edit import GroupEditModal
+from sticky_notes.tui.screens.project_create import ProjectCreateModal
 from sticky_notes.tui.screens.project_edit import ProjectEditModal
+from sticky_notes.tui.screens.workspace_create import WorkspaceCreateModal
 from sticky_notes.tui.screens.workspace_edit import WorkspaceEditModal
-
-from helpers import ModalTestApp
-
 
 # ---- Factories ----
 
@@ -212,3 +211,62 @@ class TestWorkspaceEditModal:
             modal.action_save()
             await pilot.pause()
             assert app.result == {"workspace_id": 1, "changes": {"name": "Production"}}
+
+
+# ---- BaseEditModal keyboard binding tests ----
+
+
+class TestBaseEditKeyBindings:
+    """Tests for shared BaseEditModal key bindings and button handlers."""
+
+    async def test_ctrl_n_does_not_crash(self):
+        """ctrl+n calls focus_next — just verify no exception."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n")
+
+    async def test_ctrl_b_does_not_crash(self):
+        """ctrl+b calls focus_previous — just verify no exception."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+
+    async def test_save_button_click_triggers_validation(self):
+        """Clicking #modal-save on empty form shows error (goes through on_button_pressed → action_save)."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.click("#modal-save")
+            await pilot.pause()
+            error = app.screen.query_one("#modal-error", Static)
+            assert "Name is required" in str(error.render())
+
+    async def test_cancel_button_click_dismisses_none(self):
+        """Clicking #modal-cancel goes through on_button_pressed → dismiss(None)."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.click("#modal-cancel")
+            assert app.result is None
+
+    async def test_editor_mode_no_markdown_editor(self):
+        """ctrl+e on modal without MarkdownEditor hits NoMatches → silent pass."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+e")
+
+    async def test_preview_mode_no_markdown_editor(self):
+        """ctrl+r on modal without MarkdownEditor hits NoMatches → silent pass."""
+        app = ModalTestApp(WorkspaceCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r")
+
+    async def test_editor_mode_with_markdown_editor(self):
+        """ctrl+e on modal with MarkdownEditor calls switch_to_editor()."""
+        app = ModalTestApp(ProjectCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+e")
+
+    async def test_preview_mode_with_markdown_editor(self):
+        """ctrl+r on modal with MarkdownEditor calls switch_to_preview()."""
+        app = ModalTestApp(ProjectCreateModal())
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r")

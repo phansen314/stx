@@ -15,44 +15,70 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     in_progress = service.create_status(conn, workspace.id, "In Progress")
     done = service.create_status(conn, workspace.id, "Done")
 
-    project = service.create_project(
-        conn, workspace.id, "apr-api", description="April API sprint"
-    )
+    project = service.create_project(conn, workspace.id, "apr-api", description="April API sprint")
 
     t1 = service.create_task(
-        conn, workspace.id, "Design API schema", todo.id,
-        project_id=project.id, priority=3,
+        conn,
+        workspace.id,
+        "Design API schema",
+        todo.id,
+        project_id=project.id,
+        priority=3,
         description="Define OpenAPI spec for all endpoints",
     )
     t2 = service.create_task(
-        conn, workspace.id, "Endpoint design", todo.id,
-        project_id=project.id, priority=2,
+        conn,
+        workspace.id,
+        "Endpoint design",
+        todo.id,
+        project_id=project.id,
+        priority=2,
     )
     t3 = service.create_task(
-        conn, workspace.id, "Auth middleware", in_progress.id,
-        project_id=project.id, priority=3,
+        conn,
+        workspace.id,
+        "Auth middleware",
+        in_progress.id,
+        project_id=project.id,
+        priority=3,
         description="JWT validation and role extraction",
     )
     t4 = service.create_task(
-        conn, workspace.id, "User CRUD", todo.id,
+        conn,
+        workspace.id,
+        "User CRUD",
+        todo.id,
         priority=2,
         description="Create, read, update, delete users",
     )
     t5 = service.create_task(
-        conn, workspace.id, "Write unit tests", in_progress.id,
+        conn,
+        workspace.id,
+        "Write unit tests",
+        in_progress.id,
         priority=1,
     )
     t6 = service.create_task(
-        conn, workspace.id, "Setup CI pipeline", done.id,
+        conn,
+        workspace.id,
+        "Setup CI pipeline",
+        done.id,
         priority=2,
         description="GitHub Actions workflow",
     )
     t7 = service.create_task(
-        conn, workspace.id, "Database migrations", todo.id,
-        project_id=project.id, priority=3,
+        conn,
+        workspace.id,
+        "Database migrations",
+        todo.id,
+        project_id=project.id,
+        priority=3,
     )
     t8 = service.create_task(
-        conn, workspace.id, "Scaffold project", done.id,
+        conn,
+        workspace.id,
+        "Scaffold project",
+        done.id,
         priority=1,
     )
 
@@ -82,17 +108,13 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     }
 
 
-def seed_multi_workspace(
-    conn: sqlite3.Connection, db_path: Path | None = None
-) -> dict:
+def seed_multi_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
     ids1 = seed_workspace(conn, db_path=db_path)
     ws2 = service.create_workspace(conn, "Personal")
     backlog = service.create_status(conn, ws2.id, "Backlog")
     complete = service.create_status(conn, ws2.id, "Complete")
     home = service.create_project(conn, ws2.id, "Home")
-    t_a = service.create_task(
-        conn, ws2.id, "Buy groceries", backlog.id, project_id=home.id
-    )
+    t_a = service.create_task(conn, ws2.id, "Buy groceries", backlog.id, project_id=home.id)
     t_b = service.create_task(conn, ws2.id, "Fix fence", complete.id)
     return {
         "ws1": ids1,

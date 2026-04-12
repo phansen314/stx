@@ -5,25 +5,17 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Input, Static
 
 from sticky_notes.tui.screens.base_edit import BaseEditModal, ModalScroll
-from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
-class ProjectCreateModal(BaseEditModal):
+class WorkspaceCreateModal(BaseEditModal):
     def compose(self) -> ComposeResult:
         with ModalScroll(classes="modal-container"):
-            yield Static("New Project", classes="modal-id")
+            yield Static("New Workspace", classes="modal-id")
 
             yield Static("Name", classes="form-label")
             yield Input(
-                placeholder="Project name",
-                id="project-create-name",
-                classes="form-field",
-            )
-
-            yield Static("Description (ctrl+e edit | ctrl+r preview)", classes="form-label")
-            yield MarkdownEditor(
-                "",
-                id="project-create-desc",
+                placeholder="Workspace name",
+                id="workspace-create-name",
                 classes="form-field",
             )
 
@@ -34,15 +26,11 @@ class ProjectCreateModal(BaseEditModal):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#project-create-name", Input).focus()
+        self.query_one("#workspace-create-name", Input).focus()
 
     def _do_save(self) -> None:
-        name = self.query_one("#project-create-name", Input).value.strip()
+        name = self.query_one("#workspace-create-name", Input).value.strip()
         if not name:
             self._show_error("Name is required")
             return
-
-        desc_text = self.query_one("#project-create-desc", MarkdownEditor).text.strip()
-        description = desc_text or None
-
-        self.dismiss({"name": name, "description": description})
+        self.dismiss({"name": name})

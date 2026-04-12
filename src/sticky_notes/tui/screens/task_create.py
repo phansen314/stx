@@ -12,7 +12,6 @@ from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class TaskCreateModal(BaseEditModal):
-
     def __init__(
         self,
         statuses: tuple[Status, ...],
@@ -179,14 +178,16 @@ class TaskCreateModal(BaseEditModal):
             self._show_error("Finish date must be on or after start date")
             return
 
-        self.dismiss({
-            "title": title,
-            "status_id": status_id,
-            "priority": priority,
-            "project_id": project_id,
-            "group_id": group_id,
-            "description": description,
-            "due_date": due_date,
-            "start_date": start_date,
-            "finish_date": finish_date,
-        })
+        self.dismiss(
+            {
+                "title": title,
+                "status_id": status_id,
+                "priority": priority,
+                "project_id": project_id,
+                "group_id": group_id,
+                "description": description,
+                "due_date": due_date,
+                "start_date": start_date,
+                "finish_date": finish_date,
+            }
+        )

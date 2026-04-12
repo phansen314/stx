@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 
 from sticky_notes.active_workspace import (
     active_workspace_path,
@@ -19,12 +19,16 @@ from sticky_notes.formatting import (
     parse_task_num,
 )
 
-
 # ---- Fixtures ----
 
 
 @pytest.fixture
-def cli(db_path: Path, config_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
+def cli(
+    db_path: Path,
+    config_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+):
     # Default to TTY so existing text-mode assertions keep working.
     # Individual tests override sticky_notes.cli._stdout_is_tty via their own monkeypatch.
     monkeypatch.setattr("sticky_notes.cli._stdout_is_tty", lambda: True)
@@ -35,8 +39,7 @@ def cli(db_path: Path, config_path: Path, capsys: pytest.CaptureFixture[str], mo
             main(argv)
         except SystemExit as exc:
             assert exc.code == expect_exit, (
-                f"expected exit {expect_exit}, got {exc.code}\n"
-                f"stderr: {capsys.readouterr().err}"
+                f"expected exit {expect_exit}, got {exc.code}\nstderr: {capsys.readouterr().err}"
             )
         captured = capsys.readouterr()
         return captured.out, captured.err
@@ -244,6 +247,7 @@ class TestStatusCommands:
         assert "[status_order]" in content
         # All three status ids listed in the right order
         from sticky_notes.tui.config import load_config
+
         config = load_config(config_path)
         assert 1 in config.status_order
         assert len(config.status_order[1]) == 3
@@ -327,7 +331,9 @@ class TestTaskCommands:
         assert "created task-0001" in out
 
     def test_add_with_priority_and_due(self, cli):
-        out, _ = cli("task", "create", "Important", "--priority", "3", "--due", "2026-04-01", "-S", "todo")
+        out, _ = cli(
+            "task", "create", "Important", "--priority", "3", "--due", "2026-04-01", "-S", "todo"
+        )
         assert "created task-0001" in out
 
     def test_add_with_desc(self, cli):
@@ -340,7 +346,18 @@ class TestTaskCommands:
         assert data["data"]["description"] is None
 
     def test_create_json_includes_tags(self, cli):
-        out, _ = cli("--json", "task", "create", "Tagged", "-S", "todo", "--tag", "backend", "--tag", "urgent")
+        out, _ = cli(
+            "--json",
+            "task",
+            "create",
+            "Tagged",
+            "-S",
+            "todo",
+            "--tag",
+            "backend",
+            "--tag",
+            "urgent",
+        )
         data = json.loads(out)["data"]
         assert [t["name"] for t in data["tags"]] == ["backend", "urgent"]
 
@@ -367,7 +384,17 @@ class TestTaskCommands:
         assert "[P3]" in out
 
     def test_show(self, cli):
-        cli("task", "create", "Fix login bug", "--priority", "2", "--due", "2026-04-01", "-S", "todo")
+        cli(
+            "task",
+            "create",
+            "Fix login bug",
+            "--priority",
+            "2",
+            "--due",
+            "2026-04-01",
+            "-S",
+            "todo",
+        )
         out, _ = cli("task", "show", "1")
         assert "task-0001" in out
         assert "Fix login bug" in out
@@ -718,7 +745,7 @@ class TestLsFilters:
         out, _ = cli("task", "ls", "-p", "alpha")
         assert "task1" in out
         # task2 not in any non-empty column section
-        lines = [l for l in out.splitlines() if "task2" in l]
+        lines = [ln for ln in out.splitlines() if "task2" in ln]
         assert len(lines) == 0
 
     def test_filter_by_priority(self, cli):
@@ -727,7 +754,7 @@ class TestLsFilters:
         cli("task", "create", "high", "--priority", "3", "-S", "backlog")
         out, _ = cli("task", "ls", "--priority", "3")
         assert "high" in out
-        lines = [l for l in out.splitlines() if "low" in l]
+        lines = [ln for ln in out.splitlines() if "low" in ln]
         assert len(lines) == 0
 
     def test_filter_by_search(self, cli):
@@ -736,7 +763,7 @@ class TestLsFilters:
         cli("task", "create", "Add search feature", "-S", "backlog")
         out, _ = cli("task", "ls", "--search", "login")
         assert "Fix login bug" in out
-        lines = [l for l in out.splitlines() if "search feature" in l]
+        lines = [ln for ln in out.splitlines() if "search feature" in ln]
         assert len(lines) == 0
 
     def test_combined_filters(self, cli):
@@ -746,7 +773,7 @@ class TestLsFilters:
         cli("task", "create", "task3", "-S", "doing", "--priority", "3")
         out, _ = cli("task", "ls", "-S", "backlog", "--priority", "3")
         assert "task1" in out
-        lines = [l for l in out.splitlines() if l.strip().startswith("task-")]
+        lines = [ln for ln in out.splitlines() if ln.strip().startswith("task-")]
         assert len(lines) == 1
 
     def test_invalid_status_name(self, cli):
@@ -846,7 +873,9 @@ class TestGroupCLI:
 
     def test_create_with_parent(self):
         self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "create", "Components", "--project", "sprint1", "--parent", "Frontend")
+        out, _ = self.cli(
+            "group", "create", "Components", "--project", "sprint1", "--parent", "Frontend"
+        )
         assert "created group 'Components'" in out
 
     def test_create_requires_project(self):
@@ -927,7 +956,9 @@ class TestGroupCLI:
         self.cli("project", "create", "sprint2")
         self.cli("group", "create", "Frontend", "--project", "sprint1")
         self.cli("task", "create", "Task", "--project", "sprint2", "-S", "todo")
-        _, err = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=4)
+        _, err = self.cli(
+            "group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=4
+        )
         assert "project" in err
 
     def test_unassign_task(self):
@@ -964,17 +995,23 @@ class TestGroupCLI:
     def test_cycle_detection(self):
         self.cli("group", "create", "A", "--project", "sprint1")
         self.cli("group", "create", "B", "--project", "sprint1", "--parent", "A")
-        _, err = self.cli("group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=4)
+        _, err = self.cli(
+            "group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=4
+        )
         assert "cycle" in err
 
     def test_create_with_description(self):
-        out, _ = self.cli("group", "create", "Frontend", "--project", "sprint1", "--desc", "UI components")
+        out, _ = self.cli(
+            "group", "create", "Frontend", "--project", "sprint1", "--desc", "UI components"
+        )
         assert "created group 'Frontend'" in out
         out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
         assert "UI components" in out
 
     def test_create_empty_desc_normalized_to_null(self):
-        out, _ = self.cli("--json", "group", "create", "Frontend", "--project", "sprint1", "--desc", "")
+        out, _ = self.cli(
+            "--json", "group", "create", "Frontend", "--project", "sprint1", "--desc", ""
+        )
         data = json.loads(out)
         assert data["data"]["description"] is None
 
@@ -1209,6 +1246,7 @@ class TestJsonOutput:
     def _json(self, cli, *args):
         """Run CLI with --json and return parsed JSON."""
         import json
+
         out, _ = cli("--json", *args)
         return json.loads(out)
 
@@ -1442,7 +1480,9 @@ class TestJsonOutput:
         cli("task", "create", "T1", "-S", "todo")
         cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
-        data = self._json(cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox", "--dry-run")
+        data = self._json(
+            cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox", "--dry-run"
+        )
         assert data["ok"] is True
         payload = data["data"]
         assert payload["can_move"] is True
@@ -1458,7 +1498,19 @@ class TestJsonOutput:
         cli("workspace", "create", "B2")
         cli("status", "create", "Inbox")
         cli("project", "create", "infra")
-        data = self._json(cli, "task", "transfer", "1", "--to", "B2", "--status", "Inbox", "--project", "infra", "--dry-run")
+        data = self._json(
+            cli,
+            "task",
+            "transfer",
+            "1",
+            "--to",
+            "B2",
+            "--status",
+            "Inbox",
+            "--project",
+            "infra",
+            "--dry-run",
+        )
         assert data["ok"] is True
         assert data["data"]["target_project_id"] is not None
 
@@ -1476,6 +1528,7 @@ class TestJsonOutput:
 
     def test_edit_no_changes(self, cli):
         import json
+
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
@@ -1580,6 +1633,7 @@ class TestJsonOutput:
 
     def test_error_json(self, cli):
         import json
+
         cli("workspace", "create", "B")
         _, err = cli("--json", "task", "show", "999", expect_exit=3)
         data = json.loads(err)
@@ -1593,11 +1647,13 @@ class TestErrorHandlingExtended:
 
     def test_keyboard_interrupt_exits_130(self, db_path, monkeypatch):
         """KeyboardInterrupt during a command must exit 130 without output."""
-        import json
-        from sticky_notes.cli import main, HANDLERS
+
+        from sticky_notes.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
-        monkeypatch.setitem(HANDLERS, "task_ls", lambda *a, **kw: (_ for _ in ()).throw(KeyboardInterrupt()))
+        monkeypatch.setitem(
+            HANDLERS, "task_ls", lambda *a, **kw: (_ for _ in ()).throw(KeyboardInterrupt())
+        )
         with pytest.raises(SystemExit) as exc_info:
             main(["--db", str(db_path), "--json", "task", "ls"])
         monkeypatch.setitem(HANDLERS, "task_ls", original)
@@ -1606,12 +1662,15 @@ class TestErrorHandlingExtended:
     def test_operational_error_exits_2(self, db_path, capsys, monkeypatch):
         """sqlite3.OperationalError must print a friendly message and exit 2."""
         import sqlite3
-        from sticky_notes.cli import main, HANDLERS
+
+        from sticky_notes.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
-        monkeypatch.setitem(HANDLERS, "task_ls", lambda *a, **kw: (_ for _ in ()).throw(
-            sqlite3.OperationalError("disk I/O error")
-        ))
+        monkeypatch.setitem(
+            HANDLERS,
+            "task_ls",
+            lambda *a, **kw: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")),
+        )
         with pytest.raises(SystemExit) as exc_info:
             main(["--db", str(db_path), "task", "ls"])
         captured = capsys.readouterr()
@@ -1624,12 +1683,15 @@ class TestErrorHandlingExtended:
         """sqlite3.OperationalError in --json mode emits JSON error and exits 2."""
         import json
         import sqlite3
-        from sticky_notes.cli import main, HANDLERS
+
+        from sticky_notes.cli import HANDLERS, main
 
         original = HANDLERS["task_ls"]
-        monkeypatch.setitem(HANDLERS, "task_ls", lambda *a, **kw: (_ for _ in ()).throw(
-            sqlite3.OperationalError("disk I/O error")
-        ))
+        monkeypatch.setitem(
+            HANDLERS,
+            "task_ls",
+            lambda *a, **kw: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")),
+        )
         with pytest.raises(SystemExit) as exc_info:
             main(["--db", str(db_path), "--json", "task", "ls"])
         captured = capsys.readouterr()
@@ -1643,6 +1705,7 @@ class TestErrorHandlingExtended:
 class TestExportJson:
     def test_export_json_stdout(self, cli):
         import json
+
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
@@ -1653,6 +1716,7 @@ class TestExportJson:
 
     def test_export_json_to_file(self, cli, tmp_path):
         import json
+
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         out_file = tmp_path / "dump.json"
@@ -1663,6 +1727,7 @@ class TestExportJson:
 
     def test_export_json_file_data_payload(self, cli, tmp_path):
         import json
+
         cli("workspace", "create", "B")
         out_file = tmp_path / "dump.json"
         out, _ = cli("--json", "export", "-o", str(out_file))
@@ -1686,6 +1751,7 @@ class TestExportJson:
 
     def test_export_json_creates_parent_dirs(self, cli, tmp_path):
         import json
+
         cli("workspace", "create", "B")
         output = tmp_path / "new" / "sub" / "dump.json"
         cli("export", "-o", str(output))
@@ -1703,6 +1769,7 @@ class TestExportJson:
 
     def test_export_overwrite_flag_json(self, cli, tmp_path):
         import json
+
         cli("workspace", "create", "B")
         out_file = tmp_path / "dump.json"
         out_file.write_text("old")
@@ -1747,6 +1814,7 @@ class TestBackup:
 
     def test_backup_file_is_valid_sqlite(self, cli, tmp_path):
         import sqlite3 as _sqlite3
+
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
         cli("task", "create", "T1", "-S", "todo")
@@ -1780,6 +1848,7 @@ class TestBackup:
 
     def test_backup_json_payload(self, cli, tmp_path):
         import json
+
         cli("workspace", "create", "B")
         dest = tmp_path / "backup.db"
         out, _ = cli("--json", "backup", str(dest))
@@ -1797,6 +1866,7 @@ class TestInfo:
         out, _ = cli("info")
         for label in ["database", "wal sidecar", "shm sidecar", "active-workspace pointer"]:
             assert label in out
+
     def test_info_text_existence_markers(self, cli, db_path):
         cli("workspace", "create", "X")
         cli("status", "create", "todo")
@@ -1806,6 +1876,7 @@ class TestInfo:
 
     def test_info_json(self, cli, db_path):
         import json
+
         out, _ = cli("--json", "info")
         data = json.loads(out)
         assert data["ok"] is True
@@ -1835,7 +1906,9 @@ class TestEditDryRun:
         cli("task", "create", "T1", "-S", "todo", "-p", "alpha", "--priority", "2")
 
     def test_task_edit_dry_run_text(self):
-        out, _ = self.cli("task", "edit", "1", "--title", "T1 renamed", "--priority", "4", "--dry-run")
+        out, _ = self.cli(
+            "task", "edit", "1", "--title", "T1 renamed", "--priority", "4", "--dry-run"
+        )
         assert "dry-run" in out
         assert "title" in out and "T1" in out and "T1 renamed" in out
         assert "priority" in out
@@ -1924,7 +1997,7 @@ class TestArchiveDryRun:
         out, _ = self.cli("group", "archive", "top", "--project", "proj", "--dry-run")
         assert "dry-run" in out
         assert "descendant groups: 1" in out  # child group
-        assert "tasks: 2" in out   # both tasks in subtree
+        assert "tasks: 2" in out  # both tasks in subtree
         # nothing actually archived
         out2, _ = self.cli("task", "ls")
         assert "t1" in out2
@@ -2227,7 +2300,17 @@ class TestEndToEndSmoke:
         cli("tag", "create", "tech-debt")
         # Tasks
         cli("task", "create", "Design API", "-S", "todo", "-p", "backend", "--tag", "bug")
-        cli("task", "create", "Implement routes", "-S", "in-progress", "-p", "backend", "--tag", "urgent")
+        cli(
+            "task",
+            "create",
+            "Implement routes",
+            "-S",
+            "in-progress",
+            "-p",
+            "backend",
+            "--tag",
+            "urgent",
+        )
         cli("task", "create", "Write migrations", "-S", "todo", "-p", "backend")
         cli("task", "create", "Dashboard UI", "-S", "done", "-p", "frontend")
         cli("task", "create", "Cleanup", "-S", "todo")
@@ -2239,7 +2322,17 @@ class TestEndToEndSmoke:
         cli("dep", "create", "--task", "2", "--blocked-by", "1")
         cli("dep", "create", "--task", "3", "--blocked-by", "1")
         # Group dependencies
-        cli("group", "dep", "create", "--group", "endpoints", "--blocked-by", "db", "--project", "backend")
+        cli(
+            "group",
+            "dep",
+            "create",
+            "--group",
+            "endpoints",
+            "--blocked-by",
+            "db",
+            "--project",
+            "backend",
+        )
 
     def test_listing_commands(self):
         out, _ = self.cli("task", "ls")
@@ -2640,32 +2733,64 @@ class TestGroupMetaCommands:
 
     def test_del_missing(self):
         _, err = self.cli(
-            "group", "meta", "del", "Sprint 1", "nope", "--project", "backend",
+            "group",
+            "meta",
+            "del",
+            "Sprint 1",
+            "nope",
+            "--project",
+            "backend",
             expect_exit=3,
         )
         assert "not found" in err
 
     def test_unknown_group(self):
         _, err = self.cli(
-            "group", "meta", "set", "Ghost", "k", "v", "--project", "backend",
+            "group",
+            "meta",
+            "set",
+            "Ghost",
+            "k",
+            "v",
+            "--project",
+            "backend",
             expect_exit=3,
         )
         assert "not found" in err
 
     def test_case_insensitive(self):
         self.cli(
-            "group", "meta", "set", "Sprint 1", "Start", "2026-01-01",
-            "--project", "backend",
+            "group",
+            "meta",
+            "set",
+            "Sprint 1",
+            "Start",
+            "2026-01-01",
+            "--project",
+            "backend",
         )
         out, _ = self.cli(
-            "group", "meta", "get", "Sprint 1", "START", "--project", "backend",
+            "group",
+            "meta",
+            "get",
+            "Sprint 1",
+            "START",
+            "--project",
+            "backend",
         )
         assert "2026-01-01" in out
 
     def test_set_json(self):
         out, _ = self.cli(
-            "--json", "group", "meta", "set", "Sprint 1", "start", "2026-01-01",
-            "--project", "backend",
+            "--json",
+            "group",
+            "meta",
+            "set",
+            "Sprint 1",
+            "start",
+            "2026-01-01",
+            "--project",
+            "backend",
         )
         data = json.loads(out)
         assert data["data"] == {"key": "start", "value": "2026-01-01"}
@@ -2696,7 +2821,7 @@ class TestStatusListArchivedMarker:
 
     def test_no_archived_marker_on_active(self):
         out, _ = self.cli("status", "ls", "--archived", "include")
-        lines = [l for l in out.splitlines() if "active" in l]
+        lines = [ln for ln in out.splitlines() if "active" in ln]
         assert len(lines) == 1
         assert "(archived)" not in lines[0]
 
@@ -2726,7 +2851,7 @@ class TestProjectListArchivedMarker:
 
     def test_no_archived_marker_on_live_project(self):
         out, _ = self.cli("project", "ls", "--archived", "include")
-        lines = [l for l in out.splitlines() if "live" in l]
+        lines = [ln for ln in out.splitlines() if "live" in ln]
         assert len(lines) == 1
         assert "(archived)" not in lines[0]
 
@@ -2749,13 +2874,14 @@ class TestTransferDryRunSourceName:
         cli("workspace", "use", "source-ws")
 
     def test_dry_run_shows_source_name_not_id(self):
-        out, _ = self.cli("task", "transfer", "1", "--to", "target-ws", "--status", "backlog", "--dry-run")
+        out, _ = self.cli(
+            "task", "transfer", "1", "--to", "target-ws", "--status", "backlog", "--dry-run"
+        )
         assert "dry-run" in out
         assert "source-ws" in out
         # Must not show a bare integer where the workspace name should be
-        import re
         # The "from workspace" line should not contain a standalone integer
-        from_line = next((l for l in out.splitlines() if "from workspace" in l), "")
+        from_line = next((ln for ln in out.splitlines() if "from workspace" in ln), "")
         assert "source-ws" in from_line
 
 
@@ -2782,7 +2908,6 @@ class TestArchivePreviewPrefixSeparation:
         # Capture stderr where preview is printed
         seen = []
         original_print = __builtins__["print"] if isinstance(__builtins__, dict) else print
-        import sys
         self.monkeypatch.setattr("builtins.input", lambda _: "n")
         # Run and capture stderr
         _, err = self.cli("task", "archive", "1")
@@ -2914,6 +3039,7 @@ class TestConfigCommands:
         out, _ = self.cli("config", "set", "auto_refresh_seconds", "5")
         assert "5" in out
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).auto_refresh_seconds == 5
 
     def test_config_set_auto_refresh_seconds_rejects_zero(self):
@@ -2921,6 +3047,7 @@ class TestConfigCommands:
         assert "positive integer" in err
         # file should not exist / value unchanged
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).auto_refresh_seconds == 30
 
     def test_config_set_auto_refresh_seconds_rejects_negative(self):
@@ -2936,11 +3063,13 @@ class TestConfigCommands:
         ws_id = json.loads(out)["data"][0]["id"]
         self.cli("config", "set", "active_workspace", str(ws_id))
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).active_workspace == ws_id
 
     def test_config_set_active_workspace_by_name(self):
         self.cli("config", "set", "active_workspace", "dev")
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).active_workspace is not None
 
     def test_config_set_active_workspace_rejects_unknown(self):
@@ -2955,6 +3084,7 @@ class TestConfigCommands:
         self.cli("config", "set", "auto_refresh_seconds", "10")
         self.cli("config", "unset", "auto_refresh_seconds")
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).auto_refresh_seconds == 30
 
     def test_config_unset_rejects_non_editable_key(self):
@@ -2965,6 +3095,7 @@ class TestConfigCommands:
         """todo workspace use and todo config set active_workspace produce same tui.toml value."""
         self.cli("workspace", "use", "dev")
         from sticky_notes.tui.config import load_config
+
         via_use = load_config(self.cfg_path).active_workspace
         # reset
         self.cfg_path.unlink(missing_ok=True)
@@ -2975,6 +3106,7 @@ class TestConfigCommands:
     def test_active_workspace_legacy_file_fallback(self, db_path):
         """get_active_workspace_id falls back to legacy file when tui.toml has no value."""
         from sticky_notes.active_workspace import get_active_workspace_id
+
         legacy_file = db_path.parent / "active-workspace"
         legacy_file.write_text("999")
         # tui.toml exists but has no active_workspace
@@ -2985,6 +3117,7 @@ class TestConfigCommands:
     def test_active_workspace_tui_toml_wins_over_legacy_file(self, db_path):
         """tui.toml active_workspace takes priority over legacy file."""
         from sticky_notes.active_workspace import get_active_workspace_id
+
         legacy_file = db_path.parent / "active-workspace"
         legacy_file.write_text("999")
         self.cfg_path.write_text("active_workspace = 42\n")
@@ -2999,4 +3132,5 @@ class TestConfigCommands:
         self.cli("workspace", "use", "dev")
         assert not legacy_file.exists(), "legacy active-workspace file must not be written"
         from sticky_notes.tui.config import load_config
+
         assert load_config(self.cfg_path).active_workspace is not None

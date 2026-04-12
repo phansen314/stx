@@ -37,7 +37,7 @@ todo tui
 
 Entry point: `todo`
 
-**Active workspace:** The CLI tracks the active workspace in `~/.local/share/sticky-notes/active-workspace`. Override per-command with `--workspace`/`-w`.
+**Active workspace:** Stored in `~/.config/sticky-notes/tui.toml`. Set via `todo workspace use <name>` or `todo config set active_workspace <name>`. Override per-command with `--workspace`/`-w`.
 
 **Output format:** Text at a terminal, JSON when piped (`todo task ls | jq`). Override with `--json` (force JSON) or `--text` (force text). See [`skills/sticky-notes/references/json-schema.md`](skills/sticky-notes/references/json-schema.md) for per-command shapes.
 
@@ -112,7 +112,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 - **Layout**: Two-panel split — workspace hierarchy tree (left, 25%) and kanban board with one scrollable column per status (right). Diff-based kanban sync with coalescing refresh.
 - **Edit modals**: Press `e` on any tree node or kanban card to edit tasks, projects, groups, or workspaces. Full form with validation, markdown description editor, and change diffing. The task modal has a Group selector that filters by the selected Project and updates reactively.
 - **Metadata editor**: Press `m` on any tree node (task, workspace, project, group) or kanban card to view/edit the entity's JSON key/value metadata blob. Dynamic rows with add/delete, client-side duplicate-key detection, and bulk-replace on save via `service.replace_*_metadata`.
-- **Create modals**: Press `n` to create new tasks, projects, or groups via a resource type selector. The task-create modal exposes the same project-scoped Group selector.
+- **Create modals**: Press `n` to open a resource type selector and create tasks, groups, projects, statuses, or workspaces. The task-create modal exposes the same project-scoped Group selector. The status-create modal defaults the workspace selector to the currently active workspace.
 - **Workspace switching**: Press `s` to switch between workspaces.
 - **Config**: `~/.config/sticky-notes/tui.toml` (theme, show_archived, confirm_archive, default_priority, status_order, auto_refresh_seconds)
 
@@ -126,7 +126,7 @@ textual run --dev sticky_notes.tui.app:StickyNotesApp
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity |
 | `c` | Open settings modal (theme, auto_refresh_seconds) |
-| `n` | Create new (task/group/project) |
+| `n` | Create new (task/group/project/status/workspace selector) |
 | `s` | Switch workspace |
 | `[` / `]` / `shift+left` / `shift+right` | With a task card focused: move task left/right across statuses. With a status column focused: reorder the column (persists to `tui.toml`). |
 | `ctrl+q` | Quit |

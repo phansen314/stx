@@ -1,3 +1,6 @@
+# Lock files
+uv.lock
+
 # Build outputs
 build/
 dist/

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from time import gmtime, strftime
 
 
@@ -38,11 +38,9 @@ def parse_date(raw: str) -> int:
         d = date.fromisoformat(raw)
     except ValueError:
         raise ValueError(f"invalid date: {raw!r} (expected YYYY-MM-DD)") from None
-    dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+    dt = datetime(d.year, d.month, d.day, tzinfo=UTC)
     return int(dt.timestamp())
 
 
 def format_timestamp(epoch: int) -> str:
     return strftime("%Y-%m-%d", gmtime(epoch))
-
-

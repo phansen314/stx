@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-04-11
+
+### Added
+
+- **TUI: status create modal.** Press `n` then `s` (or click `(s)tatus`) in the new-resource selector to create a status directly from the TUI. Fields: name and workspace (defaulted to the currently active workspace).
+- **TUI: workspace create modal.** Press `n` then `w` (or click `(w)orkspace`) to create a new workspace from the TUI. Field: name.
+
 ## [0.8.0] — 2026-04-11
 
 ### Added
@@ -73,7 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`project edit --name/-n`** removed; use the new `project rename` instead. `project edit` now only handles description changes.
 - **Dropped `-P` / `-s` short flags** from `task create` / `task ls` / `task edit`. They case-collided with `-p` (project) and `-S` (status), making shift-key typos silently do the wrong thing. Long forms `--priority` and `--search` remain. Breaking for any script relying on the shorts.
 
-[Unreleased]: https://github.com/phansen314/sticky-notes/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/phansen314/sticky-notes/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/phansen314/sticky-notes/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/phansen314/sticky-notes/releases/tag/v0.8.0
 [0.7.0]: https://github.com/phansen314/sticky-notes/releases/tag/v0.7.0
 

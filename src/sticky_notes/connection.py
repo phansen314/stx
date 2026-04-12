@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import importlib.resources
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "sticky-notes" / "sticky-notes.db"
 
@@ -60,9 +60,7 @@ def _reenable_fks(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
-        raise RuntimeError(
-            f"Foreign key violations after migration: {violations!r}"
-        )
+        raise RuntimeError(f"Foreign key violations after migration: {violations!r}")
 
 
 def _read_migration(version: int) -> str:
@@ -87,9 +85,7 @@ def _pre_migration_check(conn: sqlite3.Connection, target_version: int) -> None:
         # cascade-recreate. Any existing row with invalid JSON would fail
         # the INSERT INTO tasks_new step with an opaque "CHECK constraint
         # failed" error. Surface a clearer message instead.
-        bad = conn.execute(
-            "SELECT id FROM tasks WHERE NOT json_valid(metadata) LIMIT 1"
-        ).fetchone()
+        bad = conn.execute("SELECT id FROM tasks WHERE NOT json_valid(metadata) LIMIT 1").fetchone()
         if bad is not None:
             raise RuntimeError(
                 f"Cannot migrate to schema version 11: task id={bad[0]} has "
@@ -101,8 +97,16 @@ def _pre_migration_check(conn: sqlite3.Connection, target_version: int) -> None:
         # and could contain off-allowlist values if the DB was manipulated
         # via raw SQL between 008 and now. Pre-check symmetrically.
         allowed_fields = (
-            "title", "description", "status_id", "project_id", "priority",
-            "due_date", "position", "archived", "start_date", "finish_date",
+            "title",
+            "description",
+            "status_id",
+            "project_id",
+            "priority",
+            "due_date",
+            "position",
+            "archived",
+            "start_date",
+            "finish_date",
             "group_id",
         )
         placeholders = ",".join("?" * len(allowed_fields))

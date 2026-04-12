@@ -80,12 +80,14 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
 
     def _snapshot_expanded(self) -> set[tuple[str, int]]:
         expanded: set[tuple[str, int]] = set()
+
         def _walk(node: TreeNode) -> None:
             key = self._node_key(node.data)
             if key is not None and node.is_expanded:
                 expanded.add(key)
             for child in node.children:
                 _walk(child)
+
         _walk(self.root)
         return expanded
 
@@ -96,9 +98,12 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
                 node.expand()
             for child in node.children:
                 _walk(child)
+
         _walk(self.root)
 
-    def load(self, models: dict[int, WorkspaceModel], expand_workspace_id: int | None = None) -> None:
+    def load(
+        self, models: dict[int, WorkspaceModel], expand_workspace_id: int | None = None
+    ) -> None:
         snapshot = self._snapshot_expanded() if self.root.children else None
         self.clear()
         self._last_workspace_id = expand_workspace_id

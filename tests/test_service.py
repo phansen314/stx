@@ -4,29 +4,50 @@ import sqlite3
 
 import pytest
 
-from sticky_notes.models import Workspace, Status, Group, Project, Tag, Task, TaskFilter, TaskHistory
+from sticky_notes import service
+from sticky_notes.models import (
+    Group,
+    Project,
+    Status,
+    Tag,
+    Task,
+    TaskFilter,
+    TaskHistory,
+    Workspace,
+)
 from sticky_notes.service_models import (
-    WorkspaceContext,
-    WorkspaceListView,
     GroupDetail,
     GroupRef,
     ProjectDetail,
     TaskDetail,
     TaskListItem,
+    WorkspaceContext,
+    WorkspaceListView,
+)
+from tests.helpers import (
+    insert_group as _raw_insert_group,
+)
+from tests.helpers import (
+    insert_project as _raw_insert_project,
+)
+from tests.helpers import (
+    insert_status as _raw_insert_status,
+)
+from tests.helpers import (
+    insert_tag as _raw_insert_tag,
+)
+from tests.helpers import (
+    insert_task as _raw_insert_task,
+)
+from tests.helpers import (
+    insert_task_dependency as _raw_insert_task_dependency,
+)
+from tests.helpers import (
+    insert_task_tag as _raw_insert_task_tag,
 )
 from tests.helpers import (
     insert_workspace as _raw_insert_workspace,
-    insert_status as _raw_insert_status,
-    insert_group as _raw_insert_group,
-    insert_project as _raw_insert_project,
-    insert_task as _raw_insert_task,
-    insert_tag as _raw_insert_tag,
-    insert_task_dependency as _raw_insert_task_dependency,
-    insert_task_tag as _raw_insert_task_tag,
 )
-
-from sticky_notes import service
-
 
 # Raw helpers leave an implicit transaction open.  Wrap them so each
 # call commits immediately, keeping the connection free for service-layer
@@ -44,16 +65,17 @@ def insert_workspace(conn: sqlite3.Connection, name: str = "workspace1") -> int:
     return rid
 
 
-def insert_status(
-    conn: sqlite3.Connection, workspace_id: int, name: str = "todo"
-) -> int:
+def insert_status(conn: sqlite3.Connection, workspace_id: int, name: str = "todo") -> int:
     rid = _raw_insert_status(conn, workspace_id, name)
     _commit(conn)
     return rid
 
 
 def insert_project(
-    conn: sqlite3.Connection, workspace_id: int, name: str = "proj1", description: str | None = "desc"
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    name: str = "proj1",
+    description: str | None = "desc",
 ) -> int:
     rid = _raw_insert_project(conn, workspace_id, name, description)
     _commit(conn)
@@ -74,9 +96,7 @@ def insert_task(
     return rid
 
 
-def insert_task_dependency(
-    conn: sqlite3.Connection, task_id: int, depends_on_id: int
-) -> None:
+def insert_task_dependency(conn: sqlite3.Connection, task_id: int, depends_on_id: int) -> None:
     _raw_insert_task_dependency(conn, task_id, depends_on_id)
     _commit(conn)
 
@@ -93,17 +113,13 @@ def insert_group(
     return rid
 
 
-def insert_tag(
-    conn: sqlite3.Connection, workspace_id: int, name: str = "tag1"
-) -> int:
+def insert_tag(conn: sqlite3.Connection, workspace_id: int, name: str = "tag1") -> int:
     rid = _raw_insert_tag(conn, workspace_id, name)
     _commit(conn)
     return rid
 
 
-def insert_task_tag(
-    conn: sqlite3.Connection, task_id: int, tag_id: int
-) -> None:
+def insert_task_tag(conn: sqlite3.Connection, task_id: int, tag_id: int) -> None:
     _raw_insert_task_tag(conn, task_id, tag_id)
     _commit(conn)
 
@@ -315,7 +331,9 @@ class TestProjectService:
         updated = service.update_project(conn, proj.id, {"archived": True})
         assert updated.archived is True
 
-    def test_preview_update_project_rejects_archive_with_active_tasks(self, conn: sqlite3.Connection) -> None:
+    def test_preview_update_project_rejects_archive_with_active_tasks(
+        self, conn: sqlite3.Connection
+    ) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         proj = service.create_project(conn, bid, "alpha")
@@ -323,7 +341,9 @@ class TestProjectService:
         with pytest.raises(ValueError, match="active task"):
             service.preview_update_project(conn, proj.id, {"archived": True})
 
-    def test_preview_update_project_rejects_archive_with_active_groups(self, conn: sqlite3.Connection) -> None:
+    def test_preview_update_project_rejects_archive_with_active_groups(
+        self, conn: sqlite3.Connection
+    ) -> None:
         bid = insert_workspace(conn)
         proj = service.create_project(conn, bid, "alpha")
         service.create_group(conn, proj.id, "g1")
@@ -470,8 +490,12 @@ class TestTaskService:
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid, tags=("bug",))
         service.update_task(
-            conn, task.id, {"title": "t2"}, "cli",
-            add_tags=("urgent",), remove_tags=("bug",),
+            conn,
+            task.id,
+            {"title": "t2"},
+            "cli",
+            add_tags=("urgent",),
+            remove_tags=("bug",),
         )
         detail = service.get_task_detail(conn, task.id)
         assert detail.title == "t2"
@@ -500,7 +524,10 @@ class TestTaskService:
         task = service.create_task(conn, bid, "old", cid)
         with pytest.raises(LookupError):
             service.update_task(
-                conn, task.id, {"title": "new"}, "cli",
+                conn,
+                task.id,
+                {"title": "new"},
+                "cli",
                 remove_tags=("nonexistent",),
             )
         # field change must be rolled back since remove_tags failed in same transaction
@@ -630,7 +657,9 @@ class TestTaskService:
         with pytest.raises(ValueError, match="finish date"):
             service.update_task(conn, task.id, {"finish_date": 100}, "test")
 
-    def test_preview_update_task_rejects_same_invalid_inputs_as_update(self, conn: sqlite3.Connection) -> None:
+    def test_preview_update_task_rejects_same_invalid_inputs_as_update(
+        self, conn: sqlite3.Connection
+    ) -> None:
         """Drift guard: preview_update_task must raise on the same invalid
         changes that update_task rejects. Any new validation added to
         update_task (via _validate_task_update) must propagate to preview.
@@ -1064,8 +1093,13 @@ class TestMoveTaskToWorkspace:
         b1 = insert_workspace(conn, "workspace1")
         c1 = insert_status(conn, b1, "todo")
         task = service.create_task(
-            conn, b1, "dated", c1,
-            due_date=1700000000, start_date=1699000000, finish_date=1701000000,
+            conn,
+            b1,
+            "dated",
+            c1,
+            due_date=1700000000,
+            start_date=1699000000,
+            finish_date=1701000000,
         )
 
         b2 = insert_workspace(conn, "workspace2")
@@ -1351,12 +1385,15 @@ class TestGroupService:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from sticky_notes import repository as repo_mod
+
         _, _, pid = self._setup(conn)
         grp = service.create_group(conn, pid, "g")
+
         def raise_integrity(*args, **kwargs):
             raise sqlite3.IntegrityError(
                 "UNIQUE constraint failed: groups.project_id, groups.title"
             )
+
         monkeypatch.setattr(repo_mod, "update_group", raise_integrity)
         with pytest.raises(ValueError):
             service.cascade_archive_group(conn, grp.id, source="test")
@@ -1445,7 +1482,10 @@ class TestUpdateTaskGroupId:
         grp = service.create_group(conn, pid, "g")
         tid = insert_task(conn, bid, "t", cid)  # no project_id
         service.update_task(
-            conn, tid, {"project_id": pid, "group_id": grp.id}, source="test",
+            conn,
+            tid,
+            {"project_id": pid, "group_id": grp.id},
+            source="test",
         )
         updated = service.get_task(conn, tid)
         assert updated.project_id == pid
@@ -1487,7 +1527,10 @@ class TestUpdateTaskGroupId:
         tid = insert_task(conn, bid, "t", cid, project_id=pid1)
         service.update_task(conn, tid, {"group_id": grp.id}, source="test")
         service.update_task(
-            conn, tid, {"project_id": pid2, "group_id": None}, source="test",
+            conn,
+            tid,
+            {"project_id": pid2, "group_id": None},
+            source="test",
         )
         updated = service.get_task(conn, tid)
         assert updated.project_id == pid2
@@ -1589,6 +1632,7 @@ class TestTaskGroupHistory:
         # The second call is a no-op (group_id already matches); _record_changes skips it.
         assert len(group_entries) == 1
 
+
 # ---- Tag ----
 
 
@@ -1663,10 +1707,13 @@ class TestTagService:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from sticky_notes import repository as repo_mod
+
         bid = insert_workspace(conn)
         tag = service.create_tag(conn, bid, "bug")
+
         def raise_integrity(*args, **kwargs):
             raise sqlite3.IntegrityError("UNIQUE constraint failed: tags.workspace_id, tags.name")
+
         monkeypatch.setattr(repo_mod, "update_tag", raise_integrity)
         with pytest.raises(ValueError):
             service.archive_tag(conn, tag.id)
@@ -1766,9 +1813,7 @@ class TestTagService:
         insert_task(conn, bid, "b", cid)
         tag_id = insert_tag(conn, bid, "bug")
         insert_task_tag(conn, t1, tag_id)
-        tasks = service.list_tasks_filtered(
-            conn, bid, task_filter=TaskFilter(tag_id=tag_id)
-        )
+        tasks = service.list_tasks_filtered(conn, bid, task_filter=TaskFilter(tag_id=tag_id))
         assert len(tasks) == 1
         assert tasks[0].id == t1
 
@@ -1834,9 +1879,7 @@ class TestGetWorkspaceListView:
         assert set(by_title["tagged"].tag_names) == {"bug", "urgent"}
         assert by_title["untagged"].tag_names == ()
 
-    def test_resolves_names_with_one_query_per_entity_type(
-        self, conn: sqlite3.Connection
-    ) -> None:
+    def test_resolves_names_with_one_query_per_entity_type(self, conn: sqlite3.Connection) -> None:
         """Regression: the view should not do N+1 queries for project/tag names."""
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
@@ -1850,9 +1893,7 @@ class TestGetWorkspaceListView:
             assert item.project_name == "p"
             assert item.tag_names == ("t",)
 
-    def test_include_archived_shows_archived_statuses(
-        self, conn: sqlite3.Connection
-    ) -> None:
+    def test_include_archived_shows_archived_statuses(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         c_active = insert_status(conn, bid, "active")
         c_arch = insert_status(conn, bid, "archived")
@@ -2008,7 +2049,9 @@ class TestPreviewHelpers:
         bid, cid, _, _ = self._setup(conn)
         task = service.create_task(conn, bid, "orig", cid, priority=2)
         preview = service.preview_update_task(
-            conn, task.id, {"title": "renamed", "priority": 4},
+            conn,
+            task.id,
+            {"title": "renamed", "priority": 4},
         )
         assert preview.before["title"] == "orig"
         assert preview.before["priority"] == 2
@@ -2019,7 +2062,9 @@ class TestPreviewHelpers:
         bid, cid, _, _ = self._setup(conn)
         task = service.create_task(conn, bid, "orig", cid, priority=2)
         preview = service.preview_update_task(
-            conn, task.id, {"title": "orig", "priority": 4},
+            conn,
+            task.id,
+            {"title": "orig", "priority": 4},
         )
         assert "title" not in preview.before
         assert "title" not in preview.after
@@ -2029,7 +2074,10 @@ class TestPreviewHelpers:
         bid, cid, _, _ = self._setup(conn)
         task = service.create_task(conn, bid, "t", cid, tags=("bug",))
         preview = service.preview_update_task(
-            conn, task.id, {}, add_tags=("bug",),
+            conn,
+            task.id,
+            {},
+            add_tags=("bug",),
         )
         assert preview.tags_added == ()
 
@@ -2060,8 +2108,12 @@ class TestPreviewHelpers:
         bid, cid_todo, cid_done, pid = self._setup(conn)
         task = service.create_task(conn, bid, "t", cid_todo, project_id=pid)
         preview = service.preview_move_task(
-            conn, task.id, cid_done, position=0,
-            project_id=None, change_project=True,
+            conn,
+            task.id,
+            cid_done,
+            position=0,
+            project_id=None,
+            change_project=True,
         )
         assert preview.project_changed is True
         assert preview.to_project is None
@@ -2070,8 +2122,12 @@ class TestPreviewHelpers:
         bid, cid_todo, cid_done, pid = self._setup(conn)
         task = service.create_task(conn, bid, "t", cid_todo, project_id=pid)
         preview = service.preview_move_task(
-            conn, task.id, cid_done, position=0,
-            project_id=pid, change_project=True,
+            conn,
+            task.id,
+            cid_done,
+            position=0,
+            project_id=pid,
+            change_project=True,
         )
         assert preview.project_changed is False
 
@@ -2174,7 +2230,7 @@ class TestArchivePreviewAndCascade:
         preview = service.preview_archive_group(conn, g1)
         assert preview.entity_type == "group"
         assert preview.group_count == 1  # child group
-        assert preview.task_count == 2   # both tasks
+        assert preview.task_count == 2  # both tasks
 
     def test_preview_archive_project(self, conn: sqlite3.Connection) -> None:
         bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
@@ -2220,6 +2276,7 @@ class TestArchivePreviewAndCascade:
         assert service.get_task(conn, t1).archived is True
         # All statuses archived
         from sticky_notes import repository as repo
+
         statuses = repo.list_statuses(conn, bid, include_archived=True)
         assert all(s.archived for s in statuses)
 
@@ -2396,7 +2453,10 @@ class TestReplaceTaskMetadata:
     def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         task = service.replace_task_metadata(
-            conn, tid, {"a": "1", "b": "2"}, source="test",
+            conn,
+            tid,
+            {"a": "1", "b": "2"},
+            source="test",
         )
         assert task.metadata == {"a": "1", "b": "2"}
 
@@ -2411,14 +2471,20 @@ class TestReplaceTaskMetadata:
         _, tid = self._setup(conn)
         service.set_task_meta(conn, tid, "a", "1")
         task = service.replace_task_metadata(
-            conn, tid, {"a": "2", "b": "3"}, source="test",
+            conn,
+            tid,
+            {"a": "2", "b": "3"},
+            source="test",
         )
         assert task.metadata == {"a": "2", "b": "3"}
 
     def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         task = service.replace_task_metadata(
-            conn, tid, {"Foo": "bar"}, source="test",
+            conn,
+            tid,
+            {"Foo": "bar"},
+            source="test",
         )
         assert task.metadata == {"foo": "bar"}
 
@@ -2426,28 +2492,40 @@ class TestReplaceTaskMetadata:
         _, tid = self._setup(conn)
         with pytest.raises(ValueError, match="must match"):
             service.replace_task_metadata(
-                conn, tid, {"has space": "v"}, source="test",
+                conn,
+                tid,
+                {"has space": "v"},
+                source="test",
             )
 
     def test_replace_rejects_empty_key(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         with pytest.raises(ValueError, match="1-64 characters"):
             service.replace_task_metadata(
-                conn, tid, {"": "v"}, source="test",
+                conn,
+                tid,
+                {"": "v"},
+                source="test",
             )
 
     def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         with pytest.raises(ValueError, match="500"):
             service.replace_task_metadata(
-                conn, tid, {"k": "x" * 501}, source="test",
+                conn,
+                tid,
+                {"k": "x" * 501},
+                source="test",
             )
 
     def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         with pytest.raises(ValueError, match="duplicate metadata key"):
             service.replace_task_metadata(
-                conn, tid, {"foo": "1", "FOO": "2"}, source="test",
+                conn,
+                tid,
+                {"foo": "1", "FOO": "2"},
+                source="test",
             )
 
     def test_replace_missing_task_raises_lookup(self, conn: sqlite3.Connection) -> None:
@@ -2462,7 +2540,10 @@ class TestReplaceTaskMetadata:
             "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
         ).fetchone()[0]
         service.replace_task_metadata(
-            conn, tid, {"a": "2", "b": "3"}, source="test",
+            conn,
+            tid,
+            {"a": "2", "b": "3"},
+            source="test",
         )
         after = conn.execute(
             "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
@@ -2477,7 +2558,10 @@ class TestReplaceWorkspaceMetadata:
     def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
         wid = self._setup(conn)
         ws = service.replace_workspace_metadata(
-            conn, wid, {"a": "1", "b": "2"}, source="test",
+            conn,
+            wid,
+            {"a": "1", "b": "2"},
+            source="test",
         )
         assert ws.metadata == {"a": "1", "b": "2"}
 
@@ -2491,14 +2575,20 @@ class TestReplaceWorkspaceMetadata:
         wid = self._setup(conn)
         service.set_workspace_meta(conn, wid, "a", "1")
         ws = service.replace_workspace_metadata(
-            conn, wid, {"a": "2", "b": "3"}, source="test",
+            conn,
+            wid,
+            {"a": "2", "b": "3"},
+            source="test",
         )
         assert ws.metadata == {"a": "2", "b": "3"}
 
     def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
         wid = self._setup(conn)
         ws = service.replace_workspace_metadata(
-            conn, wid, {"Foo": "bar"}, source="test",
+            conn,
+            wid,
+            {"Foo": "bar"},
+            source="test",
         )
         assert ws.metadata == {"foo": "bar"}
 
@@ -2506,28 +2596,40 @@ class TestReplaceWorkspaceMetadata:
         wid = self._setup(conn)
         with pytest.raises(ValueError, match="must match"):
             service.replace_workspace_metadata(
-                conn, wid, {"has space": "v"}, source="test",
+                conn,
+                wid,
+                {"has space": "v"},
+                source="test",
             )
 
     def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
         wid = self._setup(conn)
         with pytest.raises(ValueError, match="500"):
             service.replace_workspace_metadata(
-                conn, wid, {"k": "x" * 501}, source="test",
+                conn,
+                wid,
+                {"k": "x" * 501},
+                source="test",
             )
 
     def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
         wid = self._setup(conn)
         with pytest.raises(ValueError, match="duplicate metadata key"):
             service.replace_workspace_metadata(
-                conn, wid, {"foo": "1", "FOO": "2"}, source="test",
+                conn,
+                wid,
+                {"foo": "1", "FOO": "2"},
+                source="test",
             )
 
     def test_replace_missing_workspace_raises_lookup(self, conn: sqlite3.Connection) -> None:
         self._setup(conn)
         with pytest.raises(LookupError):
             service.replace_workspace_metadata(
-                conn, 999, {"k": "v"}, source="test",
+                conn,
+                999,
+                {"k": "v"},
+                source="test",
             )
 
 
@@ -2539,7 +2641,10 @@ class TestReplaceProjectMetadata:
     def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
         pid = self._setup(conn)
         p = service.replace_project_metadata(
-            conn, pid, {"a": "1", "b": "2"}, source="test",
+            conn,
+            pid,
+            {"a": "1", "b": "2"},
+            source="test",
         )
         assert p.metadata == {"a": "1", "b": "2"}
 
@@ -2553,14 +2658,20 @@ class TestReplaceProjectMetadata:
         pid = self._setup(conn)
         service.set_project_meta(conn, pid, "a", "1")
         p = service.replace_project_metadata(
-            conn, pid, {"a": "2", "b": "3"}, source="test",
+            conn,
+            pid,
+            {"a": "2", "b": "3"},
+            source="test",
         )
         assert p.metadata == {"a": "2", "b": "3"}
 
     def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
         pid = self._setup(conn)
         p = service.replace_project_metadata(
-            conn, pid, {"Foo": "bar"}, source="test",
+            conn,
+            pid,
+            {"Foo": "bar"},
+            source="test",
         )
         assert p.metadata == {"foo": "bar"}
 
@@ -2568,28 +2679,40 @@ class TestReplaceProjectMetadata:
         pid = self._setup(conn)
         with pytest.raises(ValueError, match="must match"):
             service.replace_project_metadata(
-                conn, pid, {"has space": "v"}, source="test",
+                conn,
+                pid,
+                {"has space": "v"},
+                source="test",
             )
 
     def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
         pid = self._setup(conn)
         with pytest.raises(ValueError, match="500"):
             service.replace_project_metadata(
-                conn, pid, {"k": "x" * 501}, source="test",
+                conn,
+                pid,
+                {"k": "x" * 501},
+                source="test",
             )
 
     def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
         pid = self._setup(conn)
         with pytest.raises(ValueError, match="duplicate metadata key"):
             service.replace_project_metadata(
-                conn, pid, {"foo": "1", "FOO": "2"}, source="test",
+                conn,
+                pid,
+                {"foo": "1", "FOO": "2"},
+                source="test",
             )
 
     def test_replace_missing_project_raises_lookup(self, conn: sqlite3.Connection) -> None:
         self._setup(conn)
         with pytest.raises(LookupError):
             service.replace_project_metadata(
-                conn, 999, {"k": "v"}, source="test",
+                conn,
+                999,
+                {"k": "v"},
+                source="test",
             )
 
 
@@ -2602,7 +2725,10 @@ class TestReplaceGroupMetadata:
     def test_replace_sets_multiple_keys(self, conn: sqlite3.Connection) -> None:
         gid = self._setup(conn)
         g = service.replace_group_metadata(
-            conn, gid, {"a": "1", "b": "2"}, source="test",
+            conn,
+            gid,
+            {"a": "1", "b": "2"},
+            source="test",
         )
         assert g.metadata == {"a": "1", "b": "2"}
 
@@ -2616,14 +2742,20 @@ class TestReplaceGroupMetadata:
         gid = self._setup(conn)
         service.set_group_meta(conn, gid, "a", "1")
         g = service.replace_group_metadata(
-            conn, gid, {"a": "2", "b": "3"}, source="test",
+            conn,
+            gid,
+            {"a": "2", "b": "3"},
+            source="test",
         )
         assert g.metadata == {"a": "2", "b": "3"}
 
     def test_replace_normalizes_keys(self, conn: sqlite3.Connection) -> None:
         gid = self._setup(conn)
         g = service.replace_group_metadata(
-            conn, gid, {"Foo": "bar"}, source="test",
+            conn,
+            gid,
+            {"Foo": "bar"},
+            source="test",
         )
         assert g.metadata == {"foo": "bar"}
 
@@ -2631,28 +2763,40 @@ class TestReplaceGroupMetadata:
         gid = self._setup(conn)
         with pytest.raises(ValueError, match="must match"):
             service.replace_group_metadata(
-                conn, gid, {"has space": "v"}, source="test",
+                conn,
+                gid,
+                {"has space": "v"},
+                source="test",
             )
 
     def test_replace_rejects_long_value(self, conn: sqlite3.Connection) -> None:
         gid = self._setup(conn)
         with pytest.raises(ValueError, match="500"):
             service.replace_group_metadata(
-                conn, gid, {"k": "x" * 501}, source="test",
+                conn,
+                gid,
+                {"k": "x" * 501},
+                source="test",
             )
 
     def test_replace_rejects_duplicate_normalized_keys(self, conn: sqlite3.Connection) -> None:
         gid = self._setup(conn)
         with pytest.raises(ValueError, match="duplicate metadata key"):
             service.replace_group_metadata(
-                conn, gid, {"foo": "1", "FOO": "2"}, source="test",
+                conn,
+                gid,
+                {"foo": "1", "FOO": "2"},
+                source="test",
             )
 
     def test_replace_missing_group_raises_lookup(self, conn: sqlite3.Connection) -> None:
         self._setup(conn)
         with pytest.raises(LookupError):
             service.replace_group_metadata(
-                conn, 999, {"k": "v"}, source="test",
+                conn,
+                999,
+                {"k": "v"},
+                source="test",
             )
 
 

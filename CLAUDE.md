@@ -49,9 +49,11 @@ src/sticky_notes/
       project_create.py# ProjectCreateModal
       group_edit.py    # GroupEditModal
       group_create.py  # GroupCreateModal
+      status_create.py # StatusCreateModal — name + workspace selector (defaults to active)
+      workspace_create.py  # WorkspaceCreateModal — name only
       workspace_edit.py    # WorkspaceEditModal
       workspace_switch.py  # WorkspaceSwitchModal
-      new_resource.py  # NewResourceModal — Alt+N resource type selector
+      new_resource.py  # NewResourceModal — resource type selector (task/group/project/status/workspace)
       config_modal.py  # ConfigModal — in-TUI settings editor (theme, auto_refresh_seconds), bound to `c`
     widgets/
       __init__.py        # re-exports widgets
@@ -118,7 +120,7 @@ Entry point: `todo tui` (or `todo tui --db path/to/db`).
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity (task/workspace/project/group) |
 | `c` | Open settings modal (theme, auto_refresh_seconds) |
-| `n` | Create new (task/group/project selector) |
+| `n` | Create new (task/group/project/status/workspace selector) |
 | `s` | Switch workspace |
 | `[` / `]` / `shift+left` / `shift+right` | Task card focused → move task across statuses. Status column focused → reorder the column (persisted to `tui.toml`). |
 | `ctrl+q` | Quit |
