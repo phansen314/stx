@@ -39,15 +39,20 @@ class TestInitDb:
         tables = {
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
         assert tables == {
-            "workspaces", "projects", "statuses",
-            "tasks", "task_dependencies", "task_history",
-            "tags", "task_tags",
-            "groups", "group_dependencies",
+            "workspaces",
+            "projects",
+            "statuses",
+            "tasks",
+            "task_dependencies",
+            "task_history",
+            "tags",
+            "task_tags",
+            "groups",
+            "group_dependencies",
         }
 
     def test_idempotent(self, conn: sqlite3.Connection) -> None:
@@ -90,9 +95,7 @@ class TestTransaction:
                 with transaction(conn):
                     pass
         # Outer transaction should still have committed successfully
-        row = conn.execute(
-            "SELECT name FROM workspaces WHERE name = 'outer'"
-        ).fetchone()
+        row = conn.execute("SELECT name FROM workspaces WHERE name = 'outer'").fetchone()
         assert row is not None
         assert row["name"] == "outer"
 
@@ -136,8 +139,7 @@ class TestSelfDependencyConstraint:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_dependencies (task_id, depends_on_id) "
-                    "VALUES (?, ?)",
+                    "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)",
                     (task_id, task_id),
                 )
 
@@ -183,7 +185,8 @@ class TestStatusArchived:
 
 class TestForeignKeyEnforcement:
     def test_rejects_task_with_nonexistent_workspace(
-        self, conn: sqlite3.Connection,
+        self,
+        conn: sqlite3.Connection,
     ) -> None:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
@@ -192,15 +195,15 @@ class TestForeignKeyEnforcement:
                 )
 
     def test_rejects_task_with_nonexistent_status(
-        self, conn: sqlite3.Connection,
+        self,
+        conn: sqlite3.Connection,
     ) -> None:
         with transaction(conn):
             workspace_id = insert_workspace(conn, "b")
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO tasks (workspace_id, title, status_id) "
-                    "VALUES (?, 't', 999)",
+                    "INSERT INTO tasks (workspace_id, title, status_id) VALUES (?, 't', 999)",
                     (workspace_id,),
                 )
 
@@ -466,8 +469,12 @@ class TestMigrations:
         conn.execute("INSERT INTO projects (id, board_id, name) VALUES (1, 1, 'p')")
         conn.execute("INSERT INTO columns (id, board_id, name) VALUES (1, 1, 'c')")
         conn.execute("INSERT INTO groups (id, project_id, title) VALUES (1, 1, 'g')")
-        conn.execute("INSERT INTO tasks (id, board_id, title, column_id, project_id) VALUES (1, 1, 'grouped', 1, 1)")
-        conn.execute("INSERT INTO tasks (id, board_id, title, column_id, project_id) VALUES (2, 1, 'ungrouped', 1, 1)")
+        conn.execute(
+            "INSERT INTO tasks (id, board_id, title, column_id, project_id) VALUES (1, 1, 'grouped', 1, 1)"
+        )
+        conn.execute(
+            "INSERT INTO tasks (id, board_id, title, column_id, project_id) VALUES (2, 1, 'ungrouped', 1, 1)"
+        )
         conn.execute("INSERT INTO task_groups (task_id, group_id) VALUES (1, 1)")
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
@@ -481,7 +488,8 @@ class TestMigrations:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         # Verify task_groups table is gone
         tables = {
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
@@ -493,12 +501,12 @@ class TestMigrations:
         assert row["group_id"] is None
         # Verify COLLATE NOCASE applied to name/title columns by migration 003
         # (case-insensitive lookup should work on workspaces after rebuild)
-        assert conn.execute(
-            "SELECT id FROM workspaces WHERE name = 'B'"
-        ).fetchone() is not None
+        assert conn.execute("SELECT id FROM workspaces WHERE name = 'B'").fetchone() is not None
         # Verify composite FK (group_id, project_id) enforces group-project match
         conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (2, 1, 'p2')")
-        conn.execute("INSERT INTO groups (id, workspace_id, project_id, title) VALUES (2, 1, 2, 'g2')")
+        conn.execute(
+            "INSERT INTO groups (id, workspace_id, project_id, title) VALUES (2, 1, 2, 'g2')"
+        )
         with pytest.raises(sqlite3.IntegrityError):
             # Task in project 1 cannot be assigned to group in project 2
             conn.execute(
@@ -601,7 +609,8 @@ class TestMigrations:
 
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         tables = {
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
@@ -609,7 +618,9 @@ class TestMigrations:
         # After migration 006: boards→workspaces, board_id→workspace_id
         conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'b')")
         conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (1, 1, 'p')")
-        conn.execute("INSERT INTO groups (id, workspace_id, project_id, title) VALUES (1, 1, 1, 'g')")
+        conn.execute(
+            "INSERT INTO groups (id, workspace_id, project_id, title) VALUES (1, 1, 1, 'g')"
+        )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -758,7 +769,8 @@ class TestMigrations:
         conn.commit()
 
     def test_migration_011_adds_entity_metadata_and_tightens_task_check(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Cascade-recreate path: metadata columns on wsp/proj/grp, CHECK on
         tasks.metadata, task_history field CHECK, dependent data preserved."""
@@ -773,24 +785,17 @@ class TestMigrations:
         conn.execute("INSERT INTO workspaces (name) VALUES ('w')")
         conn.execute("INSERT INTO statuses (workspace_id, name) VALUES (1, 'todo')")
         conn.execute("INSERT INTO projects (workspace_id, name) VALUES (1, 'p')")
-        conn.execute(
-            "INSERT INTO groups (workspace_id, project_id, title) VALUES (1, 1, 'g')"
-        )
+        conn.execute("INSERT INTO groups (workspace_id, project_id, title) VALUES (1, 1, 'g')")
         conn.execute(
             "INSERT INTO tasks (workspace_id, title, status_id, metadata) "
             "VALUES (1, 't1', 1, '{\"branch\":\"feat\"}')"
         )
+        conn.execute("INSERT INTO tasks (workspace_id, title, status_id) VALUES (1, 't2', 1)")
         conn.execute(
-            "INSERT INTO tasks (workspace_id, title, status_id) VALUES (1, 't2', 1)"
-        )
-        conn.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-            "VALUES (2, 1, 1)"
+            "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) VALUES (2, 1, 1)"
         )
         conn.execute("INSERT INTO tags (workspace_id, name) VALUES (1, 'bug')")
-        conn.execute(
-            "INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (1, 1, 1)"
-        )
+        conn.execute("INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (1, 1, 1)")
         conn.execute(
             "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
             "VALUES (1, 1, 'title', 'updated', 'test')"
@@ -834,11 +839,14 @@ class TestMigrations:
         # Cascade FKs still fire after the recreate
         conn.execute("DELETE FROM tasks WHERE id = 1")
         assert conn.execute("SELECT COUNT(*) FROM task_tags WHERE task_id = 1").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM task_history WHERE task_id = 1").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM task_history WHERE task_id = 1").fetchone()[0] == 0
+        )
         conn.close()
 
     def test_migration_011_fails_fast_on_invalid_task_metadata(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Pre-flight check in _pre_migration_check should surface a clear
         error before the destructive recreate runs, leaving the DB at v10."""
@@ -864,7 +872,8 @@ class TestMigrations:
         conn.close()
 
     def test_migration_011_fails_fast_on_off_allowlist_task_history_field(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Pre-flight check should also surface off-allowlist task_history.field
         values before the recreate adds the CHECK constraint."""
@@ -888,15 +897,18 @@ class TestMigrations:
         conn.close()
 
     def test_migration_011_yields_schema_shape_matching_fresh(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """After migration 011, the migrated DB's table/column/index shape
         should match a fresh init_db DB. Catches any drift between the
         migration file and schema.sql."""
+
         def snapshot(c: sqlite3.Connection) -> dict:
             result: dict = {"tables": {}, "indexes": {}}
             table_names = sorted(
-                r[0] for r in c.execute(
+                r[0]
+                for r in c.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' "
                     "AND name NOT LIKE 'sqlite_%' AND name != '_user_migrations'"
                 )
@@ -912,9 +924,9 @@ class TestMigrations:
                 )
                 result["tables"][t] = {"columns": cols, "fks": fks}
             index_names = sorted(
-                r[0] for r in c.execute(
-                    "SELECT name FROM sqlite_master WHERE type='index' "
-                    "AND name NOT LIKE 'sqlite_%'"
+                r[0]
+                for r in c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"
                 )
             )
             for name in index_names:
@@ -966,7 +978,8 @@ class TestMigrations:
 
 class TestTaskHistoryFieldConstraint:
     def test_rejects_invalid_field_value(
-        self, conn: sqlite3.Connection,
+        self,
+        conn: sqlite3.Connection,
     ) -> None:
         with transaction(conn):
             workspace_id = insert_workspace(conn, "b")
@@ -981,7 +994,8 @@ class TestTaskHistoryFieldConstraint:
                 )
 
     def test_accepts_valid_field_value(
-        self, conn: sqlite3.Connection,
+        self,
+        conn: sqlite3.Connection,
     ) -> None:
         with transaction(conn):
             workspace_id = insert_workspace(conn, "b")

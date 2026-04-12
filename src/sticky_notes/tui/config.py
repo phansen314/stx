@@ -4,9 +4,7 @@ import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
-DEFAULT_CONFIG_PATH = (
-    Path.home() / ".config" / "sticky-notes" / "tui.toml"
-)
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "sticky-notes" / "tui.toml"
 
 
 @dataclass

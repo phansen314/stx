@@ -14,7 +14,6 @@ from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class TaskEditModal(BaseEditModal):
-
     def __init__(
         self,
         detail: TaskDetail,
@@ -95,7 +94,9 @@ class TaskEditModal(BaseEditModal):
 
             due_str = format_timestamp(self.detail.due_date) if self.detail.due_date else ""
             start_str = format_timestamp(self.detail.start_date) if self.detail.start_date else ""
-            finish_str = format_timestamp(self.detail.finish_date) if self.detail.finish_date else ""
+            finish_str = (
+                format_timestamp(self.detail.finish_date) if self.detail.finish_date else ""
+            )
 
             with Horizontal(classes="form-row"):
                 with Vertical(classes="form-group"):
@@ -204,14 +205,19 @@ class TaskEditModal(BaseEditModal):
             self._show_error("Finish date must be on or after start date")
             return
 
-        self._diff_and_dismiss("task_id", self.detail.id, self.detail, {
-            "title": title,
-            "description": description,
-            "status_id": status_id,
-            "priority": priority,
-            "project_id": project_id,
-            "group_id": group_id,
-            "due_date": due_date,
-            "start_date": start_date,
-            "finish_date": finish_date,
-        })
+        self._diff_and_dismiss(
+            "task_id",
+            self.detail.id,
+            self.detail,
+            {
+                "title": title,
+                "description": description,
+                "status_id": status_id,
+                "priority": priority,
+                "project_id": project_id,
+                "group_id": group_id,
+                "due_date": due_date,
+                "start_date": start_date,
+                "finish_date": finish_date,
+            },
+        )

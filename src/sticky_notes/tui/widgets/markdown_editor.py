@@ -13,7 +13,9 @@ class _PreviewScroll(VerticalScroll, can_focus=False):
 class MarkdownEditor(Widget):
     """TextArea editor + Markdown preview, toggled via ContentSwitcher."""
 
-    def __init__(self, text: str = "", *, id: str | None = None, classes: str | None = None) -> None:
+    def __init__(
+        self, text: str = "", *, id: str | None = None, classes: str | None = None
+    ) -> None:
         super().__init__(id=id, classes=classes)
         self._initial_text = text
         pfx = id or "md"

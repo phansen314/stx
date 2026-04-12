@@ -10,7 +10,6 @@ from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class ProjectEditModal(BaseEditModal):
-
     def __init__(self, detail: ProjectDetail) -> None:
         self.detail = detail
         super().__init__()
@@ -52,7 +51,12 @@ class ProjectEditModal(BaseEditModal):
         desc_text = self.query_one("#project-edit-desc", MarkdownEditor).text.strip()
         description = desc_text or None
 
-        self._diff_and_dismiss("project_id", self.detail.id, self.detail, {
-            "name": name,
-            "description": description,
-        })
+        self._diff_and_dismiss(
+            "project_id",
+            self.detail.id,
+            self.detail,
+            {
+                "name": name,
+                "description": description,
+            },
+        )

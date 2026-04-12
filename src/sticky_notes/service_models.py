@@ -12,6 +12,7 @@ from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
 class TaskListItem:
     """Task fields plus resolved display names, for list rendering without
     extra lookups. Carries names, not full objects."""
+
     id: int
     workspace_id: int
     title: str
@@ -35,6 +36,7 @@ class TaskListItem:
 class GroupRef:
     """Group fields plus edge IDs, for list rendering and tree walking without
     fetching full related objects."""
+
     id: int
     workspace_id: int
     project_id: int
@@ -64,6 +66,7 @@ class WorkspaceListView:
 @dataclass(frozen=True)
 class WorkspaceContext:
     """Aggregated workspace state for one-call session startup."""
+
     view: WorkspaceListView
     projects: tuple[Project, ...]
     tags: tuple[Tag, ...]
@@ -149,6 +152,7 @@ class MoveToWorkspacePreview:
 class ArchivePreview:
     """Dry-run result for an archive command. Counts reflect additional
     entities beyond the root that *would* be archived."""
+
     entity_type: Literal["task", "group", "project", "status", "tag", "workspace"]
     entity_name: str
     already_archived: bool
@@ -170,6 +174,7 @@ class EntityUpdatePreview:
     diff payloads are JSON-consumer-facing and dict shape is the natural
     JSON representation. Callers must treat these fields as read-only.
     """
+
     entity_type: Literal["task", "project", "group"]
     entity_id: int
     label: str  # task title, project name, group title
@@ -183,6 +188,7 @@ class EntityUpdatePreview:
 class TaskMovePreview:
     """Dry-run result for `task mv`. Shows from/to status, position, and
     optional project change."""
+
     task_id: int
     title: str
     from_status: str
@@ -192,5 +198,3 @@ class TaskMovePreview:
     from_project: str | None
     to_project: str | None
     project_changed: bool
-
-

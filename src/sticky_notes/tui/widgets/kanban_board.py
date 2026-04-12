@@ -273,4 +273,3 @@ class KanbanBoard(Horizontal):
         new_ci = (ci + delta) % len(cols)
         self.screen.set_focus(cols[new_ci])
         return True
-

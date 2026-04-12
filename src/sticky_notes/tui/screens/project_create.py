@@ -9,7 +9,6 @@ from sticky_notes.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class ProjectCreateModal(BaseEditModal):
-
     def compose(self) -> ComposeResult:
         with ModalScroll(classes="modal-container"):
             yield Static("New Project", classes="modal-id")

@@ -31,7 +31,9 @@ class ConfigModal(BaseEditModal):
                 yield Static("Theme", classes="form-label")
                 yield Select(
                     theme_options,
-                    value=self._original_theme if self._original_theme in self._available_themes else Select.NULL,
+                    value=self._original_theme
+                    if self._original_theme in self._available_themes
+                    else Select.NULL,
                     id="config-theme",
                     allow_blank=False,
                     classes="form-field",

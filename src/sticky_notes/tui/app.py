@@ -111,7 +111,12 @@ class StickyNotesApp(App):
             return None
         return self._models.get(self._active_workspace_id)
 
-    def __init__(self, db_path: Path | None = None, config_path: Path | None = None, config: TuiConfig | None = None):
+    def __init__(
+        self,
+        db_path: Path | None = None,
+        config_path: Path | None = None,
+        config: TuiConfig | None = None,
+    ):
         super().__init__()
         self.db_path = db_path or DEFAULT_DB_PATH
         self.config_path = config_path or DEFAULT_CONFIG_PATH
@@ -138,7 +143,9 @@ class StickyNotesApp(App):
         else:
             # Unknown / stale theme name — sync config to the actual live theme.
             self.config.theme = self.theme
-        self._refresh_timer = self.set_interval(self.config.auto_refresh_seconds, self.request_refresh)
+        self._refresh_timer = self.set_interval(
+            self.config.auto_refresh_seconds, self.request_refresh
+        )
 
         tree = self.query_one(WorkspaceTree)
         kanban = self.query_one(KanbanBoard)
@@ -219,13 +226,18 @@ class StickyNotesApp(App):
             model = load_workspace_model(self.conn, self._active_workspace_id)
         except LookupError:
             return None
-        model = replace(model, statuses=self._order_statuses(model.statuses, self._active_workspace_id))
+        model = replace(
+            model, statuses=self._order_statuses(model.statuses, self._active_workspace_id)
+        )
         self._models[self._active_workspace_id] = model
         return model
 
-    async def _rerender(self, tree: WorkspaceTree, kanban: KanbanBoard, model: WorkspaceModel) -> None:
+    async def _rerender(
+        self, tree: WorkspaceTree, kanban: KanbanBoard, model: WorkspaceModel
+    ) -> None:
         """Redraw the tree + kanban and restore focus to the previously focused card/column if possible."""
         from textual.css.query import NoMatches
+
         # tree.load() causes Textual to queue NodeHighlighted(ws1) when the cursor lands on the
         # first workspace node after rebuild.  That fires WorkspaceChanged(1) which would clobber
         # _active_workspace_id and reload the kanban for the wrong workspace.  Set _rerendering
@@ -327,7 +339,9 @@ class StickyNotesApp(App):
             if cards:
                 self.set_focus(cards.first())
 
-    async def on_workspace_tree_workspace_changed(self, event: WorkspaceTree.WorkspaceChanged) -> None:
+    async def on_workspace_tree_workspace_changed(
+        self, event: WorkspaceTree.WorkspaceChanged
+    ) -> None:
         # in-memory focus only — do not persist; terminal owns active workspace
         if self._rerendering:
             # Spurious WorkspaceChanged fired by tree.load during _rerender — ignore.
@@ -386,7 +400,9 @@ class StickyNotesApp(App):
         if result is None:
             return
         r = result
-        self._dismiss_callback(result, lambda: update_task(self.conn, r["task_id"], r["changes"], source="tui"))
+        self._dismiss_callback(
+            result, lambda: update_task(self.conn, r["task_id"], r["changes"], source="tui")
+        )
 
     def action_metadata(self) -> None:
         if self._active_model is None:
@@ -466,7 +482,10 @@ class StickyNotesApp(App):
         self._dismiss_callback(
             result,
             lambda: replace_task_metadata(
-                self.conn, r["task_id"], r["metadata"], source="tui",
+                self.conn,
+                r["task_id"],
+                r["metadata"],
+                source="tui",
             ),
         )
 
@@ -477,7 +496,10 @@ class StickyNotesApp(App):
         self._dismiss_callback(
             result,
             lambda: replace_workspace_metadata(
-                self.conn, r["workspace_id"], r["metadata"], source="tui",
+                self.conn,
+                r["workspace_id"],
+                r["metadata"],
+                source="tui",
             ),
         )
 
@@ -488,7 +510,10 @@ class StickyNotesApp(App):
         self._dismiss_callback(
             result,
             lambda: replace_project_metadata(
-                self.conn, r["project_id"], r["metadata"], source="tui",
+                self.conn,
+                r["project_id"],
+                r["metadata"],
+                source="tui",
             ),
         )
 
@@ -499,7 +524,10 @@ class StickyNotesApp(App):
         self._dismiss_callback(
             result,
             lambda: replace_group_metadata(
-                self.conn, r["group_id"], r["metadata"], source="tui",
+                self.conn,
+                r["group_id"],
+                r["metadata"],
+                source="tui",
             ),
         )
 
@@ -593,10 +621,14 @@ class StickyNotesApp(App):
         label = escape_markup(workspace.name)
         self.push_screen(
             ArchiveConfirmModal(format_archive_preview(preview), label),
-            callback=lambda confirmed: self._on_archive_workspace_dismiss(workspace.id, workspace.name, confirmed),
+            callback=lambda confirmed: self._on_archive_workspace_dismiss(
+                workspace.id, workspace.name, confirmed
+            ),
         )
 
-    def _on_archive_workspace_dismiss(self, workspace_id: int, workspace_name: str, confirmed: bool | None) -> None:
+    def _on_archive_workspace_dismiss(
+        self, workspace_id: int, workspace_name: str, confirmed: bool | None
+    ) -> None:
         if not confirmed:
             return
         try:
@@ -625,7 +657,9 @@ class StickyNotesApp(App):
         if result is None:
             return
         r = result
-        self._dismiss_callback(result, lambda: update_project(self.conn, r["project_id"], r["changes"]))
+        self._dismiss_callback(
+            result, lambda: update_project(self.conn, r["project_id"], r["changes"])
+        )
 
     def _edit_group(self, group: Group) -> None:
         detail = get_group_detail(self.conn, group.id)
@@ -651,7 +685,9 @@ class StickyNotesApp(App):
         if result is None:
             return
         r = result
-        self._dismiss_callback(result, lambda: update_workspace(self.conn, r["workspace_id"], r["changes"]))
+        self._dismiss_callback(
+            result, lambda: update_workspace(self.conn, r["workspace_id"], r["changes"])
+        )
 
     async def on_kanban_board_task_status_move(self, event: KanbanBoard.TaskStatusMove) -> None:
         try:
@@ -681,7 +717,9 @@ class StickyNotesApp(App):
             self.theme = changes["theme"]
         if "auto_refresh_seconds" in changes and self._refresh_timer is not None:
             self._refresh_timer.stop()  # type: ignore[attr-defined]
-            self._refresh_timer = self.set_interval(changes["auto_refresh_seconds"], self.request_refresh)
+            self._refresh_timer = self.set_interval(
+                changes["auto_refresh_seconds"], self.request_refresh
+            )
         for key, value in changes.items():
             setattr(self.config, key, value)
         save_config(self.config, self.config_path)
@@ -757,7 +795,9 @@ class StickyNotesApp(App):
         r = result
         self._dismiss_callback(result, lambda: create_group(self.conn, **r))
 
-    def _order_statuses(self, statuses: tuple[Status, ...], workspace_id: int) -> tuple[Status, ...]:
+    def _order_statuses(
+        self, statuses: tuple[Status, ...], workspace_id: int
+    ) -> tuple[Status, ...]:
         order = self.config.status_order.get(workspace_id, [])
         if not order:
             return statuses

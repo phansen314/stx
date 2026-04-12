@@ -15,8 +15,11 @@ from sticky_notes.tui.widgets import KanbanColumn, TaskCard
 
 
 class TestArchiveConfirmModal:
-    def _make_app(self, preview_text: str = "would archive task 'Foo'", entity_label: str = "task-0001 — Foo") -> StickyNotesApp:
+    def _make_app(
+        self, preview_text: str = "would archive task 'Foo'", entity_label: str = "task-0001 — Foo"
+    ) -> StickyNotesApp:
         from helpers import ModalTestApp
+
         modal = ArchiveConfirmModal(preview_text=preview_text, entity_label=entity_label)
         return ModalTestApp(modal)
 
@@ -24,6 +27,7 @@ class TestArchiveConfirmModal:
         app = self._make_app()
         async with app.run_test() as pilot:
             from textual.widgets import Button
+
             focused = app.screen.focused
             assert isinstance(focused, Button)
             assert focused.id == "archive-no"
@@ -59,6 +63,7 @@ class TestArchiveConfirmModal:
         app = self._make_app(preview_text="would archive project 'my-proj'\n  tasks: 5")
         async with app.run_test() as pilot:
             from textual.widgets import Static
+
             preview_widget = app.screen.query_one(".archive-preview", Static)
             assert "tasks: 5" in str(preview_widget.render())
 
@@ -202,7 +207,11 @@ class TestArchiveKeyDispatch:
                 ws_node = tree.root.children[0]
                 proj_node = [n for n in ws_node.children if n.allow_expand][0]
                 task_leaf = next(
-                    (n for n in proj_node.children if not n.allow_expand and isinstance(n.data, Task) and n.data.id == task_id),
+                    (
+                        n
+                        for n in proj_node.children
+                        if not n.allow_expand and isinstance(n.data, Task) and n.data.id == task_id
+                    ),
                     None,
                 )
                 if task_leaf is None:
@@ -299,7 +308,9 @@ class TestArchiveConfirm:
         async with app.run_test() as pilot:
             group = service.create_group(app.conn, ids["project_id"], "sprint-2")
             task = service.create_task(
-                app.conn, ids["workspace_id"], "grouped-task",
+                app.conn,
+                ids["workspace_id"],
+                "grouped-task",
                 ids["status_ids"]["todo"],
                 project_id=ids["project_id"],
             )
@@ -372,6 +383,7 @@ class TestArchiveConfirm:
             await pilot.pause()
             assert isinstance(app.screen, ArchiveConfirmModal)
             from textual.widgets import Static
+
             preview_widget = app.screen.query_one(".archive-preview", Static)
             rendered = str(preview_widget.render())
             # Seeded project has tasks — preview should mention them

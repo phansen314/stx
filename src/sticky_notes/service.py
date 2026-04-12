@@ -258,7 +258,9 @@ def list_workspaces(
     only_archived: bool = False,
 ) -> tuple[Workspace, ...]:
     return repo.list_workspaces(
-        conn, include_archived=include_archived, only_archived=only_archived,
+        conn,
+        include_archived=include_archived,
+        only_archived=only_archived,
     )
 
 
@@ -327,7 +329,9 @@ def list_statuses(
     include_archived: bool = False,
     only_archived: bool = False,
 ) -> tuple[Status, ...]:
-    return repo.list_statuses(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
+    return repo.list_statuses(
+        conn, workspace_id, include_archived=include_archived, only_archived=only_archived
+    )
 
 
 def update_status(
@@ -340,8 +344,7 @@ def update_status(
             active_tasks = repo.list_tasks_by_status(conn, status_id)
             if active_tasks:
                 raise ValueError(
-                    f"status has {len(active_tasks)} active task(s); "
-                    "move or archive them first"
+                    f"status has {len(active_tasks)} active task(s); move or archive them first"
                 )
         return repo.update_status(conn, status_id, changes)
 
@@ -417,7 +420,9 @@ def list_projects(
     include_archived: bool = False,
     only_archived: bool = False,
 ) -> tuple[Project, ...]:
-    return repo.list_projects(conn, workspace_id, include_archived=include_archived, only_archived=only_archived)
+    return repo.list_projects(
+        conn, workspace_id, include_archived=include_archived, only_archived=only_archived
+    )
 
 
 def _validate_project_update(
@@ -433,8 +438,7 @@ def _validate_project_update(
         active_tasks = repo.list_tasks_by_project(conn, project_id)
         if active_tasks:
             raise ValueError(
-                f"project has {len(active_tasks)} active task(s); "
-                "use 'project archive' to cascade"
+                f"project has {len(active_tasks)} active task(s); use 'project archive' to cascade"
             )
         active_groups = repo.list_groups(conn, project_id)
         if active_groups:
@@ -616,7 +620,9 @@ def get_workspace_list_view(
         only_archived=only_archived,
     )
     tasks = repo.list_tasks_filtered(conn, workspace_id, task_filter=task_filter)
-    statuses = repo.list_statuses(conn, workspace_id, include_archived=include_archived or only_archived)
+    statuses = repo.list_statuses(
+        conn, workspace_id, include_archived=include_archived or only_archived
+    )
     projects = repo.list_projects(conn, workspace_id, include_archived=True)
     proj_name_by_id: dict[int, str] = {p.id: p.name for p in projects}
     tags = repo.list_tags(conn, workspace_id, include_archived=True)
@@ -669,8 +675,12 @@ def update_task(
         return get_task(conn, task_id)
     with transaction(conn), _friendly_errors():
         return _update_task_body(
-            conn, task_id, changes, source,
-            add_tags=add_tags, remove_tags=remove_tags,
+            conn,
+            task_id,
+            changes,
+            source,
+            add_tags=add_tags,
+            remove_tags=remove_tags,
         )
 
 
@@ -767,23 +777,34 @@ def _validate_move_to_workspace(
     blocks = repo.list_blocks_ids(conn, task_id)
     if blocked_by or blocks:
         dep_ids = tuple(sorted({*blocked_by, *blocks}))
-        return task, False, (
-            f"task {task_id} has dependencies ({', '.join(str(d) for d in dep_ids)}); "
-            "remove them before moving to another workspace"
-        ), dep_ids
+        return (
+            task,
+            False,
+            (
+                f"task {task_id} has dependencies ({', '.join(str(d) for d in dep_ids)}); "
+                "remove them before moving to another workspace"
+            ),
+            dep_ids,
+        )
     target_col = repo.get_status(conn, target_status_id)
     if target_col is None or target_col.workspace_id != target_workspace_id:
-        return task, False, (
-            f"status {target_status_id} does not belong to workspace {target_workspace_id}"
-        ), dep_ids
+        return (
+            task,
+            False,
+            (f"status {target_status_id} does not belong to workspace {target_workspace_id}"),
+            dep_ids,
+        )
     if target_col.archived:
         return task, False, f"status {target_status_id} is archived", dep_ids
     if project_id is not None:
         proj = repo.get_project(conn, project_id)
         if proj is None or proj.workspace_id != target_workspace_id:
-            return task, False, (
-                f"project {project_id} does not belong to workspace {target_workspace_id}"
-            ), dep_ids
+            return (
+                task,
+                False,
+                (f"project {project_id} does not belong to workspace {target_workspace_id}"),
+                dep_ids,
+            )
         if proj.archived:
             return task, False, f"project {project_id} is archived", dep_ids
     return task, True, None, dep_ids
@@ -799,7 +820,11 @@ def preview_move_to_workspace(
 ) -> MoveToWorkspacePreview:
     """Dry-run the same validation as move_task_to_workspace. Does not mutate."""
     task, can_move, reason, dep_ids = _validate_move_to_workspace(
-        conn, task_id, target_workspace_id, target_status_id, project_id,
+        conn,
+        task_id,
+        target_workspace_id,
+        target_status_id,
+        project_id,
     )
     return MoveToWorkspacePreview(
         task_id=task.id,
@@ -826,7 +851,11 @@ def move_task_to_workspace(
 ) -> Task:
     with transaction(conn), _friendly_errors():
         old, can_move, reason, _ = _validate_move_to_workspace(
-            conn, task_id, target_workspace_id, target_status_id, project_id,
+            conn,
+            task_id,
+            target_workspace_id,
+            target_status_id,
+            project_id,
         )
         if not can_move:
             raise ValueError(reason)
@@ -854,7 +883,9 @@ def move_task_to_workspace(
         for tag in repo.list_tags_by_task(conn, task_id):
             target_tag = repo.get_tag_by_name(conn, target_workspace_id, tag.name)
             if target_tag is None:
-                target_tag = repo.insert_tag(conn, NewTag(workspace_id=target_workspace_id, name=tag.name))
+                target_tag = repo.insert_tag(
+                    conn, NewTag(workspace_id=target_workspace_id, name=tag.name)
+                )
             repo.add_tag_to_task(conn, new.id, target_tag.id)
 
         repo.copy_task_metadata(conn, task_id, new.id)
@@ -994,7 +1025,10 @@ def get_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
 
 def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) -> Task:
     return _set_entity_meta(
-        conn, task_id, key, value,
+        conn,
+        task_id,
+        key,
+        value,
         setter=repo.set_task_metadata_key,
         fetcher=get_task,
     )
@@ -1002,7 +1036,9 @@ def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) 
 
 def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
     return _remove_entity_meta(
-        conn, task_id, key,
+        conn,
+        task_id,
+        key,
         remover=repo.remove_task_metadata_key,
         fetcher=get_task,
         entity_name="task",
@@ -1022,7 +1058,9 @@ def replace_task_metadata(
     """
     del source  # not tracked today; see docstring
     return _replace_entity_metadata(
-        conn, task_id, new_metadata,
+        conn,
+        task_id,
+        new_metadata,
         writer=repo.replace_task_metadata,
         fetcher=get_task,
     )
@@ -1035,9 +1073,14 @@ def get_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) ->
     return _get_entity_meta(conn, workspace_id, key, fetcher=get_workspace, entity_name="workspace")
 
 
-def set_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> Workspace:
+def set_workspace_meta(
+    conn: sqlite3.Connection, workspace_id: int, key: str, value: str
+) -> Workspace:
     return _set_entity_meta(
-        conn, workspace_id, key, value,
+        conn,
+        workspace_id,
+        key,
+        value,
         setter=repo.set_workspace_metadata_key,
         fetcher=get_workspace,
     )
@@ -1045,7 +1088,9 @@ def set_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str, va
 
 def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> str:
     return _remove_entity_meta(
-        conn, workspace_id, key,
+        conn,
+        workspace_id,
+        key,
         remover=repo.remove_workspace_metadata_key,
         fetcher=get_workspace,
         entity_name="workspace",
@@ -1064,7 +1109,9 @@ def replace_workspace_metadata(
     """
     del source
     return _replace_entity_metadata(
-        conn, workspace_id, new_metadata,
+        conn,
+        workspace_id,
+        new_metadata,
         writer=repo.replace_workspace_metadata,
         fetcher=get_workspace,
     )
@@ -1079,7 +1126,10 @@ def get_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str
 
 def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> Project:
     return _set_entity_meta(
-        conn, project_id, key, value,
+        conn,
+        project_id,
+        key,
+        value,
         setter=repo.set_project_metadata_key,
         fetcher=get_project,
     )
@@ -1087,7 +1137,9 @@ def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value:
 
 def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str:
     return _remove_entity_meta(
-        conn, project_id, key,
+        conn,
+        project_id,
+        key,
         remover=repo.remove_project_metadata_key,
         fetcher=get_project,
         entity_name="project",
@@ -1106,7 +1158,9 @@ def replace_project_metadata(
     """
     del source
     return _replace_entity_metadata(
-        conn, project_id, new_metadata,
+        conn,
+        project_id,
+        new_metadata,
         writer=repo.replace_project_metadata,
         fetcher=get_project,
     )
@@ -1121,7 +1175,10 @@ def get_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
 
 def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> Group:
     return _set_entity_meta(
-        conn, group_id, key, value,
+        conn,
+        group_id,
+        key,
+        value,
         setter=repo.set_group_metadata_key,
         fetcher=get_group,
     )
@@ -1129,7 +1186,9 @@ def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str
 
 def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
     return _remove_entity_meta(
-        conn, group_id, key,
+        conn,
+        group_id,
+        key,
         remover=repo.remove_group_metadata_key,
         fetcher=get_group,
         entity_name="group",
@@ -1148,7 +1207,9 @@ def replace_group_metadata(
     """
     del source
     return _replace_entity_metadata(
-        conn, group_id, new_metadata,
+        conn,
+        group_id,
+        new_metadata,
         writer=repo.replace_group_metadata,
         fetcher=get_group,
     )
@@ -1175,13 +1236,9 @@ def add_dependency(
             )
         existing = repo.list_blocked_by_ids(conn, task_id)
         if depends_on_id in existing:
-            raise ValueError(
-                f"task {task_id} already depends on task {depends_on_id}"
-            )
+            raise ValueError(f"task {task_id} already depends on task {depends_on_id}")
         if task_id in repo.get_reachable_task_ids(conn, depends_on_id):
-            raise ValueError(
-                f"adding dependency {task_id} -> {depends_on_id} would create a cycle"
-            )
+            raise ValueError(f"adding dependency {task_id} -> {depends_on_id} would create a cycle")
         repo.add_dependency(conn, task_id, depends_on_id)
 
 
@@ -1193,9 +1250,7 @@ def archive_dependency(
     with transaction(conn), _friendly_errors():
         existing = repo.list_blocked_by_ids(conn, task_id)
         if depends_on_id not in existing:
-            raise LookupError(
-                f"task {task_id} does not depend on task {depends_on_id}"
-            )
+            raise LookupError(f"task {task_id} does not depend on task {depends_on_id}")
         repo.archive_dependency(conn, task_id, depends_on_id)
 
 
@@ -1232,9 +1287,7 @@ def add_group_dependency(
             )
         existing = repo.list_group_blocked_by_ids(conn, group_id)
         if depends_on_id in existing:
-            raise ValueError(
-                f"group {group_id} already depends on group {depends_on_id}"
-            )
+            raise ValueError(f"group {group_id} already depends on group {depends_on_id}")
         if group_id in repo.get_reachable_group_dep_ids(conn, depends_on_id):
             raise ValueError(
                 f"adding dependency {group_id} -> {depends_on_id} would create a cycle"
@@ -1250,9 +1303,7 @@ def archive_group_dependency(
     with transaction(conn), _friendly_errors():
         existing = repo.list_group_blocked_by_ids(conn, group_id)
         if depends_on_id not in existing:
-            raise LookupError(
-                f"group {group_id} does not depend on group {depends_on_id}"
-            )
+            raise LookupError(f"group {group_id} does not depend on group {depends_on_id}")
         repo.archive_group_dependency(conn, group_id, depends_on_id)
 
 
@@ -1300,8 +1351,7 @@ def create_group(
                 raise LookupError(f"parent group {parent_id} not found")
             if parent.project_id != project_id:
                 raise ValueError(
-                    f"parent group belongs to project {parent.project_id}, "
-                    f"not {project_id}"
+                    f"parent group belongs to project {parent.project_id}, not {project_id}"
                 )
         return repo.insert_group(
             conn,
@@ -1408,15 +1458,19 @@ def list_groups(
     only_archived: bool = False,
 ) -> tuple[GroupRef, ...]:
     groups = repo.list_groups(
-        conn, project_id,
-        include_archived=include_archived, only_archived=only_archived,
+        conn,
+        project_id,
+        include_archived=include_archived,
+        only_archived=only_archived,
     )
     if not groups:
         return ()
     group_ids = tuple(g.id for g in groups)
     task_ids_map = repo.batch_task_ids_by_group(conn, group_ids)
     child_ids_map = repo.batch_child_ids_by_group(
-        conn, group_ids, include_archived=include_archived,
+        conn,
+        group_ids,
+        include_archived=include_archived,
     )
     return tuple(
         group_to_ref(g, task_ids=task_ids_map.get(g.id, ()), child_ids=child_ids_map.get(g.id, ()))
@@ -1542,7 +1596,10 @@ def list_tags(
     only_archived: bool = False,
 ) -> tuple[Tag, ...]:
     return repo.list_tags(
-        conn, workspace_id, include_archived=include_archived, only_archived=only_archived,
+        conn,
+        workspace_id,
+        include_archived=include_archived,
+        only_archived=only_archived,
     )
 
 

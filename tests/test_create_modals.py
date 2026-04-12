@@ -1,4 +1,5 @@
 """Tests for create modals: NewResourceModal, TaskCreateModal, ProjectCreateModal, GroupCreateModal."""
+
 from __future__ import annotations
 
 from helpers import ModalTestApp
@@ -21,7 +22,15 @@ def make_status(**overrides) -> Status:
 
 
 def make_project(**overrides) -> Project:
-    defaults = dict(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0, metadata={})
+    defaults = dict(
+        id=1,
+        workspace_id=1,
+        name="Alpha",
+        description=None,
+        archived=False,
+        created_at=0,
+        metadata={},
+    )
     defaults.update(overrides)
     return Project(**defaults)
 
@@ -29,16 +38,21 @@ def make_project(**overrides) -> Project:
 STATUSES = (make_status(id=1, name="todo"), make_status(id=2, name="done"))
 PROJECTS = (make_project(id=1, name="Alpha"), make_project(id=2, name="Beta"))
 
-PROJECT_NODES = tuple(
-    ProjectNode(project=p, groups=(), ungrouped_tasks=())
-    for p in PROJECTS
-)
+PROJECT_NODES = tuple(ProjectNode(project=p, groups=(), ungrouped_tasks=()) for p in PROJECTS)
 
 
 def _group(id: int, project_id: int, title: str) -> Group:
     return Group(
-        id=id, workspace_id=1, project_id=project_id, title=title, description=None,
-        parent_id=None, position=0, archived=False, created_at=0, metadata={},
+        id=id,
+        workspace_id=1,
+        project_id=project_id,
+        title=title,
+        description=None,
+        parent_id=None,
+        position=0,
+        archived=False,
+        created_at=0,
+        metadata={},
     )
 
 
@@ -47,9 +61,7 @@ def _nodes_with_groups() -> tuple[ProjectNode, ...]:
         GroupNode(group=_group(10, 1, "Login"), tasks=(), children=()),
         GroupNode(group=_group(11, 1, "Signup"), tasks=(), children=()),
     )
-    beta_groups = (
-        GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),
-    )
+    beta_groups = (GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),)
     return (
         ProjectNode(project=PROJECTS[0], groups=alpha_groups, ungrouped_tasks=()),
         ProjectNode(project=PROJECTS[1], groups=beta_groups, ungrouped_tasks=()),

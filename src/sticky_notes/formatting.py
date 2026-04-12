@@ -44,5 +44,3 @@ def parse_date(raw: str) -> int:
 
 def format_timestamp(epoch: int) -> str:
     return strftime("%Y-%m-%d", gmtime(epoch))
-
-

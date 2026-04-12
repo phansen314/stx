@@ -1,4 +1,5 @@
 """Tests for the MarkdownEditor widget."""
+
 from __future__ import annotations
 
 from textual.app import App, ComposeResult

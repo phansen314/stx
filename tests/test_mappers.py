@@ -71,13 +71,22 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
         project_id = insert_project(conn, workspace_id)
         status_id = insert_status(conn, workspace_id)
         task1_id = insert_task(
-            conn, workspace_id, "task1", status_id, project_id, priority=5,
+            conn,
+            workspace_id,
+            "task1",
+            status_id,
+            project_id,
+            priority=5,
         )
         task2_id = insert_task(conn, workspace_id, "task2", status_id, priority=3)
         insert_task_dependency(conn, task1_id, task2_id)
         history_id = insert_task_history(
-            conn, task1_id, field="title", old_value="old",
-            new_value="task1", source="tui",
+            conn,
+            task1_id,
+            field="title",
+            old_value="old",
+            new_value="task1",
+            source="tui",
         )
     return FullSeed(
         conn=conn,
@@ -98,7 +107,8 @@ class TestRowToWorkspace:
         with transaction(conn):
             workspace_id = insert_workspace(conn)
         row = conn.execute(
-            "SELECT * FROM workspaces WHERE id = ?", (workspace_id,),
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
         ).fetchone()
         workspace = row_to_workspace(row)
         assert isinstance(workspace, Workspace)
@@ -112,7 +122,8 @@ class TestRowToWorkspace:
         with transaction(conn):
             conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?", (workspace_id,))
         row = conn.execute(
-            "SELECT * FROM workspaces WHERE id = ?", (workspace_id,),
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
         ).fetchone()
         workspace = row_to_workspace(row)
         assert workspace.archived is True
@@ -124,7 +135,8 @@ class TestRowToStatus:
             workspace_id = insert_workspace(conn)
             col_id = insert_status(conn, workspace_id)
         row = conn.execute(
-            "SELECT * FROM statuses WHERE id = ?", (col_id,),
+            "SELECT * FROM statuses WHERE id = ?",
+            (col_id,),
         ).fetchone()
         col = row_to_status(row)
         assert isinstance(col, Status)
@@ -140,7 +152,8 @@ class TestRowToStatus:
         with transaction(conn):
             conn.execute("UPDATE statuses SET archived = 1 WHERE id = ?", (col_id,))
         row = conn.execute(
-            "SELECT * FROM statuses WHERE id = ?", (col_id,),
+            "SELECT * FROM statuses WHERE id = ?",
+            (col_id,),
         ).fetchone()
         col = row_to_status(row)
         assert col.archived is True
@@ -152,7 +165,8 @@ class TestRowToProject:
             workspace_id = insert_workspace(conn)
             proj_id = insert_project(conn, workspace_id)
         row = conn.execute(
-            "SELECT * FROM projects WHERE id = ?", (proj_id,),
+            "SELECT * FROM projects WHERE id = ?",
+            (proj_id,),
         ).fetchone()
         project = row_to_project(row)
         assert isinstance(project, Project)
@@ -166,7 +180,8 @@ class TestRowToProject:
         with transaction(conn):
             conn.execute("UPDATE projects SET archived = 1 WHERE id = ?", (proj_id,))
         row = conn.execute(
-            "SELECT * FROM projects WHERE id = ?", (proj_id,),
+            "SELECT * FROM projects WHERE id = ?",
+            (proj_id,),
         ).fetchone()
         project = row_to_project(row)
         assert project.archived is True
@@ -175,7 +190,8 @@ class TestRowToProject:
 class TestRowToTask:
     def test_maps_row(self, seeded: FullSeed) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM tasks WHERE id = ?", (seeded.task1_id,),
+            "SELECT * FROM tasks WHERE id = ?",
+            (seeded.task1_id,),
         ).fetchone()
         task = row_to_task(row)
         assert isinstance(task, Task)
@@ -187,7 +203,8 @@ class TestRowToTask:
     def test_maps_null_optional_fields(self, seeded: FullSeed) -> None:
         """Task with NULL project_id, description, due_date, start_date, finish_date."""
         row = seeded.conn.execute(
-            "SELECT * FROM tasks WHERE id = ?", (seeded.task2_id,),
+            "SELECT * FROM tasks WHERE id = ?",
+            (seeded.task2_id,),
         ).fetchone()
         task = row_to_task(row)
         assert task.project_id is None
@@ -200,7 +217,8 @@ class TestRowToTask:
 class TestRowToTaskHistory:
     def test_maps_row(self, seeded: FullSeed) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM task_history WHERE id = ?", (seeded.history_id,),
+            "SELECT * FROM task_history WHERE id = ?",
+            (seeded.history_id,),
         ).fetchone()
         history = row_to_task_history(row)
         assert isinstance(history, TaskHistory)
@@ -231,16 +249,38 @@ class TestRowToTaskHistory:
 class TestShallowFields:
     def test_extracts_all_fields(self) -> None:
         task = Task(
-            id=1, workspace_id=1, title="t", project_id=None, description=None,
-            status_id=1, priority=1, due_date=None, position=0,
-            archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
+            id=1,
+            workspace_id=1,
+            title="t",
+            project_id=None,
+            description=None,
+            status_id=1,
+            priority=1,
+            due_date=None,
+            position=0,
+            archived=False,
+            created_at=0,
+            start_date=None,
+            finish_date=None,
+            group_id=None,
             metadata={},
         )
         fields = shallow_fields(task, Task)
         assert set(fields.keys()) == {
-            "id", "workspace_id", "title", "project_id", "description",
-            "status_id", "priority", "due_date", "position",
-            "archived", "created_at", "start_date", "finish_date", "group_id",
+            "id",
+            "workspace_id",
+            "title",
+            "project_id",
+            "description",
+            "status_id",
+            "priority",
+            "due_date",
+            "position",
+            "archived",
+            "created_at",
+            "start_date",
+            "finish_date",
+            "group_id",
             "metadata",
         }
 
@@ -259,9 +299,20 @@ class TestShallowFields:
 
 def _task() -> Task:
     return Task(
-        id=1, workspace_id=1, title="t", project_id=None, description=None,
-        status_id=1, priority=1, due_date=None, position=0,
-        archived=False, created_at=0, start_date=None, finish_date=None, group_id=None,
+        id=1,
+        workspace_id=1,
+        title="t",
+        project_id=None,
+        description=None,
+        status_id=1,
+        priority=1,
+        due_date=None,
+        position=0,
+        archived=False,
+        created_at=0,
+        start_date=None,
+        finish_date=None,
+        group_id=None,
         metadata={},
     )
 
@@ -271,7 +322,18 @@ def _status() -> Status:
 
 
 def _group() -> Group:
-    return Group(id=1, workspace_id=1, project_id=1, title="g", description=None, parent_id=None, position=0, archived=False, created_at=0, metadata={})
+    return Group(
+        id=1,
+        workspace_id=1,
+        project_id=1,
+        title="g",
+        description=None,
+        parent_id=None,
+        position=0,
+        archived=False,
+        created_at=0,
+        metadata={},
+    )
 
 
 class TestTaskToListItem:
@@ -298,8 +360,13 @@ class TestTaskToDetail:
     def test_creates_detail(self) -> None:
         status = _status()
         detail = task_to_detail(
-            _task(), status=status, project=None, group=None,
-            blocked_by=(), blocks=(), history=(),
+            _task(),
+            status=status,
+            project=None,
+            group=None,
+            blocked_by=(),
+            blocks=(),
+            history=(),
         )
         assert isinstance(detail, TaskDetail)
         assert detail.status == status
@@ -308,16 +375,26 @@ class TestTaskToDetail:
     def test_task_fields_copied(self) -> None:
         task = _task()
         detail = task_to_detail(
-            task, status=_status(), project=None, group=None,
-            blocked_by=(), blocks=(), history=(),
+            task,
+            status=_status(),
+            project=None,
+            group=None,
+            blocked_by=(),
+            blocks=(),
+            history=(),
         )
         for f in dataclasses.fields(task):
             assert getattr(detail, f.name) == getattr(task, f.name)
 
     def test_hydrated_defaults(self) -> None:
         detail = task_to_detail(
-            _task(), status=_status(), project=None, group=None,
-            blocked_by=(), blocks=(), history=(),
+            _task(),
+            status=_status(),
+            project=None,
+            group=None,
+            blocked_by=(),
+            blocks=(),
+            history=(),
         )
         assert detail.project is None
         assert detail.group is None
@@ -330,14 +407,26 @@ class TestTaskToDetail:
         """status is a plain required field — omitting it is a TypeError from Python."""
         with pytest.raises(TypeError):
             task_to_detail(  # type: ignore[call-arg]
-                _task(), project=None, group=None,
-                blocked_by=(), blocks=(), history=(),
+                _task(),
+                project=None,
+                group=None,
+                blocked_by=(),
+                blocks=(),
+                history=(),
             )
 
 
 class TestProjectToDetail:
     def test_creates_detail(self) -> None:
-        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0, metadata={})
+        project = Project(
+            id=1,
+            workspace_id=1,
+            name="p",
+            description=None,
+            archived=False,
+            created_at=0,
+            metadata={},
+        )
         task = _task()
         detail = project_to_detail(project, tasks=(task,))
         assert isinstance(detail, ProjectDetail)
@@ -345,7 +434,15 @@ class TestProjectToDetail:
         assert detail.tasks == (task,)
 
     def test_project_fields_copied(self) -> None:
-        project = Project(id=1, workspace_id=1, name="p", description=None, archived=False, created_at=0, metadata={})
+        project = Project(
+            id=1,
+            workspace_id=1,
+            name="p",
+            description=None,
+            archived=False,
+            created_at=0,
+            metadata={},
+        )
         detail = project_to_detail(project, tasks=())
         for f in dataclasses.fields(project):
             assert getattr(detail, f.name) == getattr(project, f.name)
@@ -370,7 +467,18 @@ class TestGroupToRef:
 class TestGroupToDetail:
     def test_creates_detail(self) -> None:
         group = _group()
-        child = Group(id=2, workspace_id=1, project_id=1, title="child", description=None, parent_id=1, position=0, archived=False, created_at=0, metadata={})
+        child = Group(
+            id=2,
+            workspace_id=1,
+            project_id=1,
+            title="child",
+            description=None,
+            parent_id=1,
+            position=0,
+            archived=False,
+            created_at=0,
+            metadata={},
+        )
         detail = group_to_detail(group, tasks=(), children=(child,), parent=None)
         assert isinstance(detail, GroupDetail)
         assert detail.title == "g"
@@ -411,7 +519,9 @@ class TestPreInsertDefaults:
         assert task.finish_date is None
 
     def test_new_task_history_defaults(self) -> None:
-        hist = NewTaskHistory(task_id=1, workspace_id=1, field=TaskField.TITLE, new_value="v", source="tui")
+        hist = NewTaskHistory(
+            task_id=1, workspace_id=1, field=TaskField.TITLE, new_value="v", source="tui"
+        )
         assert hist.old_value is None
 
 
@@ -430,7 +540,9 @@ class TestTaskFieldMatchesSchema:
         This test verifies the template substitution works correctly."""
         schema = read_schema()
         for field in TaskField:
-            assert f"'{field.value}'" in schema, f"TaskField.{field.name} missing from rendered schema"
+            assert f"'{field.value}'" in schema, (
+                f"TaskField.{field.name} missing from rendered schema"
+            )
         assert "__TASK_FIELD_VALUES__" not in schema, "placeholder was not substituted"
 
 
@@ -524,7 +636,9 @@ class TestMapperFieldCoverage:
         row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
         workspace = row_to_workspace(row)
         expected = {f.name for f in dataclasses.fields(Workspace)}
-        actual = {f.name for f in dataclasses.fields(workspace) if getattr(workspace, f.name) is not None}
+        actual = {
+            f.name for f in dataclasses.fields(workspace) if getattr(workspace, f.name) is not None
+        }
         assert actual == expected
 
     def test_row_to_status_populates_all_fields(self, conn: sqlite3.Connection) -> None:
@@ -549,31 +663,33 @@ class TestMapperFieldCoverage:
         assert actual == expected
 
     def test_row_to_task_populates_all_non_nullable_fields(
-        self, seeded: FullSeed,
+        self,
+        seeded: FullSeed,
     ) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM tasks WHERE id = ?", (seeded.task1_id,),
+            "SELECT * FROM tasks WHERE id = ?",
+            (seeded.task1_id,),
         ).fetchone()
         task = row_to_task(row)
         non_nullable = {
-            f.name for f in dataclasses.fields(Task)
+            f.name
+            for f in dataclasses.fields(Task)
             if "None" not in str(Task.__dataclass_fields__[f.name].type)
         }
         actual = {f.name for f in dataclasses.fields(task) if getattr(task, f.name) is not None}
         assert non_nullable <= actual
 
     def test_row_to_task_history_populates_all_fields(
-        self, seeded: FullSeed,
+        self,
+        seeded: FullSeed,
     ) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM task_history WHERE id = ?", (seeded.history_id,),
+            "SELECT * FROM task_history WHERE id = ?",
+            (seeded.history_id,),
         ).fetchone()
         hist = row_to_task_history(row)
         # old_value is nullable, rest should be populated
-        non_nullable = {
-            f.name for f in dataclasses.fields(TaskHistory)
-            if f.name != "old_value"
-        }
+        non_nullable = {f.name for f in dataclasses.fields(TaskHistory) if f.name != "old_value"}
         actual = {f.name for f in dataclasses.fields(hist) if getattr(hist, f.name) is not None}
         assert non_nullable <= actual
 
@@ -585,7 +701,7 @@ class TestRowToTaskMetadata:
             sid = insert_status(conn, wid)
             tid = insert_task(conn, wid, "t", sid)
             conn.execute(
-                '''UPDATE tasks SET metadata = '{"branch":"feat/kv","jira":"PROJ-1"}' WHERE id = ?''',
+                """UPDATE tasks SET metadata = '{"branch":"feat/kv","jira":"PROJ-1"}' WHERE id = ?""",
                 (tid,),
             )
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone()

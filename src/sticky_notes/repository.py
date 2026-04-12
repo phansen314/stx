@@ -37,23 +37,31 @@ from .models import (
 _WORKSPACE_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _STATUS_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _PROJECT_UPDATABLE: frozenset[str] = frozenset({"name", "description", "archived"})
-_TASK_UPDATABLE: frozenset[str] = frozenset({
-    "title",
-    "description",
-    "status_id",
-    "project_id",
-    "group_id",
-    "priority",
-    "due_date",
-    "position",
-    "archived",
-    "start_date",
-    "finish_date",
-})
+_TASK_UPDATABLE: frozenset[str] = frozenset(
+    {
+        "title",
+        "description",
+        "status_id",
+        "project_id",
+        "group_id",
+        "priority",
+        "due_date",
+        "position",
+        "archived",
+        "start_date",
+        "finish_date",
+    }
+)
 _TAG_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
-_GROUP_UPDATABLE: frozenset[str] = frozenset({
-    "title", "description", "parent_id", "position", "archived",
-})
+_GROUP_UPDATABLE: frozenset[str] = frozenset(
+    {
+        "title",
+        "description",
+        "parent_id",
+        "position",
+        "archived",
+    }
+)
 
 
 # ---- Internal helpers ----
@@ -119,9 +127,7 @@ def list_workspaces(
         archive_clause = ""
     else:
         archive_clause = " WHERE archived = 0"
-    rows = conn.execute(
-        f"SELECT * FROM workspaces{archive_clause} ORDER BY created_at"
-    ).fetchall()
+    rows = conn.execute(f"SELECT * FROM workspaces{archive_clause} ORDER BY created_at").fetchall()
     return tuple(row_to_workspace(r) for r in rows)
 
 
@@ -521,7 +527,9 @@ def replace_task_metadata(conn: sqlite3.Connection, task_id: int, metadata_json:
     _replace_metadata(conn, "tasks", task_id, metadata_json)
 
 
-def set_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, key: str, value: str) -> None:
+def set_workspace_metadata_key(
+    conn: sqlite3.Connection, workspace_id: int, key: str, value: str
+) -> None:
     _set_metadata_key(conn, "workspaces", workspace_id, key, value)
 
 
@@ -529,11 +537,15 @@ def remove_workspace_metadata_key(conn: sqlite3.Connection, workspace_id: int, k
     _remove_metadata_key(conn, "workspaces", workspace_id, key)
 
 
-def replace_workspace_metadata(conn: sqlite3.Connection, workspace_id: int, metadata_json: str) -> None:
+def replace_workspace_metadata(
+    conn: sqlite3.Connection, workspace_id: int, metadata_json: str
+) -> None:
     _replace_metadata(conn, "workspaces", workspace_id, metadata_json)
 
 
-def set_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> None:
+def set_project_metadata_key(
+    conn: sqlite3.Connection, project_id: int, key: str, value: str
+) -> None:
     _set_metadata_key(conn, "projects", project_id, key, value)
 
 
@@ -693,17 +705,26 @@ def list_all_task_dependencies(
     rows = conn.execute(
         "SELECT task_id, depends_on_id, workspace_id, archived FROM task_dependencies"
     ).fetchall()
-    return tuple({"task_id": r["task_id"], "depends_on_id": r["depends_on_id"], "workspace_id": r["workspace_id"], "archived": bool(r["archived"])} for r in rows)
+    return tuple(
+        {
+            "task_id": r["task_id"],
+            "depends_on_id": r["depends_on_id"],
+            "workspace_id": r["workspace_id"],
+            "archived": bool(r["archived"]),
+        }
+        for r in rows
+    )
 
 
 def list_all_task_tags(
     conn: sqlite3.Connection,
 ) -> tuple[dict, ...]:
     """Return all task_tags rows as plain dicts (full FK columns preserved)."""
-    rows = conn.execute(
-        "SELECT task_id, tag_id, workspace_id FROM task_tags"
-    ).fetchall()
-    return tuple({"task_id": r["task_id"], "tag_id": r["tag_id"], "workspace_id": r["workspace_id"]} for r in rows)
+    rows = conn.execute("SELECT task_id, tag_id, workspace_id FROM task_tags").fetchall()
+    return tuple(
+        {"task_id": r["task_id"], "tag_id": r["tag_id"], "workspace_id": r["workspace_id"]}
+        for r in rows
+    )
 
 
 # ---- Task history functions ----
@@ -719,9 +740,7 @@ def insert_task_history(
         "VALUES (:task_id, :workspace_id, :field, :old_value, :new_value, :source)",
         d,
     )
-    row = conn.execute(
-        "SELECT * FROM task_history WHERE id = ?", (cur.lastrowid,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM task_history WHERE id = ?", (cur.lastrowid,)).fetchone()
     return row_to_task_history(row)
 
 
@@ -740,9 +759,7 @@ def list_all_task_history(
     conn: sqlite3.Connection,
 ) -> tuple[TaskHistory, ...]:
     """Return all task_history rows ordered by task and time."""
-    rows = conn.execute(
-        "SELECT * FROM task_history ORDER BY task_id, changed_at, id"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM task_history ORDER BY task_id, changed_at, id").fetchall()
     return tuple(row_to_task_history(r) for r in rows)
 
 
@@ -846,7 +863,9 @@ def list_tag_ids_by_task(
     *,
     include_archived: bool = False,
 ) -> tuple[int, ...]:
-    archive_clause = "" if include_archived else " JOIN tags t ON t.id = tt.tag_id AND t.archived = 0"
+    archive_clause = (
+        "" if include_archived else " JOIN tags t ON t.id = tt.tag_id AND t.archived = 0"
+    )
     rows = conn.execute(
         f"SELECT tt.tag_id FROM task_tags tt{archive_clause} WHERE tt.task_id = ?",
         (task_id,),
@@ -1094,8 +1113,7 @@ def list_ungrouped_task_ids(
     project_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        "SELECT id FROM tasks "
-        "WHERE project_id = ? AND archived = 0 AND group_id IS NULL",
+        "SELECT id FROM tasks WHERE project_id = ? AND archived = 0 AND group_id IS NULL",
         (project_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
@@ -1186,8 +1204,7 @@ def count_active_tasks_in_group_subtree(
     group_id: int,
 ) -> int:
     row = conn.execute(
-        _SUBTREE_CTE
-        + "SELECT COUNT(*) AS cnt FROM tasks "
+        _SUBTREE_CTE + "SELECT COUNT(*) AS cnt FROM tasks "
         "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
         (group_id,),
     ).fetchone()
@@ -1199,8 +1216,7 @@ def count_active_descendant_groups(
     group_id: int,
 ) -> int:
     row = conn.execute(
-        _SUBTREE_CTE
-        + "SELECT COUNT(*) AS cnt FROM subtree "
+        _SUBTREE_CTE + "SELECT COUNT(*) AS cnt FROM subtree "
         "JOIN groups g ON subtree.id = g.id "
         "WHERE g.archived = 0 AND g.id != ?",
         (group_id, group_id),
@@ -1257,8 +1273,7 @@ def count_active_groups_in_workspace(
     workspace_id: int,
 ) -> int:
     row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM groups "
-        "WHERE workspace_id = ? AND archived = 0",
+        "SELECT COUNT(*) AS cnt FROM groups WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     ).fetchone()
     return row["cnt"]
@@ -1307,8 +1322,7 @@ def list_active_task_ids_in_group_subtree(
     group_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        _SUBTREE_CTE
-        + "SELECT id FROM tasks "
+        _SUBTREE_CTE + "SELECT id FROM tasks "
         "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
         (group_id,),
     ).fetchall()
@@ -1345,8 +1359,7 @@ def archive_tasks_in_group_subtree(
     group_id: int,
 ) -> int:
     cur = conn.execute(
-        _SUBTREE_CTE
-        + "UPDATE tasks SET archived = 1 "
+        _SUBTREE_CTE + "UPDATE tasks SET archived = 1 "
         "WHERE group_id IN (SELECT id FROM subtree) AND archived = 0",
         (group_id,),
     )
@@ -1358,8 +1371,7 @@ def archive_descendant_groups(
     group_id: int,
 ) -> int:
     cur = conn.execute(
-        _SUBTREE_CTE
-        + "UPDATE groups SET archived = 1 "
+        _SUBTREE_CTE + "UPDATE groups SET archived = 1 "
         "WHERE id IN (SELECT id FROM subtree) AND id != ? AND archived = 0",
         (group_id, group_id),
     )
@@ -1415,8 +1427,7 @@ def archive_groups_in_workspace(
     workspace_id: int,
 ) -> int:
     cur = conn.execute(
-        "UPDATE groups SET archived = 1 "
-        "WHERE workspace_id = ? AND archived = 0",
+        "UPDATE groups SET archived = 1 WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     )
     return cur.rowcount
@@ -1495,5 +1506,3 @@ def get_reachable_group_dep_ids(
         (group_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
-
-

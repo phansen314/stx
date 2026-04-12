@@ -112,7 +112,9 @@ def _build_group_tree(
         group_blocked_by_map,
     )
     children = tuple(
-        _build_group_tree(child, children_by_parent, tasks_by_group, blocked_by_map, group_blocked_by_map)
+        _build_group_tree(
+            child, children_by_parent, tasks_by_group, blocked_by_map, group_blocked_by_map
+        )
         for child in sorted_children
     )
     tasks = _topo_sort(
@@ -175,7 +177,9 @@ def load_workspace_model(
             group_blocked_by_map,
         )
         group_trees = tuple(
-            _build_group_tree(g, children_by_parent, tasks_by_group, dep_blocked_by, group_blocked_by_map)
+            _build_group_tree(
+                g, children_by_parent, tasks_by_group, dep_blocked_by, group_blocked_by_map
+            )
             for g in root_groups
         )
         project_nodes.append(

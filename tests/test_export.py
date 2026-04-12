@@ -32,8 +32,13 @@ def _seed_workspace(conn: sqlite3.Connection) -> int:
         col_done = insert_status(conn, bid, "Done")
         pid = insert_project(conn, bid, "Backend", description="API work")
         t1 = insert_task(
-            conn, bid, "Set up CI", col_todo,
-            project_id=pid, priority=2, due_date=1777593600,
+            conn,
+            bid,
+            "Set up CI",
+            col_todo,
+            project_id=pid,
+            priority=2,
+            due_date=1777593600,
         )
         t2 = insert_task(conn, bid, "Write docs", col_done)
         insert_task_dependency(conn, t2, t1)
@@ -272,9 +277,7 @@ class TestExportMdEscaping:
         md = export_markdown(conn)
         assert "line1<br>line2" in md
 
-    def test_backtick_in_project_description_escaped(
-        self, conn: sqlite3.Connection
-    ) -> None:
+    def test_backtick_in_project_description_escaped(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
@@ -321,6 +324,7 @@ class TestExportFullJson:
 
     def test_exported_at_is_recent_epoch(self, conn: sqlite3.Connection) -> None:
         import time
+
         before = int(time.time())
         result = export_full_json(conn)
         after = int(time.time())
@@ -329,15 +333,32 @@ class TestExportFullJson:
     def test_top_level_keys(self, conn: sqlite3.Connection) -> None:
         result = export_full_json(conn)
         assert set(result.keys()) == {
-            "schema_version", "exported_at",
-            "workspaces", "statuses", "projects", "tasks", "tags", "groups",
-            "task_tags", "task_dependencies", "task_history",
+            "schema_version",
+            "exported_at",
+            "workspaces",
+            "statuses",
+            "projects",
+            "tasks",
+            "tags",
+            "groups",
+            "task_tags",
+            "task_dependencies",
+            "task_history",
         }
 
     def test_empty_db_all_lists_empty(self, conn: sqlite3.Connection) -> None:
         result = export_full_json(conn)
-        for key in ("workspaces", "statuses", "projects", "tasks", "tags", "groups",
-                    "task_tags", "task_dependencies", "task_history"):
+        for key in (
+            "workspaces",
+            "statuses",
+            "projects",
+            "tasks",
+            "tags",
+            "groups",
+            "task_tags",
+            "task_dependencies",
+            "task_history",
+        ):
             assert result[key] == [], f"expected {key} to be empty"
 
     def test_json_serializable(self, conn: sqlite3.Connection) -> None:
@@ -380,7 +401,9 @@ class TestExportFullJson:
         assert bid in workspace_ids
         task_ids = {t["id"] for t in result["tasks"]}
         assert {t1, t2} <= task_ids
-        assert any(d["task_id"] == t2 and d["depends_on_id"] == t1 for d in result["task_dependencies"])
+        assert any(
+            d["task_id"] == t2 and d["depends_on_id"] == t1 for d in result["task_dependencies"]
+        )
         assert any(tt["task_id"] == t1 and tt["tag_id"] == tag_id for tt in result["task_tags"])
 
     def test_task_history_included(self, conn: sqlite3.Connection) -> None:
@@ -416,7 +439,7 @@ class TestExportMetadata:
             col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T1", col)
             conn.execute(
-                '''UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?''',
+                """UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?""",
                 (tid,),
             )
         result = export_full_json(conn)
@@ -429,7 +452,7 @@ class TestExportMetadata:
             col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T1", col)
             conn.execute(
-                '''UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?''',
+                """UPDATE tasks SET metadata = '{"branch":"feat/kv"}' WHERE id = ?""",
                 (tid,),
             )
         md = export_markdown(conn)
@@ -454,7 +477,7 @@ class TestExportEntityMetadata:
             bid = insert_workspace(conn, "W")
             insert_status(conn, bid, "Todo")
             conn.execute(
-                '''UPDATE workspaces SET metadata = '{"env":"prod"}' WHERE id = ?''',
+                """UPDATE workspaces SET metadata = '{"env":"prod"}' WHERE id = ?""",
                 (bid,),
             )
         md = export_markdown(conn)
@@ -468,7 +491,7 @@ class TestExportEntityMetadata:
             insert_status(conn, bid, "Todo")
             pid = insert_project(conn, bid, "backend")
             conn.execute(
-                '''UPDATE projects SET metadata = '{"owner":"alice"}' WHERE id = ?''',
+                """UPDATE projects SET metadata = '{"owner":"alice"}' WHERE id = ?""",
                 (pid,),
             )
         md = export_markdown(conn)
@@ -483,7 +506,7 @@ class TestExportEntityMetadata:
             pid = insert_project(conn, bid, "backend")
             gid = insert_group(conn, pid, "Sprint1")
             conn.execute(
-                '''UPDATE groups SET metadata = '{"sprint":"3"}' WHERE id = ?''',
+                """UPDATE groups SET metadata = '{"sprint":"3"}' WHERE id = ?""",
                 (gid,),
             )
         md = export_markdown(conn)
@@ -497,9 +520,11 @@ class TestExportEntityMetadata:
             insert_status(conn, bid, "Todo")
             pid = insert_project(conn, bid, "backend")
             gid = insert_group(conn, pid, "Sprint1")
-            conn.execute("UPDATE workspaces SET metadata = '{\"env\":\"prod\"}' WHERE id = ?", (bid,))
-            conn.execute("UPDATE projects SET metadata = '{\"owner\":\"alice\"}' WHERE id = ?", (pid,))
-            conn.execute("UPDATE groups SET metadata = '{\"sprint\":\"3\"}' WHERE id = ?", (gid,))
+            conn.execute('UPDATE workspaces SET metadata = \'{"env":"prod"}\' WHERE id = ?', (bid,))
+            conn.execute(
+                'UPDATE projects SET metadata = \'{"owner":"alice"}\' WHERE id = ?', (pid,)
+            )
+            conn.execute('UPDATE groups SET metadata = \'{"sprint":"3"}\' WHERE id = ?', (gid,))
         result = export_full_json(conn)
         assert result["workspaces"][0]["metadata"] == {"env": "prod"}
         assert result["projects"][0]["metadata"] == {"owner": "alice"}

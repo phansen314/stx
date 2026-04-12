@@ -11,17 +11,32 @@ from sticky_notes.tui.screens.task_edit import TaskEditModal
 
 def _group(id: int, project_id: int, title: str) -> Group:
     return Group(
-        id=id, workspace_id=1, project_id=project_id, title=title, description=None,
-        parent_id=None, position=0, archived=False, created_at=0, metadata={},
+        id=id,
+        workspace_id=1,
+        project_id=project_id,
+        title=title,
+        description=None,
+        parent_id=None,
+        position=0,
+        archived=False,
+        created_at=0,
+        metadata={},
     )
 
 
 def _project_node(
-    project_id: int, name: str, groups: tuple[GroupNode, ...] = (),
+    project_id: int,
+    name: str,
+    groups: tuple[GroupNode, ...] = (),
 ) -> ProjectNode:
     project = Project(
-        id=project_id, workspace_id=1, name=name, description=None,
-        archived=False, created_at=0, metadata={},
+        id=project_id,
+        workspace_id=1,
+        name=name,
+        description=None,
+        archived=False,
+        created_at=0,
+        metadata={},
     )
     return ProjectNode(project=project, groups=groups, ungrouped_tasks=())
 
@@ -61,13 +76,18 @@ STATUSES = (
 )
 
 PROJECTS = (
-    Project(id=1, workspace_id=1, name="Alpha", description=None, archived=False, created_at=0, metadata={}),
+    Project(
+        id=1,
+        workspace_id=1,
+        name="Alpha",
+        description=None,
+        archived=False,
+        created_at=0,
+        metadata={},
+    ),
 )
 
-PROJECT_NODES = tuple(
-    ProjectNode(project=p, groups=(), ungrouped_tasks=())
-    for p in PROJECTS
-)
+PROJECT_NODES = tuple(ProjectNode(project=p, groups=(), ungrouped_tasks=()) for p in PROJECTS)
 
 
 def _make_app(
@@ -219,9 +239,7 @@ class TestGroupSelector:
             GroupNode(group=_group(10, 1, "Login"), tasks=(), children=()),
             GroupNode(group=_group(11, 1, "Signup"), tasks=(), children=()),
         )
-        backend_groups = (
-            GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),
-        )
+        backend_groups = (GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),)
         return (
             _project_node(1, "Frontend", groups=frontend_groups),
             _project_node(2, "Backend", groups=backend_groups),

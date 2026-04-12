@@ -1,4 +1,5 @@
 """Tests for project, group, and workspace edit modals."""
+
 from __future__ import annotations
 
 from helpers import ModalTestApp

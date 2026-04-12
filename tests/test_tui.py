@@ -35,9 +35,7 @@ class TestTreePopulation:
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            project_nodes = [
-                n for n in ws_node.children if n.allow_expand
-            ]
+            project_nodes = [n for n in ws_node.children if n.allow_expand]
             assert len(project_nodes) == 1
             assert str(project_nodes[0].label) == "\U0001f5c2\ufe0f (4) apr-api"
 
@@ -114,6 +112,7 @@ class TestTreeNoWorkspaces:
         conn.close()
 
         from sticky_notes.tui import model as tui_model
+
         _real = tui_model.load_workspace_model
 
         def _failing_load(conn, workspace_id):
@@ -124,6 +123,7 @@ class TestTreeNoWorkspaces:
         monkeypatch.setattr(tui_model, "load_workspace_model", _failing_load)
         # Also patch the import in app.py
         from sticky_notes.tui import app as tui_app
+
         monkeypatch.setattr(tui_app, "load_workspace_model", _failing_load)
 
         app = StickyNotesApp(db_path=db_path, config=TuiConfig())
@@ -144,9 +144,7 @@ class TestTreeWithGroups:
         status = service.create_status(conn, ws.id, "Todo")
         proj = service.create_project(conn, ws.id, "myproj")
         parent_grp = service.create_group(conn, proj.id, "parent-group")
-        child_grp = service.create_group(
-            conn, proj.id, "child-group", parent_id=parent_grp.id
-        )
+        child_grp = service.create_group(conn, proj.id, "child-group", parent_id=parent_grp.id)
         # Task in child group
         t1 = service.create_task(conn, ws.id, "grouped-task", status.id, project_id=proj.id)
         service.assign_task_to_group(conn, t1.id, child_grp.id, source="test")
@@ -251,9 +249,7 @@ class TestKanbanColumns:
     async def test_tasks_in_correct_columns(self, app):
         app, ids = app
         async with app.run_test():
-            done_col = app.query_one(
-                f"#status-col-{ids['status_ids']['done']}"
-            )
+            done_col = app.query_one(f"#status-col-{ids['status_ids']['done']}")
             cards = done_col.query(".task-card")
             card_texts = {str(c.render()) for c in cards}
             assert "6: Setup CI pipeline" in card_texts
@@ -294,9 +290,11 @@ class TestStatusMove:
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
         sids = ids["status_ids"]
-        config = TuiConfig(status_order={
-            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
-        })
+        config = TuiConfig(
+            status_order={
+                ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+            }
+        )
         return StickyNotesApp(db_path=db_path, config=config), ids
 
     def _col_title(self, app, status_id: int) -> str:
@@ -328,7 +326,9 @@ class TestStatusMove:
 
             # Card should now be in the In Progress column
             new_card = next(c for c in app.query(TaskCard) if c.task_data.id == task_id)
-            assert self._card_column_id(new_card) == f"status-col-{ids['status_ids']['in_progress']}"
+            assert (
+                self._card_column_id(new_card) == f"status-col-{ids['status_ids']['in_progress']}"
+            )
 
     async def test_shift_left_moves_to_previous_status(self, app):
         app, ids = app
@@ -393,7 +393,9 @@ class TestStatusMove:
             await pilot.pause()
 
             new_card = next(c for c in app.query(TaskCard) if c.task_data.id == task_id)
-            assert self._card_column_id(new_card) == f"status-col-{ids['status_ids']['in_progress']}"
+            assert (
+                self._card_column_id(new_card) == f"status-col-{ids['status_ids']['in_progress']}"
+            )
 
     async def test_bracket_left_alias(self, app):
         app, ids = app
@@ -781,9 +783,11 @@ class TestColumnFocus:
     def app(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
         sids = ids["status_ids"]
-        config = TuiConfig(status_order={
-            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
-        })
+        config = TuiConfig(
+            status_order={
+                ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+            }
+        )
         return StickyNotesApp(db_path=db_path, config=config), ids
 
     def _col_title(self, app, status_id: int) -> str:
@@ -893,9 +897,11 @@ class TestColumnFocus:
     async def test_column_down_on_empty_column_noop(self, seeded_tui_db_empty_middle):
         db_path, ids = seeded_tui_db_empty_middle
         sids = ids["status_ids"]
-        config = TuiConfig(status_order={
-            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
-        })
+        config = TuiConfig(
+            status_order={
+                ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+            }
+        )
         app = StickyNotesApp(db_path=db_path, config=config)
         async with app.run_test() as pilot:
             ip_id = sids["in_progress"]
@@ -953,12 +959,15 @@ class TestColumnFocus:
 
     async def test_column_reorder_persists_to_tui_toml(self, seeded_tui_db, tmp_path):
         import tomllib
+
         db_path, ids = seeded_tui_db
         toml_path = tmp_path / "tui.toml"
         sids = ids["status_ids"]
-        config = TuiConfig(status_order={
-            ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
-        })
+        config = TuiConfig(
+            status_order={
+                ids["workspace_id"]: [sids["todo"], sids["in_progress"], sids["done"]],
+            }
+        )
         app = StickyNotesApp(db_path=db_path, config=config, config_path=toml_path)
         async with app.run_test() as pilot:
             sids = ids["status_ids"]
@@ -979,6 +988,7 @@ class TestColumnFocus:
 
     async def test_materializes_full_order_on_first_move(self, seeded_tui_db, tmp_path):
         import tomllib
+
         db_path, ids = seeded_tui_db
         toml_path = tmp_path / "tui.toml"
         # Start with empty status_order so _reorder_column must materialize all IDs
@@ -1124,7 +1134,6 @@ class TestActiveWorkspaceInvariant:
                     "positive control: save_config should be called by _reorder_column"
                 )
 
-
     async def test_active_workspace_survives_refresh(self, multi_workspace_tui_db, tmp_path):
         """_active_workspace_id must not be clobbered by NodeHighlighted(ws1) fired during
         the tree.load in _rerender when the user is on workspace 2."""
@@ -1137,7 +1146,11 @@ class TestActiveWorkspaceInvariant:
         async with app.run_test() as pilot:
             # Navigate tree to workspace 2
             tree = app.query_one("#workspaces-tree")
-            ws2_node = [n for n in tree.root.children if isinstance(n.data, Workspace) and n.data.id == ws2_id][0]
+            ws2_node = [
+                n
+                for n in tree.root.children
+                if isinstance(n.data, Workspace) and n.data.id == ws2_id
+            ][0]
             tree.select_node(ws2_node)
             await pilot.pause()
             await pilot.pause()
@@ -1167,6 +1180,7 @@ class TestConfigModal:
     @pytest.mark.asyncio
     async def test_open_config_modal_via_c_key(self, app):
         from sticky_notes.tui.screens.config_modal import ConfigModal
+
         app, _ = app
         async with app.run_test() as pilot:
             await pilot.press("c")
@@ -1190,6 +1204,7 @@ class TestConfigModal:
         from textual.widgets import Select
 
         from sticky_notes.tui.config import load_config
+
         app, toml_path = app
         async with app.run_test() as pilot:
             themes = list(app.available_themes.keys())
@@ -1211,6 +1226,7 @@ class TestConfigModal:
     @pytest.mark.asyncio
     async def test_startup_applies_stored_theme(self, seeded_tui_db, tmp_path):
         from sticky_notes.tui.config import load_config, save_config
+
         db_path, _ = seeded_tui_db
         toml_path = tmp_path / "startup_theme.toml"
         # Discover available themes from a disposable app instance
@@ -1231,6 +1247,7 @@ class TestConfigModal:
     @pytest.mark.asyncio
     async def test_startup_ignores_unknown_theme(self, seeded_tui_db, tmp_path):
         from sticky_notes.tui.config import load_config, save_config
+
         db_path, _ = seeded_tui_db
         toml_path = tmp_path / "bad_theme.toml"
         cfg = TuiConfig(theme="totally-not-a-real-theme-xyz")
@@ -1247,6 +1264,7 @@ class TestConfigModal:
         from textual.widgets import Input
 
         from sticky_notes.tui.config import load_config
+
         app, toml_path = app
         async with app.run_test() as pilot:
             original_timer = app._refresh_timer
@@ -1268,6 +1286,7 @@ class TestConfigModal:
         from textual.widgets import Input, Static
 
         from sticky_notes.tui.screens.config_modal import ConfigModal
+
         db_path, _ = seeded_tui_db
         for bad_value in ("abc", "0", "-3"):
             toml_path = tmp_path / f"cfg-{bad_value}.toml"
