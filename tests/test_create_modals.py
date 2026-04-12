@@ -392,3 +392,42 @@ class TestWorkspaceCreateModal:
         async with app.run_test() as pilot:
             await pilot.click("#new-workspace")
             assert app.result == "workspace"
+
+
+# ---- WorkspaceSwitchModal tests ----
+
+from sticky_notes.tui.screens.workspace_switch import WorkspaceSwitchModal  # noqa: E402
+
+
+class TestWorkspaceSwitchModal:
+    async def test_switch_button_dismisses_workspace_id(self):
+        app = ModalTestApp(WorkspaceSwitchModal(WORKSPACES, current_id=1))
+        async with app.run_test() as pilot:
+            await pilot.click("#workspace-switch-go")
+            assert app.result == 1
+
+    async def test_cancel_dismisses_none(self):
+        app = ModalTestApp(WorkspaceSwitchModal(WORKSPACES, current_id=1))
+        async with app.run_test() as pilot:
+            await pilot.click("#workspace-switch-cancel")
+            assert app.result is None
+
+    async def test_escape_dismisses_none(self):
+        app = ModalTestApp(WorkspaceSwitchModal(WORKSPACES, current_id=1))
+        async with app.run_test() as pilot:
+            await pilot.press("escape")
+            assert app.result is None
+
+    async def test_default_workspace_selected(self):
+        app = ModalTestApp(WorkspaceSwitchModal(WORKSPACES, current_id=2))
+        async with app.run_test() as pilot:
+            sel = app.screen.query_one("#workspace-switch-select", Select)
+            assert sel.value == 2
+
+    async def test_switch_to_second_workspace(self):
+        app = ModalTestApp(WorkspaceSwitchModal(WORKSPACES, current_id=1))
+        async with app.run_test() as pilot:
+            sel = app.screen.query_one("#workspace-switch-select", Select)
+            sel.value = 2
+            await pilot.click("#workspace-switch-go")
+            assert app.result == 2

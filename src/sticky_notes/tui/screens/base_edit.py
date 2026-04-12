@@ -48,7 +48,7 @@ class BaseEditModal(ModalScreen[dict | None]):
         self._clear_error()
         self._do_save()
 
-    def _do_save(self) -> None:
+    def _do_save(self) -> None:  # pragma: no cover
         raise NotImplementedError("Subclasses must implement _do_save")
 
     def _diff_and_dismiss(

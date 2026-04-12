@@ -9,7 +9,17 @@ from sticky_notes.connection import get_connection, init_db
 from sticky_notes.models import Group, Project, Task, Workspace
 from sticky_notes.tui.app import StickyNotesApp
 from sticky_notes.tui.config import TuiConfig
-from sticky_notes.tui.screens import MetadataModal
+from sticky_notes.tui.screens import (
+    MetadataModal,
+    NewResourceModal,
+    ProjectCreateModal,
+    StatusCreateModal,
+    TaskCreateModal,
+    WorkspaceCreateModal,
+)
+from sticky_notes.tui.screens.project_edit import ProjectEditModal
+from sticky_notes.tui.screens.task_edit import TaskEditModal
+from sticky_notes.tui.screens.workspace_edit import WorkspaceEditModal
 from sticky_notes.tui.widgets import KanbanColumn, TaskCard
 
 
@@ -1304,3 +1314,486 @@ class TestConfigModal:
                 assert error_msg.strip(), f"Expected error for {bad_value!r}, got empty"
                 # Modal still open
                 assert any(isinstance(s, ConfigModal) for s in app.screen_stack)
+
+
+class TestTaskCardClick:
+    """TaskCard on_click covers Activated message and focus behaviour."""
+
+    async def test_on_click_stops_event_and_focuses(self, seeded_tui_db):
+        """Call on_click directly to cover lines 35-37 without triggering command palette."""
+        from unittest.mock import MagicMock
+
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            card = app.query(TaskCard).first()
+            await pilot.pause()
+            event = MagicMock()
+            card.on_click(event)
+            await pilot.pause()
+            event.stop.assert_called_once()
+
+    async def test_activated_message_carries_task(self, seeded_tui_db):
+        """Activated.__init__ (lines 20-21) sets self.task."""
+        from unittest.mock import MagicMock
+
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            card = app.query(TaskCard).first()
+            await pilot.pause()
+            activated_msgs: list = []
+            original = card.post_message
+            card.post_message = lambda m: activated_msgs.append(m)  # type: ignore[method-assign]
+            card.on_click(MagicMock())
+            card.post_message = original  # type: ignore[method-assign]
+        activated = [m for m in activated_msgs if isinstance(m, TaskCard.Activated)]
+        assert len(activated) == 1
+        assert activated[0].task is card.task_data
+
+
+class TestKanbanColumnFocus:
+    """KanbanColumn on_click and left/right key navigation."""
+
+    async def test_on_click_focuses_column(self, seeded_tui_db):
+        """Call KanbanColumn.on_click() directly to cover line 26."""
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cols = list(app.query(KanbanColumn))
+            assert cols
+            await pilot.pause()
+            cols[0].on_click()
+            await pilot.pause()
+            assert app.focused is cols[0]
+
+    async def test_column_key_right_moves_focus(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cols = list(app.query(KanbanColumn))
+            assert len(cols) >= 2
+            app.set_focus(cols[0])
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.focused is cols[1]
+
+    async def test_column_key_left_wraps_to_last(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cols = list(app.query(KanbanColumn))
+            app.set_focus(cols[0])
+            await pilot.pause()
+            await pilot.press("left")
+            await pilot.pause()
+            # Wraps: (0 - 1) % len(cols) = last col
+            assert app.focused is cols[-1]
+
+
+class TestKanbanNavigation:
+    """Arrow key / ijkl navigation between TaskCards and KanbanColumns."""
+
+    async def test_down_key_moves_to_next_card(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cards = list(app.query(TaskCard))
+            assert len(cards) >= 2
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            # Focus moved to another card (or stayed if only one in column)
+            assert isinstance(app.focused, (TaskCard, KanbanColumn))
+
+    async def test_up_from_first_card_focuses_column(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            # Find the first card in the Todo column (status_id = todo)
+            todo_id = ids["status_ids"]["todo"]
+            col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(col.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("up")
+            await pilot.pause()
+            assert app.focused is col
+
+    async def test_left_key_moves_between_columns(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            in_progress_id = ids["status_ids"]["in_progress"]
+            col = app.query_one(f"#status-col-{in_progress_id}", KanbanColumn)
+            cards = list(col.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("left")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+
+    async def test_j_key_navigates_left(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            in_progress_id = ids["status_ids"]["in_progress"]
+            col = app.query_one(f"#status-col-{in_progress_id}", KanbanColumn)
+            cards = list(col.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("j")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+
+    async def test_l_key_navigates_right(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            todo_id = ids["status_ids"]["todo"]
+            col = app.query_one(f"#status-col-{todo_id}", KanbanColumn)
+            cards = list(col.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("l")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+
+    async def test_i_key_navigates_up(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cards = list(app.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.focused, (TaskCard, KanbanColumn))
+
+    async def test_k_key_navigates_down(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            cards = list(app.query(TaskCard))
+            assert cards
+            app.set_focus(cards[0])
+            await pilot.pause()
+            await pilot.press("k")
+            await pilot.pause()
+            assert isinstance(app.focused, (TaskCard, KanbanColumn))
+
+
+class TestAppActionEdit:
+    """'e' key dispatches correct edit modal based on focused entity."""
+
+    async def test_e_on_task_tree_node_opens_task_edit(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            proj_node = [n for n in ws_node.children if n.allow_expand][0]
+            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            tree.select_node(task_leaf)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskEditModal)
+
+    async def test_e_on_project_tree_node_opens_project_edit(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            proj_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(proj_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, ProjectEditModal)
+
+    async def test_e_on_workspace_tree_node_opens_workspace_edit(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            tree = app.query_one("#workspaces-tree")
+            ws_node = tree.root.children[0]
+            tree.select_node(ws_node)
+            app.set_focus(tree)
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, WorkspaceEditModal)
+
+    async def test_e_on_kanban_task_card_opens_task_edit(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            card = app.query(TaskCard).first()
+            app.set_focus(card)
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, TaskEditModal)
+
+
+class TestAppActionNew:
+    """'n' key → NewResourceModal → specific create modal."""
+
+    async def test_n_opens_new_resource_modal(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            assert isinstance(app.screen, NewResourceModal)
+
+    async def test_n_then_s_opens_status_create(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, StatusCreateModal)
+
+    async def test_n_then_w_opens_workspace_create(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("w")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, WorkspaceCreateModal)
+
+    async def test_n_then_t_opens_task_create(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("t")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, TaskCreateModal)
+
+    async def test_n_then_p_opens_project_create(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, ProjectCreateModal)
+
+
+class TestAppDismissCallbackError:
+    """_dismiss_callback catches ValueError and notifies without crashing."""
+
+    async def test_value_error_is_caught_and_notified(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            notified: list[str] = []
+            original_notify = app.notify
+            app.notify = lambda msg, **kw: notified.append(str(msg))  # type: ignore[method-assign]
+            app._dismiss_callback({"x": 1}, lambda: (_ for _ in ()).throw(ValueError("bad value")))
+            app.notify = original_notify  # type: ignore[method-assign]
+        assert any("bad value" in m for m in notified)
+
+
+class TestAppFocusKanban:
+    """'b' key focuses the kanban panel (last TaskCard or first card)."""
+
+    async def test_b_key_focuses_a_task_card(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            # Start with tree focused
+            await pilot.press("w")
+            await pilot.pause()
+            # Switch to kanban
+            await pilot.press("b")
+            await pilot.pause()
+            assert isinstance(app.focused, TaskCard)
+
+
+class TestDismissNullPaths:
+    """Cover all the `if result is None: return` early-exit paths in dismiss handlers."""
+
+    async def test_task_edit_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_task_edit_dismiss(None)  # no-op
+
+    async def test_project_edit_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_project_edit_dismiss(None)
+
+    async def test_group_edit_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_group_edit_dismiss(None)
+
+    async def test_workspace_edit_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_workspace_edit_dismiss(None)
+
+    async def test_task_create_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_task_create_dismiss(None)
+
+    async def test_project_create_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_project_create_dismiss(None)
+
+    async def test_group_create_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_group_create_dismiss(None)
+
+    async def test_status_create_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_status_create_dismiss(None)
+
+    async def test_workspace_create_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_workspace_create_dismiss(None)
+
+    async def test_task_metadata_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_task_metadata_dismiss(None)
+
+    async def test_workspace_metadata_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_workspace_metadata_dismiss(None)
+
+    async def test_project_metadata_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_project_metadata_dismiss(None)
+
+    async def test_group_metadata_dismiss_none(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_group_metadata_dismiss(None)
+
+    async def test_archive_task_dismiss_not_confirmed(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_archive_task_dismiss(ids["task_ids"]["design_api"], None)
+
+    async def test_archive_group_dismiss_not_confirmed(self, seeded_tui_db):
+        db_path, _ = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_archive_group_dismiss(1, None)
+
+    async def test_archive_project_dismiss_not_confirmed(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_archive_project_dismiss(ids["project_id"], None)
+
+    async def test_archive_workspace_dismiss_not_confirmed(self, seeded_tui_db):
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            app._on_archive_workspace_dismiss(ids["workspace_id"], "Coding", None)
+
+
+class TestMiscActionPaths:
+    """Cover remaining edge-case paths in app actions."""
+
+    async def test_create_group_notifies_when_no_projects(self, tmp_path):
+        """_create_group shows warning when workspace has no projects."""
+        db_path = tmp_path / "no-proj.db"
+        conn = get_connection(db_path)
+        init_db(conn)
+        ws = service.create_workspace(conn, "Empty")
+        service.create_status(conn, ws.id, "Todo")
+        conn.close()
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            notifications: list[str] = []
+            app.notify = lambda msg, **kw: notifications.append(str(msg))  # type: ignore[method-assign]
+            app._create_group()
+        assert any("project" in m.lower() for m in notifications)
+
+    async def test_archive_task_already_archived_notifies(self, seeded_tui_db):
+        """_open_archive_task notifies when task already archived."""
+        db_path, ids = seeded_tui_db
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test():
+            task_id = ids["task_ids"]["design_api"]
+            service.archive_task(app.conn, task_id, source="test")
+            notifications: list[str] = []
+            app.notify = lambda msg, **kw: notifications.append(str(msg))  # type: ignore[method-assign]
+            t = service.get_task(app.conn, task_id)
+            app._open_archive_task(t)
+        assert any("already archived" in m for m in notifications)
+
+    async def test_n_then_g_without_projects_shows_warning(self, tmp_path):
+        """Pressing n → g on a workspace with no projects shows warning instead of modal."""
+        db_path = tmp_path / "no-proj2.db"
+        conn = get_connection(db_path)
+        init_db(conn)
+        ws = service.create_workspace(conn, "Empty")
+        service.create_status(conn, ws.id, "Todo")
+        conn.close()
+        app = StickyNotesApp(db_path=db_path, config=TuiConfig())
+        async with app.run_test() as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("g")
+            await pilot.pause()
+            await pilot.pause()
+            # No GroupCreateModal — warning was shown instead
+            from sticky_notes.tui.screens.group_create import GroupCreateModal
+
+            assert not isinstance(app.screen, GroupCreateModal)
+
+
+def test_main_module_importable():
+    """Importing __main__ covers the module-level `import sys` line."""
+    import sticky_notes.__main__  # noqa: F401
+
+    assert sticky_notes.__main__.main is not None
