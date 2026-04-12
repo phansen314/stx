@@ -17,21 +17,12 @@ def _migrate_data_dir() -> None:
         _OLD_DB_DIR.rename(_NEW_DB_DIR)
         print(f"stx: migrated data directory {_OLD_DB_DIR} → {_NEW_DB_DIR}", file=sys.stderr)
 
-SCHEMA_VERSION = 12
+
+SCHEMA_VERSION = 13
 
 
 def read_schema() -> str:
-    from .models import TaskField
-
-    raw = importlib.resources.files("stx").joinpath("schema.sql").read_text()
-    task_field_values = ", ".join(f"'{f.value}'" for f in TaskField)
-    result = raw.replace("__TASK_FIELD_VALUES__", task_field_values)
-    if "__TASK_FIELD_VALUES__" in result:
-        raise AssertionError(
-            "schema.sql placeholder __TASK_FIELD_VALUES__ was not replaced; "
-            "was the placeholder renamed in schema.sql?"
-        )
-    return result
+    return importlib.resources.files("stx").joinpath("schema.sql").read_text()
 
 
 def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:

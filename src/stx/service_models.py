@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Group, Project, Status, Tag, Task, TaskHistory, Workspace
+from .models import Group, JournalEntry, Project, Status, Tag, Task, Workspace
 
 # ---- List view types ----
 
@@ -98,7 +98,7 @@ class TaskDetail:
     group: Group | None
     blocked_by: tuple[Task, ...]
     blocks: tuple[Task, ...]
-    history: tuple[TaskHistory, ...]
+    history: tuple[JournalEntry, ...]
     tags: tuple[Tag, ...]
 
 

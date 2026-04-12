@@ -104,11 +104,15 @@ CREATE TABLE IF NOT EXISTS task_tags (
     FOREIGN KEY (tag_id, workspace_id) REFERENCES tags(id, workspace_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS task_history (
+CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    entity_type TEXT NOT NULL CHECK (entity_type IN (
+        'task', 'project', 'group', 'workspace', 'status',
+        'task_dependency', 'group_dependency'
+    )),
+    entity_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-    field TEXT NOT NULL CHECK (field IN (__TASK_FIELD_VALUES__)),
+    field TEXT NOT NULL,
     old_value TEXT,
     new_value TEXT,
     source TEXT NOT NULL,
@@ -146,8 +150,10 @@ CREATE INDEX IF NOT EXISTS idx_groups_project_archived_position
     ON groups(project_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_tags_workspace_archived_name
     ON tags(workspace_id, archived, name);
-CREATE INDEX IF NOT EXISTS idx_task_history_task_changed
-    ON task_history(task_id, changed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_entity
+    ON journal(entity_type, entity_id, changed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_timeline
+    ON journal(workspace_id, changed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_archived_group
     ON tasks(project_id, archived, group_id);
 

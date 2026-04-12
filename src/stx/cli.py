@@ -357,7 +357,9 @@ def cmd_task_archive(
 def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     task_id = _resolve_task(conn, workspace, args.task)
-    history = service.list_task_history(conn, task_id)
+    from .models import EntityType
+
+    history = service.list_journal(conn, EntityType.TASK, task_id)
     return Ok(data=history, text=presenters.format_task_history(history))
 
 
@@ -1352,7 +1354,9 @@ HANDLERS: dict[str, CommandHandler] = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="stx", description="stx — structured context and task management")
+    parser = argparse.ArgumentParser(
+        prog="stx", description="stx — structured context and task management"
+    )
     parser.add_argument("--db", type=Path, help="path to SQLite database file")
     parser.add_argument(
         "--config", type=Path, help="path to tui.toml (default: ~/.config/stx/tui.toml)"

@@ -38,7 +38,7 @@ description: Use when the user wants to persist structured context, a kanban boa
 - **Entity metadata** — arbitrary key/value pairs on any task, workspace, project, or group: `stx task meta set task-0001 branch feat/kv`, `stx workspace meta set region us-east-1`, `stx project meta set backend owner alice`, `stx group meta set "Sprint 1" start 2026-01-01 --project backend`. Keys are lowercase-normalized (`Branch` → `branch`), charset `[a-z0-9_.-]+`, max 64 chars. Values free-form up to 500 chars. Use for linking to external IDs (JIRA, GitHub, branches, PRs), environment tags, ownership, sprint windows, etc.
 - **Cross-workspace move** — use `stx task transfer` (not `stx task mv`): `stx task transfer task-0001 --to ops --status Backlog`. Tags and metadata are carried over; group assignment is not.
 - **Archive (soft-delete)** — `stx {task,project,group,workspace,status,tag} archive <id>`. Cascade-archives descendants where applicable. **Pass `--force` in scripts/loops** — archive commands prompt y/N interactively and fail-fast on non-interactive stdin. No unarchive command; restore via SQLite directly.
-- **Audit trail** — `stx task log <task>` shows full field-change history.
+- **Audit trail** — `stx task log <task>` shows task field-change history. The underlying `journal` table covers all entity types (tasks, projects, groups, workspaces, statuses, dependencies, metadata key-level diffs) — queryable directly via `stx export` or SQLite.
 - **Milestone snapshot** — `stx export` (all workspaces, Mermaid dep graphs); `-o FILE` writes to disk.
 
 See `references/cli-reference.md` for full flag details, JSON envelope shapes, and error codes.

@@ -48,7 +48,7 @@ class TestInitDb:
             "statuses",
             "tasks",
             "task_dependencies",
-            "task_history",
+            "journal",
             "tags",
             "task_tags",
             "groups",
@@ -374,14 +374,11 @@ class TestMigrations:
 
         # Verify user_version is updated
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        # Verify data preserved
-        row = conn.execute("SELECT * FROM task_history WHERE task_id = 1").fetchone()
+        # Verify data migrated from task_history to journal by migration 013
+        row = conn.execute(
+            "SELECT * FROM journal WHERE entity_type='task' AND entity_id=1"
+        ).fetchone()
         assert row["field"] == "title"
-        # Verify new CHECK allows group_id
-        conn.execute(
-            "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
-            "VALUES (1, 1, 'group_id', '5', 'test')"
-        )
         conn.close()
 
     def test_migration_002_moves_task_groups_to_inline(self, tmp_path: Path) -> None:
@@ -824,24 +821,16 @@ class TestMigrations:
             with pytest.raises(sqlite3.IntegrityError, match="json_valid"):
                 conn.execute(sql)
 
-        # task_history.field CHECK added alongside the recreate
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
-                "VALUES (1, 1, 'bogus_field', 'x', 'test')"
-            )
-
-        # Dependent rows preserved
+        # Dependent rows preserved (task_history migrated to journal by migration 013)
         assert conn.execute("SELECT COUNT(*) FROM task_dependencies").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM task_tags").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM task_history").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT COUNT(*) FROM journal WHERE entity_type='task'").fetchone()[0] == 1
+        )
 
         # Cascade FKs still fire after the recreate
         conn.execute("DELETE FROM tasks WHERE id = 1")
         assert conn.execute("SELECT COUNT(*) FROM task_tags WHERE task_id = 1").fetchone()[0] == 0
-        assert (
-            conn.execute("SELECT COUNT(*) FROM task_history WHERE task_id = 1").fetchone()[0] == 0
-        )
         conn.close()
 
     def test_migration_011_fails_fast_on_invalid_task_metadata(
@@ -976,8 +965,8 @@ class TestMigrations:
         conn.close()
 
 
-class TestTaskHistoryFieldConstraint:
-    def test_rejects_invalid_field_value(
+class TestJournalEntityTypeConstraint:
+    def test_rejects_invalid_entity_type(
         self,
         conn: sqlite3.Connection,
     ) -> None:
@@ -988,12 +977,12 @@ class TestTaskHistoryFieldConstraint:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
-                    "VALUES (?, ?, 'bogus_field', 'v', 'test')",
+                    "INSERT INTO journal (entity_type, entity_id, workspace_id, field, new_value, source) "
+                    "VALUES ('bogus_type', ?, ?, 'title', 'v', 'test')",
                     (task_id, workspace_id),
                 )
 
-    def test_accepts_valid_field_value(
+    def test_accepts_valid_entity_type(
         self,
         conn: sqlite3.Connection,
     ) -> None:
@@ -1003,12 +992,12 @@ class TestTaskHistoryFieldConstraint:
             task_id = insert_task(conn, workspace_id, "t", col_id)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_history (task_id, workspace_id, field, new_value, source) "
-                "VALUES (?, ?, 'title', 'new_title', 'test')",
+                "INSERT INTO journal (entity_type, entity_id, workspace_id, field, new_value, source) "
+                "VALUES ('task', ?, ?, 'title', 'new_title', 'test')",
                 (task_id, workspace_id),
             )
-        row = conn.execute("SELECT field FROM task_history").fetchone()
-        assert row["field"] == "title"
+        row = conn.execute("SELECT entity_type FROM journal").fetchone()
+        assert row["entity_type"] == "task"
 
 
 class TestMigrationFileStructure:

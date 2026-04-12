@@ -18,13 +18,15 @@ from .mappers import (
     task_to_list_item,
 )
 from .models import (
+    EntityType,
     Group,
+    JournalEntry,
     NewGroup,
+    NewJournalEntry,
     NewProject,
     NewStatus,
     NewTag,
     NewTask,
-    NewTaskHistory,
     NewWorkspace,
     Project,
     Status,
@@ -32,7 +34,6 @@ from .models import (
     Task,
     TaskField,
     TaskFilter,
-    TaskHistory,
     Workspace,
 )
 from .service_models import (
@@ -205,28 +206,55 @@ def _ensure_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
     return tag
 
 
-def _record_changes(
+def _record_entity_changes(
     conn: sqlite3.Connection,
-    task_id: int,
-    old: Task,
+    entity_type: EntityType,
+    entity_id: int,
+    workspace_id: int,
+    old: Any,
     changes: dict[str, Any],
     source: str,
 ) -> None:
     for key, new_val in changes.items():
-        old_val = getattr(old, key)
+        old_val = getattr(old, key, None)
         if old_val == new_val:
             continue
-        repo.insert_task_history(
+        repo.insert_journal_entry(
             conn,
-            NewTaskHistory(
-                task_id=task_id,
-                workspace_id=old.workspace_id,
-                field=TaskField(key),
+            NewJournalEntry(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                workspace_id=workspace_id,
+                field=key,
                 old_value=str(old_val) if old_val is not None else None,
                 new_value=str(new_val) if new_val is not None else None,
                 source=source,
             ),
         )
+
+
+def _record_dependency_change(
+    conn: sqlite3.Connection,
+    entity_type: EntityType,
+    entity_id: int,
+    workspace_id: int,
+    depends_on_id: int,
+    *,
+    added: bool,
+    source: str,
+) -> None:
+    repo.insert_journal_entry(
+        conn,
+        NewJournalEntry(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            workspace_id=workspace_id,
+            field="depends_on",
+            old_value=None if added else str(depends_on_id),
+            new_value=str(depends_on_id) if added else None,
+            source=source,
+        ),
+    )
 
 
 # ---- Workspace ----
@@ -268,6 +296,7 @@ def update_workspace(
     conn: sqlite3.Connection,
     workspace_id: int,
     changes: dict[str, Any],
+    source: str = "cli",
 ) -> Workspace:
     with transaction(conn), _friendly_errors():
         if changes.get("archived") is True:
@@ -289,7 +318,13 @@ def update_workspace(
                     f"workspace has {len(active_tasks)} active task(s); "
                     "use 'workspace archive' to cascade"
                 )
-        return repo.update_workspace(conn, workspace_id, changes)
+        old = repo.get_workspace(conn, workspace_id)
+        result = repo.update_workspace(conn, workspace_id, changes)
+        if old is not None:
+            _record_entity_changes(
+                conn, EntityType.WORKSPACE, workspace_id, workspace_id, old, changes, source
+            )
+        return result
 
 
 # ---- Status ----
@@ -338,6 +373,7 @@ def update_status(
     conn: sqlite3.Connection,
     status_id: int,
     changes: dict[str, Any],
+    source: str = "cli",
 ) -> Status:
     with transaction(conn), _friendly_errors():
         if changes.get("archived") is True:
@@ -346,7 +382,13 @@ def update_status(
                 raise ValueError(
                     f"status has {len(active_tasks)} active task(s); move or archive them first"
                 )
-        return repo.update_status(conn, status_id, changes)
+        old = repo.get_status(conn, status_id)
+        result = repo.update_status(conn, status_id, changes)
+        if old is not None:
+            _record_entity_changes(
+                conn, EntityType.STATUS, status_id, old.workspace_id, old, changes, source
+            )
+        return result
 
 
 def archive_status(
@@ -355,9 +397,11 @@ def archive_status(
     *,
     reassign_to_status_id: int | None = None,
     force: bool = False,
+    source: str = "cli",
 ) -> Status:
     """Archive a status, optionally handling active tasks via reassign or force-archive."""
     with transaction(conn), _friendly_errors():
+        old = repo.get_status(conn, status_id)
         active_tasks = repo.list_tasks_by_status(conn, status_id)
         if active_tasks:
             if reassign_to_status_id is not None:
@@ -371,7 +415,18 @@ def archive_status(
                     f"status has {len(active_tasks)} active task(s); "
                     "use --reassign-to OTHER_STATUS or --force to override"
                 )
-        return repo.update_status(conn, status_id, {"archived": True})
+        result = repo.update_status(conn, status_id, {"archived": True})
+        if old is not None:
+            _record_entity_changes(
+                conn,
+                EntityType.STATUS,
+                status_id,
+                old.workspace_id,
+                old,
+                {"archived": True},
+                source,
+            )
+        return result
 
 
 # ---- Project ----
@@ -452,10 +507,17 @@ def update_project(
     conn: sqlite3.Connection,
     project_id: int,
     changes: dict[str, Any],
+    source: str = "cli",
 ) -> Project:
     with transaction(conn), _friendly_errors():
         _validate_project_update(conn, project_id, changes)
-        return repo.update_project(conn, project_id, changes)
+        old = repo.get_project(conn, project_id)
+        result = repo.update_project(conn, project_id, changes)
+        if old is not None:
+            _record_entity_changes(
+                conn, EntityType.PROJECT, project_id, old.workspace_id, old, changes, source
+            )
+        return result
 
 
 # ---- Task ----
@@ -559,7 +621,7 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     group = repo.get_group(conn, task.group_id) if task.group_id is not None else None
     blocked_by = repo.list_blocked_by_tasks(conn, task_id)
     blocks = repo.list_blocks_tasks(conn, task_id)
-    history = repo.list_task_history(conn, task_id)
+    history = repo.list_journal(conn, EntityType.TASK, task_id)
     tags = repo.list_tags_by_task(conn, task_id)
     return task_to_detail(
         task,
@@ -725,7 +787,9 @@ def _update_task_body(
     _validate_task_update(conn, old, changes)
     if changes:
         updated = repo.update_task(conn, task_id, changes)
-        _record_changes(conn, task_id, old, changes, source)
+        _record_entity_changes(
+            conn, EntityType.TASK, task_id, old.workspace_id, old, changes, source
+        )
     else:
         updated = old
     for tag_name in add_tags:
@@ -891,7 +955,9 @@ def move_task_to_workspace(
         repo.copy_task_metadata(conn, task_id, new.id)
 
         repo.update_task(conn, task_id, {"archived": True})
-        _record_changes(conn, task_id, old, {"archived": True}, source)
+        _record_entity_changes(
+            conn, EntityType.TASK, task_id, old.workspace_id, old, {"archived": True}, source
+        )
         # Refetch: `new` was built before tags/metadata were attached.
         return get_task(conn, new.id)
 
@@ -948,8 +1014,10 @@ def _set_entity_meta(
     key: str,
     value: str,
     *,
+    entity_type: EntityType,
     setter: Callable[[sqlite3.Connection, int, str, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
+    source: str = "cli",
 ) -> Any:
     """Generic entity-metadata write. Validates the key and value length,
     then persists via `setter` and returns the refreshed entity from `fetcher`.
@@ -958,8 +1026,24 @@ def _set_entity_meta(
     if len(value) > _META_VALUE_MAX:
         raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
     with transaction(conn), _friendly_errors():
+        old_entity = fetcher(conn, entity_id)
+        old_value = old_entity.metadata.get(normalized) if old_entity is not None else None
         setter(conn, entity_id, normalized, value)
-        return fetcher(conn, entity_id)
+        result = fetcher(conn, entity_id)
+        if old_value != value and result is not None:
+            repo.insert_journal_entry(
+                conn,
+                NewJournalEntry(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    workspace_id=getattr(result, "workspace_id", entity_id),
+                    field=f"meta.{normalized}",
+                    old_value=old_value,
+                    new_value=value,
+                    source=source,
+                ),
+            )
+        return result
 
 
 def _remove_entity_meta(
@@ -967,9 +1051,11 @@ def _remove_entity_meta(
     entity_id: int,
     key: str,
     *,
+    entity_type: EntityType,
     remover: Callable[[sqlite3.Connection, int, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
     entity_name: str,
+    source: str = "cli",
 ) -> str:
     """Generic entity-metadata removal. Raises ``LookupError`` if the key
     isn't present on the entity. Returns the old value atomically so
@@ -982,6 +1068,18 @@ def _remove_entity_meta(
             raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
         old_value = old.metadata[normalized]
         remover(conn, entity_id, normalized)
+        repo.insert_journal_entry(
+            conn,
+            NewJournalEntry(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                workspace_id=getattr(old, "workspace_id", entity_id),
+                field=f"meta.{normalized}",
+                old_value=old_value,
+                new_value=None,
+                source=source,
+            ),
+        )
         return old_value
 
 
@@ -990,15 +1088,16 @@ def _replace_entity_metadata(
     entity_id: int,
     new_metadata: dict[str, str],
     *,
+    entity_type: EntityType,
     writer: Callable[[sqlite3.Connection, int, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
+    source: str = "cli",
 ) -> Any:
     """Generic bulk-replace for an entity's metadata blob.
 
     Normalizes every key, rejects duplicates after normalization, enforces
     the per-value length cap, then writes the whole dict in one UPDATE and
-    returns the refreshed entity. No history is recorded — consistent with
-    per-key set/remove helpers which also bypass history.
+    journals each added/changed/removed key.
     """
     normalized: dict[str, str] = {}
     for raw_key, value in new_metadata.items():
@@ -1011,9 +1110,28 @@ def _replace_entity_metadata(
             )
         normalized[key] = value
     with transaction(conn), _friendly_errors():
-        fetcher(conn, entity_id)  # existence check
+        old_entity = fetcher(conn, entity_id)
+        old_meta = old_entity.metadata if old_entity is not None else {}
         writer(conn, entity_id, json.dumps(normalized))
-        return fetcher(conn, entity_id)
+        result = fetcher(conn, entity_id)
+        if result is not None:
+            for k in set(old_meta) | set(normalized):
+                old_val = old_meta.get(k)
+                new_val = normalized.get(k)
+                if old_val != new_val:
+                    repo.insert_journal_entry(
+                        conn,
+                        NewJournalEntry(
+                            entity_type=entity_type,
+                            entity_id=entity_id,
+                            workspace_id=getattr(result, "workspace_id", entity_id),
+                            field=f"meta.{k}",
+                            old_value=old_val,
+                            new_value=new_val,
+                            source=source,
+                        ),
+                    )
+        return result
 
 
 # ---- Task metadata ----
@@ -1029,6 +1147,7 @@ def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) 
         task_id,
         key,
         value,
+        entity_type=EntityType.TASK,
         setter=repo.set_task_metadata_key,
         fetcher=get_task,
     )
@@ -1039,6 +1158,7 @@ def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
         conn,
         task_id,
         key,
+        entity_type=EntityType.TASK,
         remover=repo.remove_task_metadata_key,
         fetcher=get_task,
         entity_name="task",
@@ -1056,13 +1176,14 @@ def replace_task_metadata(
     for signature parity with `update_task`; metadata writes don't record
     history today (consistent with per-key `set_task_meta` / `remove_task_meta`).
     """
-    del source  # not tracked today; see docstring
     return _replace_entity_metadata(
         conn,
         task_id,
         new_metadata,
+        entity_type=EntityType.TASK,
         writer=repo.replace_task_metadata,
         fetcher=get_task,
+        source=source,
     )
 
 
@@ -1081,6 +1202,7 @@ def set_workspace_meta(
         workspace_id,
         key,
         value,
+        entity_type=EntityType.WORKSPACE,
         setter=repo.set_workspace_metadata_key,
         fetcher=get_workspace,
     )
@@ -1091,6 +1213,7 @@ def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str)
         conn,
         workspace_id,
         key,
+        entity_type=EntityType.WORKSPACE,
         remover=repo.remove_workspace_metadata_key,
         fetcher=get_workspace,
         entity_name="workspace",
@@ -1107,13 +1230,14 @@ def replace_workspace_metadata(
     """Atomically replace a workspace's entire metadata blob. See
     `replace_task_metadata` for the `source` parameter rationale.
     """
-    del source
     return _replace_entity_metadata(
         conn,
         workspace_id,
         new_metadata,
+        entity_type=EntityType.WORKSPACE,
         writer=repo.replace_workspace_metadata,
         fetcher=get_workspace,
+        source=source,
     )
 
 
@@ -1130,6 +1254,7 @@ def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value:
         project_id,
         key,
         value,
+        entity_type=EntityType.PROJECT,
         setter=repo.set_project_metadata_key,
         fetcher=get_project,
     )
@@ -1140,6 +1265,7 @@ def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> 
         conn,
         project_id,
         key,
+        entity_type=EntityType.PROJECT,
         remover=repo.remove_project_metadata_key,
         fetcher=get_project,
         entity_name="project",
@@ -1156,13 +1282,14 @@ def replace_project_metadata(
     """Atomically replace a project's entire metadata blob. See
     `replace_task_metadata` for the `source` parameter rationale.
     """
-    del source
     return _replace_entity_metadata(
         conn,
         project_id,
         new_metadata,
+        entity_type=EntityType.PROJECT,
         writer=repo.replace_project_metadata,
         fetcher=get_project,
+        source=source,
     )
 
 
@@ -1179,6 +1306,7 @@ def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str
         group_id,
         key,
         value,
+        entity_type=EntityType.GROUP,
         setter=repo.set_group_metadata_key,
         fetcher=get_group,
     )
@@ -1189,6 +1317,7 @@ def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
         conn,
         group_id,
         key,
+        entity_type=EntityType.GROUP,
         remover=repo.remove_group_metadata_key,
         fetcher=get_group,
         entity_name="group",
@@ -1205,13 +1334,14 @@ def replace_group_metadata(
     """Atomically replace a group's entire metadata blob. See
     `replace_task_metadata` for the `source` parameter rationale.
     """
-    del source
     return _replace_entity_metadata(
         conn,
         group_id,
         new_metadata,
+        entity_type=EntityType.GROUP,
         writer=repo.replace_group_metadata,
         fetcher=get_group,
+        source=source,
     )
 
 
@@ -1222,6 +1352,7 @@ def add_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
+    source: str = "cli",
 ) -> None:
     with transaction(conn), _friendly_errors():
         if task_id == depends_on_id:
@@ -1240,18 +1371,38 @@ def add_dependency(
         if task_id in repo.get_reachable_task_ids(conn, depends_on_id):
             raise ValueError(f"adding dependency {task_id} -> {depends_on_id} would create a cycle")
         repo.add_dependency(conn, task_id, depends_on_id)
+        _record_dependency_change(
+            conn,
+            EntityType.TASK_DEPENDENCY,
+            task_id,
+            task.workspace_id,
+            depends_on_id,
+            added=True,
+            source=source,
+        )
 
 
 def archive_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
+    source: str = "cli",
 ) -> None:
     with transaction(conn), _friendly_errors():
         existing = repo.list_blocked_by_ids(conn, task_id)
         if depends_on_id not in existing:
             raise LookupError(f"task {task_id} does not depend on task {depends_on_id}")
+        task = get_task(conn, task_id)
         repo.archive_dependency(conn, task_id, depends_on_id)
+        _record_dependency_change(
+            conn,
+            EntityType.TASK_DEPENDENCY,
+            task_id,
+            task.workspace_id,
+            depends_on_id,
+            added=False,
+            source=source,
+        )
 
 
 def list_all_dependencies(
@@ -1267,6 +1418,7 @@ def add_group_dependency(
     conn: sqlite3.Connection,
     group_id: int,
     depends_on_id: int,
+    source: str = "cli",
 ) -> None:
     with transaction(conn), _friendly_errors():
         if group_id == depends_on_id:
@@ -1293,18 +1445,39 @@ def add_group_dependency(
                 f"adding dependency {group_id} -> {depends_on_id} would create a cycle"
             )
         repo.add_group_dependency(conn, group_id, depends_on_id)
+        _record_dependency_change(
+            conn,
+            EntityType.GROUP_DEPENDENCY,
+            group_id,
+            grp.workspace_id,
+            depends_on_id,
+            added=True,
+            source=source,
+        )
 
 
 def archive_group_dependency(
     conn: sqlite3.Connection,
     group_id: int,
     depends_on_id: int,
+    source: str = "cli",
 ) -> None:
     with transaction(conn), _friendly_errors():
         existing = repo.list_group_blocked_by_ids(conn, group_id)
         if depends_on_id not in existing:
             raise LookupError(f"group {group_id} does not depend on group {depends_on_id}")
+        grp = repo.get_group(conn, group_id)
         repo.archive_group_dependency(conn, group_id, depends_on_id)
+        if grp is not None:
+            _record_dependency_change(
+                conn,
+                EntityType.GROUP_DEPENDENCY,
+                group_id,
+                grp.workspace_id,
+                depends_on_id,
+                added=False,
+                source=source,
+            )
 
 
 def list_all_group_dependencies(
@@ -1316,11 +1489,12 @@ def list_all_group_dependencies(
 # ---- History ----
 
 
-def list_task_history(
+def list_journal(
     conn: sqlite3.Connection,
-    task_id: int,
-) -> tuple[TaskHistory, ...]:
-    return repo.list_task_history(conn, task_id)
+    entity_type: EntityType,
+    entity_id: int,
+) -> tuple[JournalEntry, ...]:
+    return repo.list_journal(conn, entity_type, entity_id)
 
 
 # ---- Group ----
@@ -1482,13 +1656,20 @@ def update_group(
     conn: sqlite3.Connection,
     group_id: int,
     changes: dict[str, Any],
+    source: str = "cli",
 ) -> Group:
     with transaction(conn), _friendly_errors():
         if "parent_id" in changes:
             new_parent = changes["parent_id"]
             if new_parent is not None and _would_create_cycle(conn, group_id, new_parent):
                 raise ValueError("reparenting would create a cycle")
-        return repo.update_group(conn, group_id, changes)
+        old = repo.get_group(conn, group_id)
+        result = repo.update_group(conn, group_id, changes)
+        if old is not None:
+            _record_entity_changes(
+                conn, EntityType.GROUP, group_id, old.workspace_id, old, changes, source
+            )
+        return result
 
 
 # ---- Task-group assignment ----
@@ -1910,7 +2091,9 @@ def archive_task(
     with transaction(conn), _friendly_errors():
         old = get_task(conn, task_id)
         updated = repo.update_task(conn, task_id, {"archived": True})
-        _record_changes(conn, task_id, old, {"archived": True}, source)
+        _record_entity_changes(
+            conn, EntityType.TASK, task_id, old.workspace_id, old, {"archived": True}, source
+        )
         return updated
 
 
@@ -1923,10 +2106,11 @@ def _record_archive_history(
     # Values must match str(bool) used by _record_changes for single-task archive.
     # If Task.archived ever changes from bool, update both paths together.
     for tid in task_ids:
-        repo.insert_task_history(
+        repo.insert_journal_entry(
             conn,
-            NewTaskHistory(
-                task_id=tid,
+            NewJournalEntry(
+                entity_type=EntityType.TASK,
+                entity_id=tid,
                 workspace_id=workspace_id,
                 field=TaskField.ARCHIVED,
                 old_value="False",

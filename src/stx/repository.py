@@ -7,28 +7,29 @@ from typing import Any
 
 from .mappers import (
     row_to_group,
+    row_to_journal_entry,
     row_to_project,
     row_to_status,
     row_to_tag,
     row_to_task,
-    row_to_task_history,
     row_to_workspace,
 )
 from .models import (
+    EntityType,
     Group,
+    JournalEntry,
     NewGroup,
+    NewJournalEntry,
     NewProject,
     NewStatus,
     NewTag,
     NewTask,
-    NewTaskHistory,
     NewWorkspace,
     Project,
     Status,
     Tag,
     Task,
     TaskFilter,
-    TaskHistory,
     Workspace,
 )
 
@@ -727,40 +728,41 @@ def list_all_task_tags(
     )
 
 
-# ---- Task history functions ----
+# ---- Journal functions ----
 
 
-def insert_task_history(
+def insert_journal_entry(
     conn: sqlite3.Connection,
-    new: NewTaskHistory,
-) -> TaskHistory:
+    new: NewJournalEntry,
+) -> JournalEntry:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO task_history (task_id, workspace_id, field, old_value, new_value, source) "
-        "VALUES (:task_id, :workspace_id, :field, :old_value, :new_value, :source)",
+        "INSERT INTO journal (entity_type, entity_id, workspace_id, field, old_value, new_value, source) "
+        "VALUES (:entity_type, :entity_id, :workspace_id, :field, :old_value, :new_value, :source)",
         d,
     )
-    row = conn.execute("SELECT * FROM task_history WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return row_to_task_history(row)
+    row = conn.execute("SELECT * FROM journal WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return row_to_journal_entry(row)
 
 
-def list_task_history(
+def list_journal(
     conn: sqlite3.Connection,
-    task_id: int,
-) -> tuple[TaskHistory, ...]:
+    entity_type: EntityType,
+    entity_id: int,
+) -> tuple[JournalEntry, ...]:
     rows = conn.execute(
-        "SELECT * FROM task_history WHERE task_id = ? ORDER BY changed_at DESC, id DESC",
-        (task_id,),
+        "SELECT * FROM journal WHERE entity_type = ? AND entity_id = ? ORDER BY changed_at DESC, id DESC",
+        (entity_type, entity_id),
     ).fetchall()
-    return tuple(row_to_task_history(r) for r in rows)
+    return tuple(row_to_journal_entry(r) for r in rows)
 
 
-def list_all_task_history(
+def list_all_journal(
     conn: sqlite3.Connection,
-) -> tuple[TaskHistory, ...]:
-    """Return all task_history rows ordered by task and time."""
-    rows = conn.execute("SELECT * FROM task_history ORDER BY task_id, changed_at, id").fetchall()
-    return tuple(row_to_task_history(r) for r in rows)
+) -> tuple[JournalEntry, ...]:
+    """Return all journal rows ordered by workspace and time."""
+    rows = conn.execute("SELECT * FROM journal ORDER BY workspace_id, changed_at, id").fetchall()
+    return tuple(row_to_journal_entry(r) for r in rows)
 
 
 # ---- Tag functions ----

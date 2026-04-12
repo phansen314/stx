@@ -10,7 +10,7 @@ Organize context into nestable hierarchies of workspaces, projects, and groups. 
 - **Dependency graphs** — tasks depend on tasks; groups depend on groups. Mermaid diagrams generated on export.
 - **Agent-first CLI** — output auto-switches to JSON when piped (`stx task ls | jq`). Every command is composable without screen-scraping.
 - **Human-friendly TUI** — renders the hierarchy as a kanban board. The left panel shows the full workspace tree; the right panel shows one column per status.
-- **Full audit trail** — every field change on a task is recorded in `task_history` with old/new values and a source tag.
+- **Full audit trail** — field changes across all entities (tasks, projects, groups, workspaces, statuses), dependency link/unlink events, and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
 - **SQLite-backed** — WAL journal mode, XDG paths, atomic backups, numbered migrations.
 
 ## Data Model

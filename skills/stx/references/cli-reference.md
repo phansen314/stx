@@ -161,7 +161,7 @@ Archives the task (`archived=true`). Prompts for y/N confirmation unless `--forc
 
 ### `stx task log <task>`
 
-Shows the full audit trail of field changes (TaskHistory).
+Shows the full audit trail of field changes for a task. Entries come from the unified `journal` table (entity_type = 'task').
 
 ---
 

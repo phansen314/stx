@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from stx import presenters
 from stx.models import (
+    EntityType,
     Group,
+    JournalEntry,
     Project,
     Status,
     Tag,
     Task,
     TaskField,
-    TaskHistory,
     Workspace,
 )
 from stx.service_models import (
@@ -115,10 +116,11 @@ def _history(
     old: str | None,
     new: str | None,
     source: str = "cli",
-) -> TaskHistory:
-    return TaskHistory(
+) -> JournalEntry:
+    return JournalEntry(
         id=id,
-        task_id=1,
+        entity_type=EntityType.TASK,
+        entity_id=1,
         workspace_id=1,
         field=field,
         old_value=old,

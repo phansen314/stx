@@ -7,12 +7,12 @@ import sqlite3
 import pytest
 from helpers import (
     insert_group,
+    insert_journal_entry,
     insert_project,
     insert_status,
     insert_tag,
     insert_task,
     insert_task_dependency,
-    insert_task_history,
     insert_task_tag,
     insert_workspace,
 )
@@ -343,7 +343,7 @@ class TestExportFullJson:
             "groups",
             "task_tags",
             "task_dependencies",
-            "task_history",
+            "journal",
         }
 
     def test_empty_db_all_lists_empty(self, conn: sqlite3.Connection) -> None:
@@ -357,7 +357,7 @@ class TestExportFullJson:
             "groups",
             "task_tags",
             "task_dependencies",
-            "task_history",
+            "journal",
         ):
             assert result[key] == [], f"expected {key} to be empty"
 
@@ -369,7 +369,7 @@ class TestExportFullJson:
             tid = insert_task(conn, bid, "T1", col, project_id=pid)
             tag_id = insert_tag(conn, bid, "bug")
             insert_task_tag(conn, tid, tag_id)
-            insert_task_history(conn, tid, field="title", old_value="Old", new_value="T1")
+            insert_journal_entry(conn, tid, field="title", old_value="Old", new_value="T1")
         result = export_full_json(conn)
         serialized = json.dumps(result)  # must not raise TypeError
         assert isinstance(serialized, str)
@@ -406,19 +406,20 @@ class TestExportFullJson:
         )
         assert any(tt["task_id"] == t1 and tt["tag_id"] == tag_id for tt in result["task_tags"])
 
-    def test_task_history_included(self, conn: sqlite3.Connection) -> None:
+    def test_journal_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T", col)
-            insert_task_history(conn, tid, field="title", old_value="old", new_value="T")
+            insert_journal_entry(conn, tid, field="title", old_value="old", new_value="T")
         result = export_full_json(conn)
-        history = result["task_history"]
-        assert len(history) == 1
-        assert history[0]["task_id"] == tid
-        assert history[0]["field"] == "title"
-        assert history[0]["old_value"] == "old"
-        assert history[0]["new_value"] == "T"
+        journal = result["journal"]
+        assert len(journal) == 1
+        assert journal[0]["entity_type"] == "task"
+        assert journal[0]["entity_id"] == tid
+        assert journal[0]["field"] == "title"
+        assert journal[0]["old_value"] == "old"
+        assert journal[0]["new_value"] == "T"
 
     def test_task_dependency_workspace_id_preserved(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):

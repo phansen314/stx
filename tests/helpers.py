@@ -140,17 +140,18 @@ def insert_task_tag(
     )
 
 
-def insert_task_history(
+def insert_journal_entry(
     conn: sqlite3.Connection,
     task_id: int,
     field: str = "title",
     old_value: str | None = "old",
     new_value: str | None = "new",
     source: str = "tui",
+    entity_type: str = "task",
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO task_history (task_id, workspace_id, field, old_value, new_value, source) "
-        "VALUES (?, (SELECT workspace_id FROM tasks WHERE id = ?), ?, ?, ?, ?)",
-        (task_id, task_id, field, old_value, new_value, source),
+        "INSERT INTO journal (entity_type, entity_id, workspace_id, field, old_value, new_value, source) "
+        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?), ?, ?, ?, ?)",
+        (entity_type, task_id, task_id, field, old_value, new_value, source),
     )
     return cur.lastrowid  # type: ignore[return-value]

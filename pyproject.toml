@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stx"
-version = "0.10.0"
+version = "0.11.0"
 description = "Structured context management with CLI-first agent integration and a human-friendly TUI"
 requires-python = ">=3.12"
 dependencies = [

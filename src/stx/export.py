@@ -303,7 +303,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
 
         task_tags = list(repo.list_all_task_tags(conn))
         task_dependencies = list(repo.list_all_task_dependencies(conn))
-        task_history = [dataclasses.asdict(h) for h in repo.list_all_task_history(conn)]
+        journal = [dataclasses.asdict(h) for h in repo.list_all_journal(conn)]
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -316,7 +316,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         "groups": groups,
         "task_tags": task_tags,
         "task_dependencies": task_dependencies,
-        "task_history": task_history,
+        "journal": journal,
     }
 
 

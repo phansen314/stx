@@ -6,13 +6,14 @@ import pytest
 
 from stx import service
 from stx.models import (
+    EntityType,
     Group,
+    JournalEntry,
     Project,
     Status,
     Tag,
     Task,
     TaskFilter,
-    TaskHistory,
     Workspace,
 )
 from stx.service_models import (
@@ -538,7 +539,7 @@ class TestTaskService:
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid)
         service.update_task(conn, task.id, {"title": "new"}, "tui")
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 1
         assert history[0].field == "title"
         assert history[0].old_value == "old"
@@ -550,7 +551,7 @@ class TestTaskService:
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "same", cid)
         service.update_task(conn, task.id, {"title": "same"}, "tui")
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 0
 
     def test_update_multiple_fields_records_multiple_history(
@@ -560,7 +561,7 @@ class TestTaskService:
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "old", cid, priority=1)
         service.update_task(conn, task.id, {"title": "new", "priority": 5}, "mcp")
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 2
         fields = {h.field for h in history}
         assert fields == {"title", "priority"}
@@ -571,7 +572,7 @@ class TestTaskService:
         task = service.create_task(conn, bid, "t", cid)
         assert task.description is None
         service.update_task(conn, task.id, {"description": "added"}, "tui")
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 1
         assert history[0].old_value is None
         assert history[0].new_value == "added"
@@ -583,7 +584,7 @@ class TestTaskService:
         task = service.create_task(conn, bid, "t", c1)
         moved = service.move_task(conn, task.id, c2, 0, "tui")
         assert moved.status_id == c2
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert any(h.field == "status_id" for h in history)
 
     def test_move_task_with_project_change(self, conn: sqlite3.Connection) -> None:
@@ -595,7 +596,7 @@ class TestTaskService:
         moved = service.move_task(conn, task.id, c2, 0, "cli", project_id=pid)
         assert moved.status_id == c2
         assert moved.project_id == pid
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert any(h.field == "project_id" for h in history)
         assert any(h.field == "status_id" for h in history)
 
@@ -931,12 +932,12 @@ class TestHistoryService:
         cid = insert_status(conn, bid)
         task = service.create_task(conn, bid, "t", cid)
         service.update_task(conn, task.id, {"title": "new"}, "tui")
-        history = service.list_task_history(conn, task.id)
+        history = service.list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 1
-        assert isinstance(history[0], TaskHistory)
+        assert isinstance(history[0], JournalEntry)
 
     def test_list_missing_task_returns_empty(self, conn: sqlite3.Connection) -> None:
-        assert service.list_task_history(conn, 9999) == ()
+        assert service.list_journal(conn, EntityType.TASK, 9999) == ()
 
 
 # ---- Filtered listing ----
@@ -1549,8 +1550,8 @@ class TestTaskGroupHistory:
         grp = service.create_group(conn, pid, "g")
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, grp.id, source="test")
-        history = service.list_task_history(conn, tid)
-        group_entries = [h for h in history if h.field.value == "group_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        group_entries = [h for h in history if h.field == "group_id"]
         assert len(group_entries) == 1
         assert group_entries[0].old_value is None
         assert group_entries[0].new_value == str(grp.id)
@@ -1561,12 +1562,12 @@ class TestTaskGroupHistory:
         grp = service.create_group(conn, pid, "g")
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, grp.id, source="cli")
-        history = service.list_task_history(conn, tid)
-        entry = next(h for h in history if h.field.value == "group_id")
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        entry = next(h for h in history if h.field == "group_id")
         assert entry.source == "cli"
         service.unassign_task_from_group(conn, tid, source="tui")
-        history2 = service.list_task_history(conn, tid)
-        unassign = next(h for h in history2 if h.field.value == "group_id" and h.new_value is None)
+        history2 = service.list_journal(conn, EntityType.TASK, tid)
+        unassign = next(h for h in history2 if h.field == "group_id" and h.new_value is None)
         assert unassign.source == "tui"
 
     def test_reassign_records_old_and_new(self, conn: sqlite3.Connection) -> None:
@@ -1576,8 +1577,8 @@ class TestTaskGroupHistory:
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, g1.id, source="test")
         service.assign_task_to_group(conn, tid, g2.id, source="test")
-        history = service.list_task_history(conn, tid)
-        group_entries = [h for h in history if h.field.value == "group_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        group_entries = [h for h in history if h.field == "group_id"]
         assert len(group_entries) == 2
         # newest first (ORDER BY changed_at DESC)
         assert group_entries[0].old_value == str(g1.id)
@@ -1589,8 +1590,8 @@ class TestTaskGroupHistory:
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, grp.id, source="test")
         service.unassign_task_from_group(conn, tid, source="test")
-        history = service.list_task_history(conn, tid)
-        group_entries = [h for h in history if h.field.value == "group_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        group_entries = [h for h in history if h.field == "group_id"]
         assert len(group_entries) == 2
         # newest first
         unassign = group_entries[0]
@@ -1602,8 +1603,8 @@ class TestTaskGroupHistory:
         bid, cid, pid = self._setup(conn)
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.unassign_task_from_group(conn, tid, source="test")
-        history = service.list_task_history(conn, tid)
-        assert not [h for h in history if h.field.value == "group_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        assert not [h for h in history if h.field == "group_id"]
 
     def test_assign_records_project_id_side_effect(self, conn: sqlite3.Connection) -> None:
         bid, cid, pid = self._setup(conn)
@@ -1611,14 +1612,14 @@ class TestTaskGroupHistory:
         # Task with NO project: assignment should auto-set project_id AND record it.
         tid = insert_task(conn, bid, "t", cid)
         service.assign_task_to_group(conn, tid, grp.id, source="test")
-        history = service.list_task_history(conn, tid)
-        proj_entries = [h for h in history if h.field.value == "project_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        proj_entries = [h for h in history if h.field == "project_id"]
         assert len(proj_entries) == 1
         assert proj_entries[0].old_value is None
         assert proj_entries[0].new_value == str(pid)
         assert proj_entries[0].source == "test"
         # group_id history is still recorded alongside
-        group_entries = [h for h in history if h.field.value == "group_id"]
+        group_entries = [h for h in history if h.field == "group_id"]
         assert len(group_entries) == 1
 
     def test_assign_same_group_no_history(self, conn: sqlite3.Connection) -> None:
@@ -1627,8 +1628,8 @@ class TestTaskGroupHistory:
         tid = insert_task(conn, bid, "t", cid, project_id=pid)
         service.assign_task_to_group(conn, tid, grp.id, source="test")
         service.assign_task_to_group(conn, tid, grp.id, source="test")
-        history = service.list_task_history(conn, tid)
-        group_entries = [h for h in history if h.field.value == "group_id"]
+        history = service.list_journal(conn, EntityType.TASK, tid)
+        group_entries = [h for h in history if h.field == "group_id"]
         # The second call is a no-op (group_id already matches); _record_changes skips it.
         assert len(group_entries) == 1
 
@@ -2286,8 +2287,8 @@ class TestArchivePreviewAndCascade:
         bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
         service.cascade_archive_group(conn, g1, source="test")
         for tid in (t1, t2):
-            history = service.list_task_history(conn, tid)
-            archived_entries = [h for h in history if h.field.value == "archived"]
+            history = service.list_journal(conn, EntityType.TASK, tid)
+            archived_entries = [h for h in history if h.field == "archived"]
             assert len(archived_entries) == 1
             assert archived_entries[0].old_value == "False"
             assert archived_entries[0].new_value == "True"
@@ -2297,16 +2298,16 @@ class TestArchivePreviewAndCascade:
         bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
         service.cascade_archive_project(conn, pid, source="test")
         for tid in (t1, t2):
-            history = service.list_task_history(conn, tid)
-            archived_entries = [h for h in history if h.field.value == "archived"]
+            history = service.list_journal(conn, EntityType.TASK, tid)
+            archived_entries = [h for h in history if h.field == "archived"]
             assert len(archived_entries) == 1
 
     def test_cascade_archive_workspace_records_history(self, conn: sqlite3.Connection) -> None:
         bid, pid, g1, g2, t1, t2 = self._setup_full(conn)
         service.cascade_archive_workspace(conn, bid, source="test")
         for tid in (t1, t2):
-            history = service.list_task_history(conn, tid)
-            archived_entries = [h for h in history if h.field.value == "archived"]
+            history = service.list_journal(conn, EntityType.TASK, tid)
+            archived_entries = [h for h in history if h.field == "archived"]
             assert len(archived_entries) == 1
 
     # ---- Dep re-creation after archive ----
@@ -2533,11 +2534,11 @@ class TestReplaceTaskMetadata:
         with pytest.raises(LookupError):
             service.replace_task_metadata(conn, 999, {"k": "v"}, source="test")
 
-    def test_replace_does_not_record_history(self, conn: sqlite3.Connection) -> None:
+    def test_replace_records_journal_entries(self, conn: sqlite3.Connection) -> None:
         _, tid = self._setup(conn)
         service.set_task_meta(conn, tid, "a", "1")
         before = conn.execute(
-            "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
+            "SELECT COUNT(*) FROM journal WHERE entity_id = ?", (tid,)
         ).fetchone()[0]
         service.replace_task_metadata(
             conn,
@@ -2545,10 +2546,10 @@ class TestReplaceTaskMetadata:
             {"a": "2", "b": "3"},
             source="test",
         )
-        after = conn.execute(
-            "SELECT COUNT(*) FROM task_history WHERE task_id = ?", (tid,)
-        ).fetchone()[0]
-        assert before == after
+        after = conn.execute("SELECT COUNT(*) FROM journal WHERE entity_id = ?", (tid,)).fetchone()[
+            0
+        ]
+        assert after == before + 2  # 'a' changed, 'b' added
 
 
 class TestReplaceWorkspaceMetadata:
@@ -2919,3 +2920,146 @@ class TestGroupMeta:
     def test_nonexistent_entity_raises(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(LookupError):
             service.set_group_meta(conn, 9999, "k", "v")
+
+
+# ---- Journal recording tests ----
+
+
+def _journal_entries(conn, entity_type_str, entity_id):
+    return conn.execute(
+        "SELECT * FROM journal WHERE entity_type = ? AND entity_id = ? ORDER BY id",
+        (entity_type_str, entity_id),
+    ).fetchall()
+
+
+class TestJournalRecordingProject:
+    def _seed(self, conn):
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        pid = insert_project(conn, wid, "P")
+        return wid, sid, pid
+
+    def test_update_project_name_journaled(self, conn):
+        wid, sid, pid = self._seed(conn)
+        service.update_project(conn, pid, {"name": "New"}, source="test")
+        entries = _journal_entries(conn, "project", pid)
+        assert len(entries) == 1
+        assert entries[0]["field"] == "name"
+        assert entries[0]["old_value"] == "P"
+        assert entries[0]["new_value"] == "New"
+
+    def test_archive_project_journaled(self, conn):
+        wid, sid, pid = self._seed(conn)
+        service.update_project(conn, pid, {"archived": True}, source="test")
+        entries = _journal_entries(conn, "project", pid)
+        assert any(e["field"] == "archived" for e in entries)
+
+
+class TestJournalRecordingGroup:
+    def _seed(self, conn):
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        pid = insert_project(conn, wid, "P")
+        gid = insert_group(conn, pid, "G")
+        return wid, sid, pid, gid
+
+    def test_update_group_title_journaled(self, conn):
+        wid, sid, pid, gid = self._seed(conn)
+        service.update_group(conn, gid, {"title": "New"}, source="test")
+        entries = _journal_entries(conn, "group", gid)
+        assert len(entries) == 1
+        assert entries[0]["field"] == "title"
+        assert entries[0]["new_value"] == "New"
+
+
+class TestJournalRecordingWorkspace:
+    def test_update_workspace_name_journaled(self, conn):
+        wid = insert_workspace(conn, "Old")
+        service.update_workspace(conn, wid, {"name": "New"}, source="test")
+        entries = _journal_entries(conn, "workspace", wid)
+        assert len(entries) == 1
+        assert entries[0]["field"] == "name"
+        assert entries[0]["old_value"] == "Old"
+        assert entries[0]["new_value"] == "New"
+
+
+class TestJournalRecordingStatus:
+    def test_update_status_name_journaled(self, conn):
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        service.update_status(conn, sid, {"name": "done"}, source="test")
+        entries = _journal_entries(conn, "status", sid)
+        assert len(entries) == 1
+        assert entries[0]["field"] == "name"
+        assert entries[0]["new_value"] == "done"
+
+
+class TestJournalRecordingDependencies:
+    def _seed(self, conn):
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        t1 = insert_task(conn, wid, "t1", sid)
+        t2 = insert_task(conn, wid, "t2", sid)
+        return wid, t1, t2
+
+    def test_add_dependency_journaled(self, conn):
+        wid, t1, t2 = self._seed(conn)
+        service.add_dependency(conn, t1, t2, source="test")
+        entries = _journal_entries(conn, "task_dependency", t1)
+        assert len(entries) == 1
+        assert entries[0]["field"] == "depends_on"
+        assert entries[0]["old_value"] is None
+        assert entries[0]["new_value"] == str(t2)
+
+    def test_archive_dependency_journaled(self, conn):
+        wid, t1, t2 = self._seed(conn)
+        service.add_dependency(conn, t1, t2, source="test")
+        service.archive_dependency(conn, t1, t2, source="test")
+        entries = _journal_entries(conn, "task_dependency", t1)
+        remove_entry = next(e for e in entries if e["new_value"] is None)
+        assert remove_entry["old_value"] == str(t2)
+
+
+class TestJournalRecordingMetadata:
+    def _seed(self, conn):
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        tid = insert_task(conn, wid, "t", sid)
+        return wid, tid
+
+    def test_set_task_meta_journaled(self, conn):
+        wid, tid = self._seed(conn)
+        service.set_task_meta(conn, tid, "foo", "bar")
+        entries = conn.execute(
+            "SELECT * FROM journal WHERE entity_type='task' AND entity_id=? AND field='meta.foo'",
+            (tid,),
+        ).fetchall()
+        assert len(entries) == 1
+        assert entries[0]["old_value"] is None
+        assert entries[0]["new_value"] == "bar"
+
+    def test_remove_task_meta_journaled(self, conn):
+        wid, tid = self._seed(conn)
+        service.set_task_meta(conn, tid, "foo", "bar")
+        service.remove_task_meta(conn, tid, "foo")
+        entries = conn.execute(
+            "SELECT * FROM journal WHERE entity_type='task' AND entity_id=? AND field='meta.foo' ORDER BY id",
+            (tid,),
+        ).fetchall()
+        assert len(entries) == 2
+        assert entries[1]["old_value"] == "bar"
+        assert entries[1]["new_value"] is None
+
+    def test_replace_task_meta_journals_each_changed_key(self, conn):
+        wid, tid = self._seed(conn)
+        service.set_task_meta(conn, tid, "a", "1")
+        before = conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE entity_type='task' AND entity_id=? AND field LIKE 'meta.%'",
+            (tid,),
+        ).fetchone()[0]
+        service.replace_task_metadata(conn, tid, {"a": "2", "b": "3"}, source="test")
+        after = conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE entity_type='task' AND entity_id=? AND field LIKE 'meta.%'",
+            (tid,),
+        ).fetchone()[0]
+        assert after == before + 2  # 'a' changed, 'b' added

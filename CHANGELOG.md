@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-04-12
+
+### Added
+
+- **Unified journal table.** Replaces the task-scoped `task_history` table with a
+  `journal` table covering all entity types: `task`, `project`, `group`, `workspace`,
+  `status`, `task_dependency`, and `group_dependency`. Field changes, dependency
+  link/unlink events, and metadata key-level diffs are all recorded in one table with
+  `entity_type`, `entity_id`, `field`, `old_value`, `new_value`, `source`, and
+  `changed_at` columns. Cross-entity timeline queries now work without JOINs.
+- **Metadata journaling.** `stx {task,workspace,project,group} meta set/del` and the
+  TUI metadata bulk-replace now emit per-key journal entries (field `meta.<key>`).
+- **Dependency journaling.** `stx dep create/archive` and `stx group dep create/archive`
+  emit journal entries (`field = "depends_on"`, `entity_type = "task_dependency"` /
+  `"group_dependency"`).
+- **`source` parameter on update/archive functions.** All mutation functions now accept
+  a `source` keyword argument (`"cli"` default, `"tui"` from TUI event handlers).
+- **Migration 013.** Existing `task_history` rows are migrated into `journal` with
+  `entity_type = 'task'`. The `task_history` table is then dropped.
+
+### Changed
+
+- **`stx export --json`** now uses key `"journal"` instead of `"task_history"`.
+- **Schema version** bumped to 13.
+
 ## [0.9.0] — 2026-04-11
 
 ### Added

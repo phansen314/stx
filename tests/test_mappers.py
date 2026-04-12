@@ -6,11 +6,11 @@ from typing import NamedTuple
 
 import pytest
 from helpers import (
+    insert_journal_entry,
     insert_project,
     insert_status,
     insert_task,
     insert_task_dependency,
-    insert_task_history,
     insert_workspace,
 )
 
@@ -19,27 +19,27 @@ from stx.mappers import (
     group_to_detail,
     group_to_ref,
     project_to_detail,
+    row_to_journal_entry,
     row_to_project,
     row_to_status,
     row_to_task,
-    row_to_task_history,
     row_to_workspace,
     shallow_fields,
     task_to_detail,
     task_to_list_item,
 )
 from stx.models import (
+    EntityType,
     Group,
+    JournalEntry,
+    NewJournalEntry,
     NewProject,
     NewStatus,
     NewTask,
-    NewTaskHistory,
     NewWorkspace,
     Project,
     Status,
     Task,
-    TaskField,
-    TaskHistory,
     Workspace,
 )
 from stx.service_models import (
@@ -80,7 +80,7 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
         )
         task2_id = insert_task(conn, workspace_id, "task2", status_id, priority=3)
         insert_task_dependency(conn, task1_id, task2_id)
-        history_id = insert_task_history(
+        history_id = insert_journal_entry(
             conn,
             task1_id,
             field="title",
@@ -214,33 +214,20 @@ class TestRowToTask:
         assert task.finish_date is None
 
 
-class TestRowToTaskHistory:
+class TestRowToJournalEntry:
     def test_maps_row(self, seeded: FullSeed) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM task_history WHERE id = ?",
+            "SELECT * FROM journal WHERE id = ?",
             (seeded.history_id,),
         ).fetchone()
-        history = row_to_task_history(row)
-        assert isinstance(history, TaskHistory)
-        assert history.field == TaskField.TITLE
-        assert history.old_value == "old"
-        assert history.new_value == "task1"
-        assert history.source == "tui"
-
-    def test_raises_on_invalid_field(self, conn: sqlite3.Connection) -> None:
-        """row_to_task_history raises ValueError for unknown field values."""
-        fake_row = {
-            "id": 1,
-            "task_id": 1,
-            "workspace_id": 1,
-            "field": "nonexistent_field",
-            "old_value": None,
-            "new_value": "v",
-            "source": "test",
-            "changed_at": 0,
-        }
-        with pytest.raises(ValueError):
-            row_to_task_history(fake_row)  # type: ignore[arg-type]
+        entry = row_to_journal_entry(row)
+        assert isinstance(entry, JournalEntry)
+        assert entry.entity_type == EntityType.TASK
+        assert entry.entity_id == seeded.task1_id
+        assert entry.field == "title"
+        assert entry.old_value == "old"
+        assert entry.new_value == "task1"
+        assert entry.source == "tui"
 
 
 # ---- shallow_fields tests ----
@@ -518,9 +505,14 @@ class TestPreInsertDefaults:
         assert task.start_date is None
         assert task.finish_date is None
 
-    def test_new_task_history_defaults(self) -> None:
-        hist = NewTaskHistory(
-            task_id=1, workspace_id=1, field=TaskField.TITLE, new_value="v", source="tui"
+    def test_new_journal_entry_defaults(self) -> None:
+        hist = NewJournalEntry(
+            entity_type=EntityType.TASK,
+            entity_id=1,
+            workspace_id=1,
+            field="title",
+            new_value="v",
+            source="tui",
         )
         assert hist.old_value is None
 
@@ -535,15 +527,11 @@ def _schema_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 class TestTaskFieldMatchesSchema:
-    def test_rendered_schema_contains_all_task_fields(self) -> None:
-        """read_schema() generates the CHECK from TaskField, so drift is impossible.
-        This test verifies the template substitution works correctly."""
+    def test_rendered_schema_contains_journal_table(self) -> None:
+        """read_schema() returns the schema with the journal table (no task_history)."""
         schema = read_schema()
-        for field in TaskField:
-            assert f"'{field.value}'" in schema, (
-                f"TaskField.{field.name} missing from rendered schema"
-            )
-        assert "__TASK_FIELD_VALUES__" not in schema, "placeholder was not substituted"
+        assert "CREATE TABLE IF NOT EXISTS journal" in schema
+        assert "task_history" not in schema
 
 
 class TestNewWorkspaceFieldsMatchSchema:
@@ -581,12 +569,12 @@ class TestNewTaskFieldsMatchSchema:
         assert new_task_fields | db_defaulted | service_managed == schema_cols
 
 
-class TestNewTaskHistoryFieldsMatchSchema:
-    def test_new_task_history_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "task_history")
+class TestNewJournalEntryFieldsMatchSchema:
+    def test_new_journal_entry_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "journal")
         db_defaulted = {"id", "changed_at"}
-        new_hist_fields = {f.name for f in dataclasses.fields(NewTaskHistory)}
-        assert new_hist_fields | db_defaulted == schema_cols
+        new_entry_fields = {f.name for f in dataclasses.fields(NewJournalEntry)}
+        assert new_entry_fields | db_defaulted == schema_cols
 
 
 class TestPersistedWorkspaceFieldsMatchSchema:
@@ -617,11 +605,11 @@ class TestPersistedTaskFieldsMatchSchema:
         assert task_fields == schema_cols
 
 
-class TestPersistedTaskHistoryFieldsMatchSchema:
-    def test_task_history_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "task_history")
-        hist_fields = {f.name for f in dataclasses.fields(TaskHistory)}
-        assert hist_fields == schema_cols
+class TestPersistedJournalEntryFieldsMatchSchema:
+    def test_journal_entry_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "journal")
+        entry_fields = {f.name for f in dataclasses.fields(JournalEntry)}
+        assert entry_fields == schema_cols
 
 
 # ---- Mapper field coverage tests ----
@@ -679,18 +667,18 @@ class TestMapperFieldCoverage:
         actual = {f.name for f in dataclasses.fields(task) if getattr(task, f.name) is not None}
         assert non_nullable <= actual
 
-    def test_row_to_task_history_populates_all_fields(
+    def test_row_to_journal_entry_populates_all_fields(
         self,
         seeded: FullSeed,
     ) -> None:
         row = seeded.conn.execute(
-            "SELECT * FROM task_history WHERE id = ?",
+            "SELECT * FROM journal WHERE id = ?",
             (seeded.history_id,),
         ).fetchone()
-        hist = row_to_task_history(row)
+        entry = row_to_journal_entry(row)
         # old_value is nullable, rest should be populated
-        non_nullable = {f.name for f in dataclasses.fields(TaskHistory) if f.name != "old_value"}
-        actual = {f.name for f in dataclasses.fields(hist) if getattr(hist, f.name) is not None}
+        non_nullable = {f.name for f in dataclasses.fields(JournalEntry) if f.name != "old_value"}
+        actual = {f.name for f in dataclasses.fields(entry) if getattr(entry, f.name) is not None}
         assert non_nullable <= actual
 
 

@@ -5,13 +5,15 @@ import sqlite3
 import pytest
 
 from stx.models import (
+    EntityType,
     Group,
+    JournalEntry,
     NewGroup,
+    NewJournalEntry,
     NewProject,
     NewStatus,
     NewTag,
     NewTask,
-    NewTaskHistory,
     NewWorkspace,
     Project,
     Status,
@@ -19,7 +21,6 @@ from stx.models import (
     Task,
     TaskField,
     TaskFilter,
-    TaskHistory,
     Workspace,
 )
 from stx.repository import (
@@ -50,11 +51,11 @@ from stx.repository import (
     get_workspace,
     get_workspace_by_name,
     insert_group,
+    insert_journal_entry,
     insert_project,
     insert_status,
     insert_tag,
     insert_task,
-    insert_task_history,
     insert_workspace,
     list_all_dependencies,
     list_all_group_dependencies,
@@ -66,12 +67,12 @@ from stx.repository import (
     list_group_blocked_by_ids,
     list_groups,
     list_groups_by_workspace,
+    list_journal,
     list_projects,
     list_statuses,
     list_tag_ids_by_task,
     list_tags,
     list_tags_by_task,
-    list_task_history,
     list_task_ids_by_group,
     list_task_ids_by_project,
     list_task_ids_by_tag,
@@ -759,18 +760,19 @@ class TestGroupDependencyRepository:
         assert get_reachable_group_dep_ids(conn, g1) == ()
 
 
-# ---- Task history ----
+# ---- Journal ----
 
 
-class TestTaskHistoryRepository:
-    def test_insert_returns_task_history(self, conn: sqlite3.Connection) -> None:
+class TestJournalRepository:
+    def test_insert_returns_journal_entry(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
         task = insert_task(conn, NewTask(workspace_id=workspace.id, title="t", status_id=col.id))
-        h = insert_task_history(
+        h = insert_journal_entry(
             conn,
-            NewTaskHistory(
-                task_id=task.id,
+            NewJournalEntry(
+                entity_type=EntityType.TASK,
+                entity_id=task.id,
                 workspace_id=task.workspace_id,
                 field=TaskField.TITLE,
                 old_value="t",
@@ -778,36 +780,40 @@ class TestTaskHistoryRepository:
                 source="tui",
             ),
         )
-        assert isinstance(h, TaskHistory)
+        assert isinstance(h, JournalEntry)
+        assert h.entity_type == EntityType.TASK
+        assert h.entity_id == task.id
         assert h.field == TaskField.TITLE
         assert h.old_value == "t"
         assert h.new_value == "new"
 
-    def test_list_task_history_ordered_desc(self, conn: sqlite3.Connection) -> None:
+    def test_list_journal_ordered_desc(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
         task = insert_task(conn, NewTask(workspace_id=workspace.id, title="t", status_id=col.id))
-        h1 = insert_task_history(
+        h1 = insert_journal_entry(
             conn,
-            NewTaskHistory(
-                task_id=task.id,
+            NewJournalEntry(
+                entity_type=EntityType.TASK,
+                entity_id=task.id,
                 workspace_id=task.workspace_id,
                 field=TaskField.TITLE,
                 new_value="v1",
                 source="tui",
             ),
         )
-        h2 = insert_task_history(
+        h2 = insert_journal_entry(
             conn,
-            NewTaskHistory(
-                task_id=task.id,
+            NewJournalEntry(
+                entity_type=EntityType.TASK,
+                entity_id=task.id,
                 workspace_id=task.workspace_id,
                 field=TaskField.TITLE,
                 new_value="v2",
                 source="tui",
             ),
         )
-        history = list_task_history(conn, task.id)
+        history = list_journal(conn, EntityType.TASK, task.id)
         assert len(history) == 2
         # DESC order: h2 first (later changed_at), then h1
         assert history[0].id == h2.id

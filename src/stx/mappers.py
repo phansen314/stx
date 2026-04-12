@@ -6,13 +6,13 @@ import sqlite3
 from typing import Any
 
 from .models import (
+    EntityType,
     Group,
+    JournalEntry,
     Project,
     Status,
     Tag,
     Task,
-    TaskField,
-    TaskHistory,
     Workspace,
 )
 from .service_models import (
@@ -106,12 +106,13 @@ def row_to_tag(row: Row) -> Tag:
     )
 
 
-def row_to_task_history(row: Row) -> TaskHistory:
-    return TaskHistory(
+def row_to_journal_entry(row: Row) -> JournalEntry:
+    return JournalEntry(
         id=row["id"],
-        task_id=row["task_id"],
+        entity_type=EntityType(row["entity_type"]),
+        entity_id=row["entity_id"],
         workspace_id=row["workspace_id"],
-        field=TaskField(row["field"]),
+        field=row["field"],
         old_value=row["old_value"],
         new_value=row["new_value"],
         source=row["source"],
@@ -170,7 +171,7 @@ def task_to_detail(
     group: Group | None,
     blocked_by: tuple[Task, ...],
     blocks: tuple[Task, ...],
-    history: tuple[TaskHistory, ...],
+    history: tuple[JournalEntry, ...],
     tags: tuple[Tag, ...] = (),
 ) -> TaskDetail:
     return TaskDetail(

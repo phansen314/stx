@@ -16,6 +16,16 @@ class TaskFilter:
     only_archived: bool = False
 
 
+class EntityType(StrEnum):
+    TASK = "task"
+    PROJECT = "project"
+    GROUP = "group"
+    WORKSPACE = "workspace"
+    STATUS = "status"
+    TASK_DEPENDENCY = "task_dependency"
+    GROUP_DEPENDENCY = "group_dependency"
+
+
 class TaskField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"
@@ -28,6 +38,34 @@ class TaskField(StrEnum):
     START_DATE = "start_date"
     FINISH_DATE = "finish_date"
     GROUP_ID = "group_id"
+
+
+class ProjectField(StrEnum):
+    NAME = "name"
+    DESCRIPTION = "description"
+    ARCHIVED = "archived"
+
+
+class GroupField(StrEnum):
+    TITLE = "title"
+    DESCRIPTION = "description"
+    PARENT_ID = "parent_id"
+    POSITION = "position"
+    ARCHIVED = "archived"
+
+
+class WorkspaceField(StrEnum):
+    NAME = "name"
+    ARCHIVED = "archived"
+
+
+class StatusField(StrEnum):
+    NAME = "name"
+    ARCHIVED = "archived"
+
+
+class DependencyField(StrEnum):
+    DEPENDS_ON = "depends_on"
 
 
 # ---- Pre-insert types (no id, no created_at) ----
@@ -77,10 +115,11 @@ class NewGroup:
 
 
 @dataclass(frozen=True)
-class NewTaskHistory:
-    task_id: int
+class NewJournalEntry:
+    entity_type: EntityType
+    entity_id: int
     workspace_id: int
-    field: TaskField
+    field: str
     new_value: str | None
     source: str
     old_value: str | None = None
@@ -174,11 +213,12 @@ class GroupDependency:
 
 
 @dataclass(frozen=True)
-class TaskHistory:
+class JournalEntry:
     id: int
-    task_id: int
+    entity_type: EntityType
+    entity_id: int
     workspace_id: int
-    field: TaskField
+    field: str
     old_value: str | None
     new_value: str | None
     source: str

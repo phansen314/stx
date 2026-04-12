@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import Project, Status, Tag, TaskHistory, Workspace
+from .models import JournalEntry, Project, Status, Tag, Workspace
 from .service_models import (
     ArchivePreview,
     EntityUpdatePreview,
@@ -38,13 +38,13 @@ def format_metadata_block(metadata: dict[str, str], indent: int = 2) -> str:
     return "\n".join(f"{pad}{k}: {v}" for k, v in sorted(metadata.items()))
 
 
-def format_history_entry(h: TaskHistory) -> str:
+def format_history_entry(h: JournalEntry) -> str:
     old_str = h.old_value if h.old_value is not None else "(none)"
     new_str = h.new_value if h.new_value is not None else "(none)"
     return f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {new_str}  ({h.source})"
 
 
-def format_task_history(history: tuple[TaskHistory, ...]) -> str:
+def format_task_history(history: tuple[JournalEntry, ...]) -> str:
     if not history:
         return "no history"
     return "\n".join(format_history_entry(h) for h in history)
