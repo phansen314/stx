@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-04-13
+
 ### Removed
 - **BREAKING:** tags feature removed. Tasks no longer have tags; the `tags` /
   `task_tags` tables are dropped, all `stx tag` subcommands are gone, and
@@ -300,7 +302,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`project edit --name/-n`** removed; use the new `project rename` instead. `project edit` now only handles description changes.
 - **Dropped `-P` / `-s` short flags** from `task create` / `task ls` / `task edit`. They case-collided with `-p` (project) and `-S` (status), making shift-key typos silently do the wrong thing. Long forms `--priority` and `--search` remain. Breaking for any script relying on the shorts.
 
-[Unreleased]: https://github.com/phansen314/stx/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/phansen314/stx/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/phansen314/stx/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/phansen314/stx/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/phansen314/stx/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/phansen314/stx/compare/v0.11.0...v0.12.0
