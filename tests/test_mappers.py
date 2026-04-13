@@ -351,8 +351,8 @@ class TestTaskToDetail:
             status=status,
             project=None,
             group=None,
-            blocked_by=(),
-            blocks=(),
+            edge_sources=(),
+            edge_targets=(),
             history=(),
         )
         assert isinstance(detail, TaskDetail)
@@ -366,8 +366,8 @@ class TestTaskToDetail:
             status=_status(),
             project=None,
             group=None,
-            blocked_by=(),
-            blocks=(),
+            edge_sources=(),
+            edge_targets=(),
             history=(),
         )
         for f in dataclasses.fields(task):
@@ -379,14 +379,14 @@ class TestTaskToDetail:
             status=_status(),
             project=None,
             group=None,
-            blocked_by=(),
-            blocks=(),
+            edge_sources=(),
+            edge_targets=(),
             history=(),
         )
         assert detail.project is None
         assert detail.group is None
-        assert detail.blocked_by == ()
-        assert detail.blocks == ()
+        assert detail.edge_sources == ()
+        assert detail.edge_targets == ()
         assert detail.history == ()
         assert detail.tags == ()
 
@@ -397,8 +397,8 @@ class TestTaskToDetail:
                 _task(),
                 project=None,
                 group=None,
-                blocked_by=(),
-                blocks=(),
+                edge_sources=(),
+                edge_targets=(),
                 history=(),
             )
 
@@ -466,7 +466,14 @@ class TestGroupToDetail:
             created_at=0,
             metadata={},
         )
-        detail = group_to_detail(group, tasks=(), children=(child,), parent=None)
+        detail = group_to_detail(
+            group,
+            tasks=(),
+            children=(child,),
+            parent=None,
+            edge_sources=(),
+            edge_targets=(),
+        )
         assert isinstance(detail, GroupDetail)
         assert detail.title == "g"
         assert detail.children == (child,)
@@ -474,7 +481,14 @@ class TestGroupToDetail:
 
     def test_group_fields_copied(self) -> None:
         group = _group()
-        detail = group_to_detail(group, tasks=(), children=(), parent=None)
+        detail = group_to_detail(
+            group,
+            tasks=(),
+            children=(),
+            parent=None,
+            edge_sources=(),
+            edge_targets=(),
+        )
         for f in dataclasses.fields(group):
             assert getattr(detail, f.name) == getattr(group, f.name)
 

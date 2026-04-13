@@ -7,16 +7,18 @@ clear error messages instead of opaque `IntegrityError` exceptions.
 
 ---
 
-## Cycle Detection (service-only)
+## Cycle Detection
 
-- **Task dependency cycles are forbidden.** Before adding a dependency A → B, the
-  service walks the transitive closure from B. If A is reachable, the dependency
-  would create a cycle and is rejected. The database only prevents self-loops
-  (`CHECK (task_id != depends_on_id)`); multi-hop cycles like A → B → C → A
-  require application-level detection.
+**Edge cycles: not enforced.** Deferred pending blocking-kind semantics rework —
+with `kind`-labelled edges, "cycle" is kind-dependent (an A→B "blocks" and a
+B→A "related-to" are not logically a cycle). The DB still rejects self-loops
+via `CHECK (source_id != target_id)` on both `task_edges` and `group_edges`.
+Multi-hop cycles are currently allowed at all layers.
+
 - **Group hierarchy cycles are forbidden.** Before reparenting a group, the service
   walks the subtree rooted at the group. If the proposed parent is a descendant,
-  the reparent is rejected.
+  the reparent is rejected. (This is unchanged — the `parent_id` hierarchy on
+  `groups` is separate from the edge system on `group_edges`.)
 
 ## Task Field Validation (defense-in-depth)
 
@@ -33,21 +35,23 @@ These constraints are also enforced by composite foreign keys in the schema.
 
 - **A task's status must belong to the same workspace as the task.**
 - **A task's project must belong to the same workspace as the task.**
-- **A dependency can only link tasks on the same workspace.**
+- **A task edge can only link tasks on the same workspace.** Enforced by the composite FK `task_edges.(source_id, workspace_id) → tasks(id, workspace_id)`.
+- **A group edge can only link groups on the same workspace.** Enforced by the composite FK `group_edges.(source_id, workspace_id) → groups(id, workspace_id)`.
 - **A tag can only be applied to a task on the same workspace.**
 - **A group's parent must belong to the same project.** (Also enforced by composite FK.)
 - **A task's group must belong to the same project as the task.**
 
 ## Self-Reference (defense-in-depth)
 
-- **A task cannot depend on itself.** Also enforced by `CHECK (task_id != depends_on_id)`.
+- **A task edge cannot link a task to itself.** Also enforced by `CHECK (source_id != target_id)` on `task_edges`. Symmetric rule for group edges.
 
 ## Duplicate Prevention (defense-in-depth)
 
 Also enforced by partial unique indexes and primary keys in the schema; the
 service layer translates `IntegrityError` into human-readable messages.
 
-- **Duplicate dependencies are pre-checked** in the service layer before the insert.
+- **Duplicate edges are pre-checked** in the service layer: `add_task_edge`/`add_group_edge` reject insert when an active edge with the same `(source_id, target_id)` already exists (regardless of kind). The DB PK is the last line of defense.
+- **Edge kind validation:** `kind` is lowercase-normalized via `_normalize_edge_kind` and must match `[a-z0-9_.-]+`, 1-64 characters. Also DB-enforced via `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
 - **Duplicate tag assignments** rely on the DB `PRIMARY KEY` constraint — no service pre-check; the `IntegrityError` is translated to a clear message.
 - **Duplicate active names** for workspaces, statuses, projects, tasks, tags, and groups
   are rejected with entity-specific messages (via error translation).
@@ -64,6 +68,7 @@ Active entities cannot point to archived parents:
 - **A task cannot be moved to an archived status.**
 - **A task cannot be assigned to an archived project.**
 - **A task cannot be assigned to an archived group.**
+- **An edge cannot be created between archived tasks.** `add_task_edge` raises `ValueError` if either endpoint is archived. Symmetric rule for `add_group_edge`.
 
 ### Cascade archive
 
@@ -77,14 +82,15 @@ Archiving a parent entity cascades to all its active descendants:
 
 ### Mutations on archived entities are allowed
 
-Editing, tagging, adding dependencies to, or otherwise mutating an archived entity
-is permitted. This supports fixing metadata before unarchiving.
+Editing, tagging, or otherwise mutating an archived entity is permitted —
+except for adding edges (see the archived-endpoint rule above). This supports
+fixing metadata before unarchiving.
 
 ## Cross-Workspace Move Preconditions (service-only)
 
 - **An archived task cannot be moved to another workspace.**
-- **A task with dependencies cannot be moved to another workspace.** Remove all
-  dependencies (both directions) first.
+- **A task with active edges cannot be moved to another workspace.** Archive all
+  edges (both directions) first via `stx edge archive`.
 - **The target status and project must belong to the target workspace.**
 - **The target status and project must not be archived.**
 
@@ -161,11 +167,18 @@ generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
   walks every pair through `_normalize_meta_key`, rejects duplicate keys
   post-normalization, enforces the 500-char value cap, then writes a
   `json.dumps()`-ed blob in a single UPDATE.
-- **No metadata changes are recorded in `task_history`.** Both the per-key
-  and bulk-replace code paths bypass history recording. The `source` parameter
-  on `replace_*_metadata` is accepted for signature parity with `update_task`
-  but currently ignored; it exists so a future decision to start tracking
-  metadata changes can land without breaking callers.
+- **Metadata changes ARE recorded in the `journal` table** (as of 0.11.0). Both
+  the per-key and bulk-replace code paths emit `journal` rows with `field` set
+  to `meta.<key>` and the old/new values filled in. The `source` parameter is
+  propagated through all delegates and recorded on the journal entry.
+- **Edges also carry metadata.** `task_edges` and `group_edges` each have their
+  own `metadata` JSON column with identical rules (lowercase-normalized keys,
+  `[a-z0-9_.-]+` charset, 64-char key cap, 500-char value cap). Access via
+  `stx edge meta ls|get|set|del --source <t> --target <t>` and `stx group edge
+  meta …`. Repository-level helpers are generic over a `_EDGE_METADATA_TABLES`
+  allowlist mirroring the `_METADATA_TABLES` pattern used by single-id entities.
+  Edge metadata mutations also emit `meta.<key>` journal rows (with
+  `entity_type = task_edge` or `group_edge`, `entity_id = source_id`).
 
 ## Audit Trail (service-only logic, DB-enforced schema)
 
@@ -193,6 +206,7 @@ Translated error categories:
 | `UNIQUE constraint failed: tags.*` | "a tag with this name already exists on this workspace" |
 | `UNIQUE constraint failed: groups.*` | "a group with this title already exists in this project" |
 | `UNIQUE constraint failed: tasks.*` | "a task with this title already exists on this workspace" |
-| `UNIQUE constraint failed: task_dependencies.*` | "this dependency already exists" |
+| `UNIQUE constraint failed: task_edges.*` / `group_edges.*` | "an edge already exists between these entities" |
+| `CHECK constraint failed: task_edges.*` / `group_edges.*` | "edge kind must match [a-z0-9_.-]+ and be 1-64 characters" |
 | `UNIQUE constraint failed: task_tags.*` | "task already has this tag" |
 | `FOREIGN KEY constraint failed` | context-specific or generic FK message |

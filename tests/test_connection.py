@@ -47,12 +47,12 @@ class TestInitDb:
             "projects",
             "statuses",
             "tasks",
-            "task_dependencies",
+            "task_edges",
             "journal",
             "tags",
             "task_tags",
             "groups",
-            "group_dependencies",
+            "group_edges",
         }
 
     def test_idempotent(self, conn: sqlite3.Connection) -> None:
@@ -139,7 +139,7 @@ class TestSelfDependencyConstraint:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+                    "INSERT INTO task_edges (source_id, target_id, kind) VALUES (?, ?, 'blocks')",
                     (task_id, task_id),
                 )
 
@@ -151,13 +151,13 @@ class TestSelfDependencyConstraint:
             t2 = insert_task(conn, workspace_id, "t2", col_id)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+                "VALUES (?, ?, ?, 'blocks')",
                 (t1, t2, workspace_id),
             )
-        row = conn.execute("SELECT * FROM task_dependencies").fetchone()
-        assert row["task_id"] == t1
-        assert row["depends_on_id"] == t2
+        row = conn.execute("SELECT * FROM task_edges").fetchone()
+        assert row["source_id"] == t1
+        assert row["target_id"] == t2
 
 
 class TestStatusArchived:
@@ -217,13 +217,13 @@ class TestCrossWorkspaceConstraints:
             t2 = insert_task(conn, bid, "t2", cid)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+                "VALUES (?, ?, ?, 'blocks')",
                 (t1, t2, bid),
             )
-        row = conn.execute("SELECT * FROM task_dependencies").fetchone()
-        assert row["task_id"] == t1
-        assert row["depends_on_id"] == t2
+        row = conn.execute("SELECT * FROM task_edges").fetchone()
+        assert row["source_id"] == t1
+        assert row["target_id"] == t2
         assert row["workspace_id"] == bid
 
     def test_dependency_cross_workspace_rejected(self, conn: sqlite3.Connection) -> None:
@@ -237,8 +237,8 @@ class TestCrossWorkspaceConstraints:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+                    "VALUES (?, ?, ?, 'blocks')",
                     (t1, t2, b1),
                 )
 
@@ -611,7 +611,7 @@ class TestMigrations:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        assert "group_dependencies" in tables
+        assert "group_edges" in tables
         # After migration 006: boards→workspaces, board_id→workspace_id
         conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'b')")
         conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (1, 1, 'p')")
@@ -621,7 +621,7 @@ class TestMigrations:
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) VALUES (1, 1, 1)"
+                "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) VALUES (1, 1, 1, 'blocks')"
             )
         conn.close()
 
@@ -821,8 +821,9 @@ class TestMigrations:
             with pytest.raises(sqlite3.IntegrityError, match="json_valid"):
                 conn.execute(sql)
 
-        # Dependent rows preserved (task_history migrated to journal by migration 013)
-        assert conn.execute("SELECT COUNT(*) FROM task_dependencies").fetchone()[0] == 1
+        # Dependent rows preserved (task_history migrated to journal by migration 013,
+        # task_dependencies renamed to task_edges by migration 014)
+        assert conn.execute("SELECT COUNT(*) FROM task_edges").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM task_tags").fetchone()[0] == 1
         assert (
             conn.execute("SELECT COUNT(*) FROM journal WHERE entity_type='task'").fetchone()[0] == 1

@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-04-12
+
+### Added
+
+- **Kinded edges with per-edge metadata.** `task_dependencies` and `group_dependencies`
+  tables replaced with `task_edges` and `group_edges`. Each edge carries a `kind TEXT`
+  label (lowercase, `[a-z0-9_.-]+`, 1–64 chars, DB-enforced via CHECK) and a per-edge
+  `metadata` JSON blob (same rules as entity metadata). `kind='blocks'` backfills the
+  prior dependency semantics during migration.
+- **`stx edge` command group.** Replaces `stx dep`: `stx edge create|archive|ls`,
+  `stx edge meta ls|get|set|del`. Flags are `--source`, `--target`, `--kind`.
+  `stx group edge …` mirrors the task surface with `--source-project` /
+  `--target-project` for cross-project disambiguation.
+- **Migration 014.** Renames the edge tables, backfills `kind='blocks'`, adds
+  composite `UNIQUE (id, workspace_id)` to `groups` so `group_edges` can use a
+  workspace-scoped composite FK (mirrors how `task_edges` anchors to `tasks`).
+  Also recreates the `journal` table with updated `entity_type` CHECK covering
+  `task_edge` / `group_edge`.
+- **Workspace-scoped FK on group edges.** `group_edges.(source_id, workspace_id)`
+  and `(target_id, workspace_id)` reference `groups(id, workspace_id)`. Cross-
+  workspace group edges are now rejected at the DB layer, not just the service.
+- **Archived-endpoint checks on edge create.** `add_task_edge` / `add_group_edge`
+  raise a service-layer `ValueError` when either endpoint is archived, matching
+  the convention already applied elsewhere (e.g. status/project/group assignment).
+- **Schema `CHECK` on `kind`.** `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind)
+  BETWEEN 1 AND 64)` on both edge tables. Friendly error translation surfaces
+  the rule when a raw-SQL violation slips through.
+
+### Changed
+
+- **`TaskDetail.blocked_by` / `blocks` → `edge_sources` / `edge_targets`**, each now a
+  tuple of `TaskEdgeRef` `{task, kind}`. Breaking for JSON consumers of `stx task show`,
+  `stx task create`, and friends. Symmetric change on `GroupDetail`.
+- **JSON export keys renamed.** `task_dependencies` → `task_edges`,
+  `group_dependencies` → `group_edges`. Each row now carries `source_id`, `target_id`,
+  `workspace_id`, `archived`, `kind`, `metadata`.
+- **`task transfer --dry-run`** renames `dependency_ids` → `edge_ids`.
+- **Journal `entity_type`** values `task_dependency` / `group_dependency` renamed
+  to `task_edge` / `group_edge`. Migration 014 rewrites existing rows via `CASE`
+  in `INSERT SELECT`.
+- **Schema version bumped to 14.**
+- **`stx group edge ls`** uses `--source-project` (not `--project`) to disambiguate
+  sources, matching `create` / `archive` / `meta *`. Breaking.
+- **Edge listings filter archived endpoints.** `list_task_edges_by_workspace` and
+  `list_group_edges_by_workspace` return only edges whose source and target are
+  both active, matching the convention that archived entities stay hidden by default.
+- **Repository edge metadata CRUD deduped** via `_EDGE_METADATA_TABLES` allowlist
+  + generic `_get/_set/_remove/_replace_edge_metadata*` helpers mirroring the
+  existing `_METADATA_TABLES` pattern for single-id entities. Public wrappers are
+  one-line delegates.
+- **Docs refreshed end-to-end** for the edge refactor: `docs/erd.md`,
+  `docs/db-enforced-semantics.md`, `docs/service-enforced-semantics.md`,
+  `README.md`, `CLAUDE.md`, `skills/stx/SKILL.md`,
+  `skills/stx/references/cli-reference.md`, `skills/stx/references/json-schema.md`.
+
+### Removed
+
+- **Cycle detection.** Multi-hop cycles (A → B → C → A) are now allowed pending
+  blocking-kind semantics rework — with `kind`-labelled edges, "cycle" is kind-
+  dependent. The DB still rejects self-loops via `CHECK (source_id != target_id)`.
+- **TUI dependency ordering.** The kanban board and workspace tree no longer
+  topologically sort by edges; task/group order is insertion-order. Deferred
+  along with cycle detection.
+- **`stx dep` / `stx group dep` command groups.** Replaced by `stx edge` /
+  `stx group edge`.
+
 ## [0.11.0] — 2026-04-12
 
 ### Added
@@ -105,7 +171,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`project edit --name/-n`** removed; use the new `project rename` instead. `project edit` now only handles description changes.
 - **Dropped `-P` / `-s` short flags** from `task create` / `task ls` / `task edit`. They case-collided with `-p` (project) and `-S` (status), making shift-key typos silently do the wrong thing. Long forms `--priority` and `--search` remain. Breaking for any script relying on the shorts.
 
-[Unreleased]: https://github.com/phansen314/stx/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/phansen314/stx/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/phansen314/stx/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/phansen314/stx/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/phansen314/stx/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/phansen314/stx/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/phansen314/stx/releases/tag/v0.8.0
 [0.7.0]: https://github.com/phansen314/stx/releases/tag/v0.7.0

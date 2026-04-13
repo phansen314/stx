@@ -17,9 +17,13 @@ from .models import (
 )
 from .service_models import (
     GroupDetail,
+    GroupEdgeListItem,
+    GroupEdgeRef,
     GroupRef,
     ProjectDetail,
     TaskDetail,
+    TaskEdgeListItem,
+    TaskEdgeRef,
     TaskListItem,
 )
 
@@ -120,6 +124,28 @@ def row_to_journal_entry(row: Row) -> JournalEntry:
     )
 
 
+def row_to_task_edge_list_item(row: Row) -> TaskEdgeListItem:
+    return TaskEdgeListItem(
+        source_id=row["source_id"],
+        source_title=row["source_title"],
+        target_id=row["target_id"],
+        target_title=row["target_title"],
+        workspace_id=row["workspace_id"],
+        kind=row["kind"],
+    )
+
+
+def row_to_group_edge_list_item(row: Row) -> GroupEdgeListItem:
+    return GroupEdgeListItem(
+        source_id=row["source_id"],
+        source_title=row["source_title"],
+        target_id=row["target_id"],
+        target_title=row["target_title"],
+        workspace_id=row["workspace_id"],
+        kind=row["kind"],
+    )
+
+
 # ---- Utility ----
 
 
@@ -169,8 +195,8 @@ def task_to_detail(
     status: Status,
     project: Project | None,
     group: Group | None,
-    blocked_by: tuple[Task, ...],
-    blocks: tuple[Task, ...],
+    edge_sources: tuple[TaskEdgeRef, ...],
+    edge_targets: tuple[TaskEdgeRef, ...],
     history: tuple[JournalEntry, ...],
     tags: tuple[Tag, ...] = (),
 ) -> TaskDetail:
@@ -179,8 +205,8 @@ def task_to_detail(
         status=status,
         project=project,
         group=group,
-        blocked_by=blocked_by,
-        blocks=blocks,
+        edge_sources=edge_sources,
+        edge_targets=edge_targets,
         history=history,
         tags=tags,
     )
@@ -203,10 +229,14 @@ def group_to_detail(
     tasks: tuple[Task, ...],
     children: tuple[Group, ...],
     parent: Group | None,
+    edge_sources: tuple[GroupEdgeRef, ...],
+    edge_targets: tuple[GroupEdgeRef, ...],
 ) -> GroupDetail:
     return GroupDetail(
         **shallow_fields(group, Group),
         tasks=tasks,
         children=children,
         parent=parent,
+        edge_sources=edge_sources,
+        edge_targets=edge_targets,
     )

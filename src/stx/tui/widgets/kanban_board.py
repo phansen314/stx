@@ -147,7 +147,8 @@ class KanbanBoard(Horizontal):
                 card.task_data = task
                 card.update(f"{task.id:d}: {escape_markup(task.title)}")
 
-        # Enforce ordering (dependency-aware sort from model)
+        # Enforce ordering to match model — insertion order post task-14
+        # (dependency-aware topological sort was removed with cycle detection).
         card_map = {c.task_data.id: c for c in scrollable.query(TaskCard)}
         for i, task in enumerate(expected):
             scrollable.move_child(card_map[task.id], before=i)

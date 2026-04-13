@@ -83,9 +83,9 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     )
 
     # Auth middleware blocked by endpoint design
-    service.add_dependency(conn, t3.id, t2.id)
+    service.add_task_edge(conn, t3.id, t2.id, kind="blocks")
     # User CRUD blocked by auth middleware
-    service.add_dependency(conn, t4.id, t3.id)
+    service.add_task_edge(conn, t4.id, t3.id, kind="blocks")
 
     if db_path is not None:
         config_path = db_path.parent / "tui.toml"

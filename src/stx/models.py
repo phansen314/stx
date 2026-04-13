@@ -22,8 +22,8 @@ class EntityType(StrEnum):
     GROUP = "group"
     WORKSPACE = "workspace"
     STATUS = "status"
-    TASK_DEPENDENCY = "task_dependency"
-    GROUP_DEPENDENCY = "group_dependency"
+    TASK_EDGE = "task_edge"
+    GROUP_EDGE = "group_edge"
 
 
 class TaskField(StrEnum):
@@ -64,8 +64,9 @@ class StatusField(StrEnum):
     ARCHIVED = "archived"
 
 
-class DependencyField(StrEnum):
-    DEPENDS_ON = "depends_on"
+class EdgeField(StrEnum):
+    TARGET = "target"
+    KIND = "kind"
 
 
 # ---- Pre-insert types (no id, no created_at) ----
@@ -203,13 +204,6 @@ class Group:
     archived: bool
     created_at: int
     metadata: dict[str, str]
-
-
-@dataclass(frozen=True)
-class GroupDependency:
-    group_id: int
-    depends_on_id: int
-    workspace_id: int
 
 
 @dataclass(frozen=True)

@@ -98,10 +98,11 @@ class TestExportFull:
 
     def test_dependency_mermaid(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert "### Dependencies" in md
+        assert "### Task Edges" in md
         assert "```mermaid" in md
-        assert "    task-0002 --> task-0001" in md
-        assert '> Arrow reads "depends on"' in md
+        assert "    task-0002 -->|blocks| task-0001" in md
+        # Caption removed — edges carry arbitrary kinds, not just "depends on".
+        assert 'Arrow reads "depends on"' not in md
 
 
 class TestExportEdgeCases:
@@ -126,7 +127,7 @@ class TestExportEdgeCases:
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Solo", col)
         md = export_markdown(conn)
-        assert "### Dependencies" not in md
+        assert "### Task Edges" not in md
         assert "mermaid" not in md
 
     def test_archived_tasks_excluded(self, conn: sqlite3.Connection) -> None:
@@ -342,7 +343,8 @@ class TestExportFullJson:
             "tags",
             "groups",
             "task_tags",
-            "task_dependencies",
+            "task_edges",
+            "group_edges",
             "journal",
         }
 
@@ -356,7 +358,7 @@ class TestExportFullJson:
             "tags",
             "groups",
             "task_tags",
-            "task_dependencies",
+            "task_edges",
             "journal",
         ):
             assert result[key] == [], f"expected {key} to be empty"
@@ -401,9 +403,13 @@ class TestExportFullJson:
         assert bid in workspace_ids
         task_ids = {t["id"] for t in result["tasks"]}
         assert {t1, t2} <= task_ids
-        assert any(
-            d["task_id"] == t2 and d["depends_on_id"] == t1 for d in result["task_dependencies"]
+        edge_row = next(
+            d for d in result["task_edges"]
+            if d["source_id"] == t2 and d["target_id"] == t1
         )
+        assert edge_row["kind"] == "blocks"
+        assert edge_row["metadata"] == {}
+        assert edge_row["archived"] is False
         assert any(tt["task_id"] == t1 and tt["tag_id"] == tag_id for tt in result["task_tags"])
 
     def test_journal_included(self, conn: sqlite3.Connection) -> None:
@@ -429,7 +435,7 @@ class TestExportFullJson:
             t2 = insert_task(conn, bid, "T2", col)
             insert_task_dependency(conn, t2, t1)
         result = export_full_json(conn)
-        dep = result["task_dependencies"][0]
+        dep = result["task_edges"][0]
         assert dep["workspace_id"] == bid
 
 

@@ -13,7 +13,9 @@ DEFAULT_CONFIG_PATH = _NEW_CONFIG_DIR / "tui.toml"
 def _migrate_config_dir() -> None:
     if _OLD_CONFIG_DIR.exists() and not _NEW_CONFIG_DIR.exists():
         _OLD_CONFIG_DIR.rename(_NEW_CONFIG_DIR)
-        print(f"stx: migrated config directory {_OLD_CONFIG_DIR} → {_NEW_CONFIG_DIR}", file=sys.stderr)
+        print(
+            f"stx: migrated config directory {_OLD_CONFIG_DIR} → {_NEW_CONFIG_DIR}", file=sys.stderr
+        )
 
 
 @dataclass

@@ -19,6 +19,7 @@ from stx.service_models import (
     MoveToWorkspacePreview,
     ProjectDetail,
     TaskDetail,
+    TaskEdgeRef,
     TaskListItem,
     WorkspaceContext,
     WorkspaceListStatus,
@@ -321,8 +322,8 @@ class TestFormatTaskDetail:
             status=_status(1, "Todo"),
             project=None,
             group=None,
-            blocked_by=(),
-            blocks=(),
+            edge_sources=(),
+            edge_targets=(),
             history=(),
             tags=(),
         )
@@ -357,8 +358,8 @@ class TestFormatTaskDetail:
             tags=(_tag(1, "bug"), _tag(2, "urgent")),
             description="do the thing",
             due_date=1_000_000,
-            blocked_by=(_task(2, "blocker"),),
-            blocks=(_task(3, "blocked"),),
+            edge_sources=(TaskEdgeRef(task=_task(2, "blocker"), kind="blocks"),),
+            edge_targets=(TaskEdgeRef(task=_task(3, "blocked"), kind="related-to"),),
             history=(_history(1, TaskField.TITLE, "old", "T"),),
         )
         out = presenters.format_task_detail(d)
@@ -366,8 +367,8 @@ class TestFormatTaskDetail:
         assert "Group:       g (group-0003)" in out
         assert "Tags:        bug, urgent" in out
         assert "Due:" in out
-        assert "Blocked by:  task-0002" in out
-        assert "Blocks:      task-0003" in out
+        assert "Edge sources: task-0002 (blocks)" in out
+        assert "Edge targets: task-0003 (related-to)" in out
         assert "Description:" in out
         assert "do the thing" in out
         assert "History:" in out
@@ -544,6 +545,8 @@ class TestFormatGroupDetail:
             children=(),
             parent=None,
             metadata={},
+            edge_sources=(),
+            edge_targets=(),
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         assert "group-0001  G" in out
@@ -566,6 +569,8 @@ class TestFormatGroupDetail:
             children=(),
             parent=None,
             metadata={},
+            edge_sources=(),
+            edge_targets=(),
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         assert "group-0001  G" in out
@@ -586,6 +591,8 @@ class TestFormatGroupDetail:
             children=(),
             parent=None,
             metadata={},
+            edge_sources=(),
+            edge_targets=(),
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
         lines = out.splitlines()
@@ -619,6 +626,8 @@ class TestFormatGroupDetail:
             children=(child,),
             parent=None,
             metadata={},
+            edge_sources=(),
+            edge_targets=(),
         )
         out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("Root",))
         assert "group-0001  Root" in out
@@ -643,7 +652,7 @@ class TestFormatMovePreview:
             target_project_id=None,
             can_move=True,
             blocking_reason=None,
-            dependency_ids=(),
+            edge_ids=(),
             is_archived=False,
         )
         base.update(overrides)
@@ -659,10 +668,10 @@ class TestFormatMovePreview:
         assert "workspace 'dev'" in out
         assert "transfer OK" in out
 
-    def test_blocked_by_dependencies(self):
-        p = self._preview(can_move=False, dependency_ids=(10, 11))
+    def test_blocked_by_active_edges(self):
+        p = self._preview(can_move=False, edge_ids=(10, 11))
         out = presenters.format_move_preview(p, "other", "Backlog", source_workspace_name="dev")
-        assert "has dependencies: task-0010, task-0011" in out
+        assert "has active edges: task-0010, task-0011" in out
         assert "move would FAIL" in out
 
     def test_blocked_other_reason(self):
@@ -751,8 +760,8 @@ class TestFormatTaskDetailMetadata:
             status=_status(1, "Todo"),
             project=None,
             group=None,
-            blocked_by=(),
-            blocks=(),
+            edge_sources=(),
+            edge_targets=(),
             history=(),
             tags=(),
         )

@@ -122,12 +122,16 @@ def format_task_detail(detail: TaskDetail) -> str:
     if detail.due_date:
         lines.append(f"  Due:         {format_timestamp(detail.due_date)}")
     lines.append(f"  Created:     {format_timestamp(detail.created_at)}")
-    if detail.blocked_by:
-        nums = ", ".join(format_task_num(t.id) for t in detail.blocked_by)
-        lines.append(f"  Blocked by:  {nums}")
-    if detail.blocks:
-        nums = ", ".join(format_task_num(t.id) for t in detail.blocks)
-        lines.append(f"  Blocks:      {nums}")
+    if detail.edge_sources:
+        items = ", ".join(
+            f"{format_task_num(ref.task.id)} ({ref.kind})" for ref in detail.edge_sources
+        )
+        lines.append(f"  Edge sources: {items}")
+    if detail.edge_targets:
+        items = ", ".join(
+            f"{format_task_num(ref.task.id)} ({ref.kind})" for ref in detail.edge_targets
+        )
+        lines.append(f"  Edge targets: {items}")
     if detail.description:
         lines.append(f"\n  Description:\n    {detail.description}")
     if detail.history:
@@ -213,6 +217,16 @@ def format_group_detail(
     if detail.children:
         child_names = ", ".join(c.title for c in detail.children)
         lines.append(f"  Sub-groups: {child_names}")
+    if detail.edge_sources:
+        items = ", ".join(
+            f"{format_group_num(ref.group.id)} ({ref.kind})" for ref in detail.edge_sources
+        )
+        lines.append(f"  Edge sources: {items}")
+    if detail.edge_targets:
+        items = ", ".join(
+            f"{format_group_num(ref.group.id)} ({ref.kind})" for ref in detail.edge_targets
+        )
+        lines.append(f"  Edge targets: {items}")
     if detail.tasks:
         lines.append("")
         for t in detail.tasks:
@@ -235,15 +249,15 @@ def format_move_preview(
         dest += f" / project '{target_project_name}'"
     lines.append(f"  from workspace '{source_workspace_name}' -> {dest}")
     if not preview.can_move:
-        if preview.dependency_ids:
-            dep_list = ", ".join(format_task_num(d) for d in preview.dependency_ids)
-            lines.append(f"  \u26a0 has dependencies: {dep_list}")
-            lines.append("  move would FAIL \u2014 remove dependencies first")
+        if preview.edge_ids:
+            edge_list = ", ".join(format_task_num(d) for d in preview.edge_ids)
+            lines.append(f"  \u26a0 has active edges: {edge_list}")
+            lines.append("  move would FAIL \u2014 archive edges first")
         else:
             lines.append(f"  \u26a0 {preview.blocking_reason}")
             lines.append("  move would FAIL")
     else:
-        lines.append("  no dependencies \u2014 transfer OK")
+        lines.append("  no active edges \u2014 transfer OK")
     return "\n".join(lines)
 
 
@@ -327,4 +341,20 @@ def format_config(config: object) -> str:
     lines = ["config:"]
     for f in fields(config):  # type: ignore[arg-type]
         lines.append(f"  {f.name}: {getattr(config, f.name)!r}")
+    return "\n".join(lines)
+
+
+def format_edge_list(edges: tuple, *, entity: str = "task") -> str:
+    """Render a list of TaskEdgeListItem or GroupEdgeListItem as a table.
+
+    ``entity`` is 'task' or 'group' — controls the ID formatter.
+    """
+    if not edges:
+        return f"no {entity} edges"
+    fmt_id = format_task_num if entity == "task" else format_group_num
+    lines = []
+    for e in edges:
+        src = f"{fmt_id(e.source_id)}  {e.source_title}"
+        tgt = f"{fmt_id(e.target_id)}  {e.target_title}"
+        lines.append(f"  {src}  --[{e.kind}]-->  {tgt}")
     return "\n".join(lines)

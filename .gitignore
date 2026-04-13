@@ -8,6 +8,7 @@ build/
 tmp/
 .coverage
 .coverage.*
+coverage.json
 uv.lock
 settings.local.json
 /.claude/

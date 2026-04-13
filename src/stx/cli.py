@@ -595,85 +595,216 @@ def cmd_project_archive(
     return Ok(data=archived, text=f"archived project '{proj.name}' and all descendants")
 
 
-# ---- Dependency subcommands ----
+# ---- Edge subcommands ----
 
 
-def cmd_dep_create(
+def cmd_edge_create(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    task_id = _resolve_task(conn, workspace, args.task)
-    depends_on_id = _resolve_task(conn, workspace, args.blocked_by)
-    service.add_dependency(conn, task_id, depends_on_id)
-    blocked = service.get_task(conn, task_id)
-    blocking = service.get_task(conn, depends_on_id)
+    src = service.get_task(conn, _resolve_task(conn, workspace, args.source))
+    tgt = service.get_task(conn, _resolve_task(conn, workspace, args.target))
+    kind = args.kind
+    service.add_task_edge(conn, src.id, tgt.id, kind)
     return Ok(
         data={
-            "blocked_task_id": task_id,
-            "blocked_task_title": blocked.title,
-            "blocking_task_id": depends_on_id,
-            "blocking_task_title": blocking.title,
+            "source_id": src.id,
+            "source_title": src.title,
+            "target_id": tgt.id,
+            "target_title": tgt.title,
+            "kind": kind,
         },
-        text=f"{format_task_num(task_id)} now blocked by {format_task_num(depends_on_id)}",
+        text=f"{format_task_num(src.id)} --({kind})--> {format_task_num(tgt.id)}",
     )
 
 
-def cmd_dep_archive(
+def cmd_edge_archive(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    task_id = _resolve_task(conn, workspace, args.task)
-    depends_on_id = _resolve_task(conn, workspace, args.blocked_by)
-    service.archive_dependency(conn, task_id, depends_on_id)
-    blocked = service.get_task(conn, task_id)
-    blocking = service.get_task(conn, depends_on_id)
+    src = service.get_task(conn, _resolve_task(conn, workspace, args.source))
+    tgt = service.get_task(conn, _resolve_task(conn, workspace, args.target))
+    service.archive_task_edge(conn, src.id, tgt.id)
     return Ok(
         data={
-            "blocked_task_id": task_id,
-            "blocked_task_title": blocked.title,
-            "blocking_task_id": depends_on_id,
-            "blocking_task_title": blocking.title,
+            "source_id": src.id,
+            "source_title": src.title,
+            "target_id": tgt.id,
+            "target_title": tgt.title,
         },
-        text=f"archived dependency {format_task_num(task_id)} -> {format_task_num(depends_on_id)}",
+        text=f"archived edge {format_task_num(src.id)} -> {format_task_num(tgt.id)}",
     )
 
 
-# ---- Group dependency subcommands ----
+def cmd_edge_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    task_id = _resolve_task(conn, workspace, args.source) if args.source else None
+    edges = service.list_task_edges(conn, workspace.id, kind=args.kind or None, task_id=task_id)
+    text = presenters.format_edge_list(edges, entity="task")
+    return Ok(data=list(edges), text=text)
 
 
-def cmd_group_dep_create(
+# ---- Edge metadata subcommands ----
+
+
+def cmd_edge_meta_ls(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.group, project_name=args.project)
-    dep = service.resolve_group(conn, workspace.id, args.blocked_by, project_name=args.project)
-    service.add_group_dependency(conn, grp.id, dep.id)
+    task_id = _resolve_task(conn, workspace, args.source)
+    target_id = _resolve_task(conn, workspace, args.target)
+    meta = service.list_task_edge_metadata(conn, task_id, target_id)
+    records = _meta_records(meta)
+    text = presenters.format_metadata_block(meta, indent=2) or "no metadata"
+    return Ok(data=records, text=text)
+
+
+def cmd_edge_meta_get(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    task_id = _resolve_task(conn, workspace, args.source)
+    target_id = _resolve_task(conn, workspace, args.target)
+    value = service.get_task_edge_meta(conn, task_id, target_id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
+
+
+def cmd_edge_meta_set(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    task_id = _resolve_task(conn, workspace, args.source)
+    target_id = _resolve_task(conn, workspace, args.target)
+    service.set_task_edge_meta(conn, task_id, target_id, args.key, args.value)
+    key = args.key.lower()
     return Ok(
-        data={
-            "blocked_group_id": grp.id,
-            "blocked_group_title": grp.title,
-            "blocking_group_id": dep.id,
-            "blocking_group_title": dep.title,
-        },
-        text=f"group '{grp.title}' now blocked by '{dep.title}'",
+        data={"key": key, "value": args.value},
+        text=f"set {key}={args.value} on edge ({format_task_num(task_id)}, {format_task_num(target_id)})",
     )
 
 
-def cmd_group_dep_archive(
+def cmd_edge_meta_del(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.group, project_name=args.project)
-    dep = service.resolve_group(conn, workspace.id, args.blocked_by, project_name=args.project)
-    service.archive_group_dependency(conn, grp.id, dep.id)
+    task_id = _resolve_task(conn, workspace, args.source)
+    target_id = _resolve_task(conn, workspace, args.target)
+    removed = service.remove_task_edge_meta(conn, task_id, target_id, args.key)
+    key = args.key.lower()
+    return Ok(
+        data={"key": key, "value": removed},
+        text=f"removed {key} from edge ({format_task_num(task_id)}, {format_task_num(target_id)})",
+    )
+
+
+# ---- Group edge subcommands ----
+
+
+def cmd_group_edge_create(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    kind = args.kind
+    service.add_group_edge(conn, grp.id, dep.id, kind)
     return Ok(
         data={
-            "blocked_group_id": grp.id,
-            "blocked_group_title": grp.title,
-            "blocking_group_id": dep.id,
-            "blocking_group_title": dep.title,
+            "source_id": grp.id,
+            "source_title": grp.title,
+            "target_id": dep.id,
+            "target_title": dep.title,
+            "kind": kind,
         },
-        text=f"archived dependency '{grp.title}' -> '{dep.title}'",
+        text=f"group '{grp.title}' --({kind})--> '{dep.title}'",
+    )
+
+
+def cmd_group_edge_archive(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    service.archive_group_edge(conn, grp.id, dep.id)
+    return Ok(
+        data={
+            "source_id": grp.id,
+            "source_title": grp.title,
+            "target_id": dep.id,
+            "target_title": dep.title,
+        },
+        text=f"archived edge '{grp.title}' -> '{dep.title}'",
+    )
+
+
+def cmd_group_edge_ls(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    group_id: int | None = None
+    if args.source:
+        grp = service.resolve_group(
+            conn, workspace.id, args.source, project_name=args.source_project
+        )
+        group_id = grp.id
+    edges = service.list_group_edges(conn, workspace.id, kind=args.kind or None, group_id=group_id)
+    text = presenters.format_edge_list(edges, entity="group")
+    return Ok(data=list(edges), text=text)
+
+
+# ---- Group edge metadata subcommands ----
+
+
+def cmd_group_edge_meta_ls(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    meta = service.list_group_edge_metadata(conn, grp.id, dep.id)
+    records = _meta_records(meta)
+    text = presenters.format_metadata_block(meta, indent=2) or "no metadata"
+    return Ok(data=records, text=text)
+
+
+def cmd_group_edge_meta_get(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    value = service.get_group_edge_meta(conn, grp.id, dep.id, args.key)
+    key = args.key.lower()
+    return Ok(data={"key": key, "value": value}, text=value)
+
+
+def cmd_group_edge_meta_set(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    service.set_group_edge_meta(conn, grp.id, dep.id, args.key, args.value)
+    key = args.key.lower()
+    return Ok(
+        data={"key": key, "value": args.value},
+        text=f"set {key}={args.value} on group edge ('{grp.title}', '{dep.title}')",
+    )
+
+
+def cmd_group_edge_meta_del(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
+    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    removed = service.remove_group_edge_meta(conn, grp.id, dep.id, args.key)
+    key = args.key.lower()
+    return Ok(
+        data={"key": key, "value": removed},
+        text=f"removed {key} from group edge ('{grp.title}', '{dep.title}')",
     )
 
 
@@ -1320,10 +1451,20 @@ HANDLERS: dict[str, CommandHandler] = {
     "project_meta_get": cmd_project_meta_get,
     "project_meta_set": cmd_project_meta_set,
     "project_meta_del": cmd_project_meta_del,
-    "dep_create": cmd_dep_create,
-    "dep_archive": cmd_dep_archive,
-    "group_dep_create": cmd_group_dep_create,
-    "group_dep_archive": cmd_group_dep_archive,
+    "edge_create": cmd_edge_create,
+    "edge_archive": cmd_edge_archive,
+    "edge_ls": cmd_edge_ls,
+    "edge_meta_ls": cmd_edge_meta_ls,
+    "edge_meta_get": cmd_edge_meta_get,
+    "edge_meta_set": cmd_edge_meta_set,
+    "edge_meta_del": cmd_edge_meta_del,
+    "group_edge_create": cmd_group_edge_create,
+    "group_edge_archive": cmd_group_edge_archive,
+    "group_edge_ls": cmd_group_edge_ls,
+    "group_edge_meta_ls": cmd_group_edge_meta_ls,
+    "group_edge_meta_get": cmd_group_edge_meta_get,
+    "group_edge_meta_set": cmd_group_edge_meta_set,
+    "group_edge_meta_del": cmd_group_edge_meta_del,
     "group_create": cmd_group_create,
     "group_ls": cmd_group_ls,
     "group_show": cmd_group_show,
@@ -1642,24 +1783,53 @@ def build_parser() -> argparse.ArgumentParser:
     p_pmeta_del.add_argument("name", help="project name")
     p_pmeta_del.add_argument("key")
 
-    # ---- Dependency subcommands ----
+    # ---- Edge subcommands ----
 
-    p_dep = sub.add_parser("dep", help="dependency management")
-    dep_sub = p_dep.add_subparsers()
+    p_edge = sub.add_parser("edge", help="task edge management (kinded links between tasks)")
+    edge_sub = p_edge.add_subparsers()
 
-    p_da = dep_sub.add_parser("create", help="add a dependency")
-    p_da.set_defaults(command="dep_create")
-    p_da.add_argument("--task", required=True, help="task that will be blocked")
-    p_da.add_argument(
-        "--blocked-by", dest="blocked_by", required=True, help="task that blocks --task"
-    )
+    p_ea = edge_sub.add_parser("create", help="add a task edge")
+    p_ea.set_defaults(command="edge_create")
+    p_ea.add_argument("--source", required=True, help="source task (edge origin)")
+    p_ea.add_argument("--target", required=True, help="target task (edge destination)")
+    p_ea.add_argument("--kind", required=True, help="edge kind (e.g. blocks, related-to)")
 
-    p_dr = dep_sub.add_parser("archive", help="archive a dependency")
-    p_dr.set_defaults(command="dep_archive")
-    p_dr.add_argument("--task", required=True, help="task that was blocked")
-    p_dr.add_argument(
-        "--blocked-by", dest="blocked_by", required=True, help="task that was blocking --task"
-    )
+    p_er = edge_sub.add_parser("archive", help="archive a task edge")
+    p_er.set_defaults(command="edge_archive")
+    p_er.add_argument("--source", required=True, help="source task")
+    p_er.add_argument("--target", required=True, help="target task")
+
+    p_els = edge_sub.add_parser("ls", help="list task edges in workspace")
+    p_els.set_defaults(command="edge_ls")
+    p_els.add_argument("--source", default=None, help="filter by source task")
+    p_els.add_argument("--kind", default=None, help="filter by edge kind")
+
+    p_emeta = edge_sub.add_parser("meta", help="task edge metadata management")
+    emeta_sub = p_emeta.add_subparsers()
+
+    p_emeta_ls = emeta_sub.add_parser("ls", help="list all edge metadata")
+    p_emeta_ls.set_defaults(command="edge_meta_ls")
+    p_emeta_ls.add_argument("--source", required=True, help="source task")
+    p_emeta_ls.add_argument("--target", required=True, help="target task")
+
+    p_emeta_get = emeta_sub.add_parser("get", help="get an edge metadata value")
+    p_emeta_get.set_defaults(command="edge_meta_get")
+    p_emeta_get.add_argument("--source", required=True, help="source task")
+    p_emeta_get.add_argument("--target", required=True, help="target task")
+    p_emeta_get.add_argument("key")
+
+    p_emeta_set = emeta_sub.add_parser("set", help="set an edge metadata key/value")
+    p_emeta_set.set_defaults(command="edge_meta_set")
+    p_emeta_set.add_argument("--source", required=True, help="source task")
+    p_emeta_set.add_argument("--target", required=True, help="target task")
+    p_emeta_set.add_argument("key")
+    p_emeta_set.add_argument("value")
+
+    p_emeta_del = emeta_sub.add_parser("del", help="delete an edge metadata key")
+    p_emeta_del.set_defaults(command="edge_meta_del")
+    p_emeta_del.add_argument("--source", required=True, help="source task")
+    p_emeta_del.add_argument("--target", required=True, help="target task")
+    p_emeta_del.add_argument("key")
 
     # ---- Group subcommands ----
 
@@ -1766,28 +1936,72 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmeta_del.add_argument("key")
     p_gmeta_del.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
-    # Group dependencies — nested under `group dep`
-    p_gdep = grp_sub.add_parser("dep", help="group dependency management")
-    gdep_sub = p_gdep.add_subparsers()
+    # Group edges — nested under `group edge`
+    p_gedge = grp_sub.add_parser("edge", help="group edge management (kinded links between groups)")
+    gedge_sub = p_gedge.add_subparsers()
 
-    p_gda = gdep_sub.add_parser("create", help="add a group dependency")
-    p_gda.set_defaults(command="group_dep_create")
-    p_gda.add_argument("-g", "--group", required=True, help="group title that will be blocked")
-    p_gda.add_argument(
-        "--blocked-by", dest="blocked_by", required=True, help="group title that blocks --group"
+    _SOURCE_PROJECT_HELP = (
+        "disambiguate --source by project (only needed when the title is ambiguous)"
     )
-    p_gda.add_argument("--project", "-p", default=None, help="disambiguate by project name")
+    _TARGET_PROJECT_HELP = (
+        "disambiguate --target by project (only needed when the title is ambiguous)"
+    )
 
-    p_gdr = gdep_sub.add_parser("archive", help="archive a group dependency")
-    p_gdr.set_defaults(command="group_dep_archive")
-    p_gdr.add_argument("-g", "--group", required=True, help="group title that was blocked")
-    p_gdr.add_argument(
-        "--blocked-by",
-        dest="blocked_by",
-        required=True,
-        help="group title that was blocking --group",
-    )
-    p_gdr.add_argument("--project", "-p", default=None, help="disambiguate by project name")
+    p_gea = gedge_sub.add_parser("create", help="add a group edge")
+    p_gea.set_defaults(command="group_edge_create")
+    p_gea.add_argument("-s", "--source", required=True, help="source group title (edge origin)")
+    p_gea.add_argument("--target", required=True, help="target group title (edge destination)")
+    p_gea.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_gea.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+    p_gea.add_argument("--kind", required=True, help="edge kind (e.g. blocks, related-to)")
+
+    p_ger = gedge_sub.add_parser("archive", help="archive a group edge")
+    p_ger.set_defaults(command="group_edge_archive")
+    p_ger.add_argument("-s", "--source", required=True, help="source group title")
+    p_ger.add_argument("--target", required=True, help="target group title")
+    p_ger.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_ger.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+
+    p_gels = gedge_sub.add_parser("ls", help="list group edges in workspace")
+    p_gels.set_defaults(command="group_edge_ls")
+    p_gels.add_argument("-s", "--source", default=None, help="filter by source group title")
+    p_gels.add_argument("--kind", default=None, help="filter by edge kind")
+    p_gels.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+
+    p_gemeta = gedge_sub.add_parser("meta", help="group edge metadata management")
+    gemeta_sub = p_gemeta.add_subparsers()
+
+    p_gemeta_ls = gemeta_sub.add_parser("ls", help="list all group edge metadata")
+    p_gemeta_ls.set_defaults(command="group_edge_meta_ls")
+    p_gemeta_ls.add_argument("-s", "--source", required=True, help="source group title")
+    p_gemeta_ls.add_argument("--target", required=True, help="target group title")
+    p_gemeta_ls.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_gemeta_ls.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+
+    p_gemeta_get = gemeta_sub.add_parser("get", help="get a group edge metadata value")
+    p_gemeta_get.set_defaults(command="group_edge_meta_get")
+    p_gemeta_get.add_argument("-s", "--source", required=True, help="source group title")
+    p_gemeta_get.add_argument("--target", required=True, help="target group title")
+    p_gemeta_get.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_gemeta_get.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+    p_gemeta_get.add_argument("key")
+
+    p_gemeta_set = gemeta_sub.add_parser("set", help="set a group edge metadata key/value")
+    p_gemeta_set.set_defaults(command="group_edge_meta_set")
+    p_gemeta_set.add_argument("-s", "--source", required=True, help="source group title")
+    p_gemeta_set.add_argument("--target", required=True, help="target group title")
+    p_gemeta_set.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_gemeta_set.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+    p_gemeta_set.add_argument("key")
+    p_gemeta_set.add_argument("value")
+
+    p_gemeta_del = gemeta_sub.add_parser("del", help="delete a group edge metadata key")
+    p_gemeta_del.set_defaults(command="group_edge_meta_del")
+    p_gemeta_del.add_argument("-s", "--source", required=True, help="source group title")
+    p_gemeta_del.add_argument("--target", required=True, help="target group title")
+    p_gemeta_del.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
+    p_gemeta_del.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
+    p_gemeta_del.add_argument("key")
 
     # ---- Tag subcommands ----
 

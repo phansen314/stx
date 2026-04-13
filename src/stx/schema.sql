@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS groups (
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
     UNIQUE (id, project_id),
+    UNIQUE (id, workspace_id),
     FOREIGN KEY (parent_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT
 );
 
@@ -66,24 +67,38 @@ CREATE TABLE IF NOT EXISTS tasks (
     UNIQUE (id, workspace_id)
 );
 
-CREATE TABLE IF NOT EXISTS task_dependencies (
-    task_id INTEGER NOT NULL,
-    depends_on_id INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS task_edges (
+    source_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    PRIMARY KEY (task_id, depends_on_id),
-    CHECK (task_id != depends_on_id),
-    FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY (depends_on_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE
+    -- kind charset kept tight so export.py can safely interpolate it into
+    -- Mermaid edge labels (|kind|) without escaping. Loosening this must
+    -- be paired with an escape pass in export._render_*_section.
+    kind TEXT NOT NULL
+        CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
+    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+    PRIMARY KEY (source_id, target_id),
+    CHECK (source_id != target_id),
+    FOREIGN KEY (source_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY (target_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS group_dependencies (
-    group_id      INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    depends_on_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    workspace_id  INTEGER NOT NULL REFERENCES workspaces(id),
+CREATE TABLE IF NOT EXISTS group_edges (
+    source_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    workspace_id INTEGER NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    PRIMARY KEY (group_id, depends_on_id),
-    CHECK (group_id != depends_on_id)
+    -- kind charset kept tight so export.py can safely interpolate it into
+    -- Mermaid edge labels (|kind|) without escaping. Loosening this must
+    -- be paired with an escape pass in export._render_*_section.
+    kind TEXT NOT NULL
+        CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
+    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+    PRIMARY KEY (source_id, target_id),
+    CHECK (source_id != target_id),
+    FOREIGN KEY (source_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY (target_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -108,7 +123,7 @@ CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL CHECK (entity_type IN (
         'task', 'project', 'group', 'workspace', 'status',
-        'task_dependency', 'group_dependency'
+        'task_edge', 'group_edge'
     )),
     entity_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
@@ -158,10 +173,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_archived_group
     ON tasks(project_id, archived, group_id);
 
 -- FK indexes on junction/audit tables (PK covers the leading column)
-CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on_id
-    ON task_dependencies(depends_on_id);
-CREATE INDEX IF NOT EXISTS idx_group_dependencies_depends_on_id
-    ON group_dependencies(depends_on_id);
+CREATE INDEX IF NOT EXISTS idx_task_edges_target_id
+    ON task_edges(target_id);
+CREATE INDEX IF NOT EXISTS idx_group_edges_target_id
+    ON group_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id
     ON task_tags(tag_id);
 
