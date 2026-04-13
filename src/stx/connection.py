@@ -18,7 +18,49 @@ def _migrate_data_dir() -> None:
         print(f"stx: migrated data directory {_OLD_DB_DIR} → {_NEW_DB_DIR}", file=sys.stderr)
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 19
+
+
+def _strip_line_comment(line: str) -> str:
+    """Remove ``-- ...`` trailing comments without breaking `--` inside strings.
+
+    Walks the line tracking whether we are inside a single-quoted string
+    literal (doubled `''` escape handled naturally by the toggle). Returns
+    the line truncated at the first out-of-string `--`.
+    """
+    in_str = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "'":
+            in_str = not in_str
+        elif not in_str and ch == "-" and i + 1 < len(line) and line[i + 1] == "-":
+            return line[:i]
+        i += 1
+    return line
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split a SQL script into individual statements.
+
+    Uses ``sqlite3.complete_statement`` so semicolons inside string literals
+    do not slice a statement mid-definition. Line comments (``-- ...``) are
+    stripped before accumulation since ``complete_statement`` is not
+    comment-aware.
+    """
+    statements: list[str] = []
+    buf = ""
+    for line in sql.splitlines(keepends=True):
+        buf += _strip_line_comment(line)
+        if sqlite3.complete_statement(buf):
+            stmt = buf.strip()
+            if stmt:
+                statements.append(stmt)
+            buf = ""
+    tail = buf.strip()
+    if tail:
+        statements.append(tail)
+    return statements
 
 
 def read_schema() -> str:
@@ -28,11 +70,12 @@ def read_schema() -> str:
 def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     _migrate_data_dir()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), isolation_level="DEFERRED")
+    conn = sqlite3.connect(str(db_path), timeout=30.0, isolation_level="DEFERRED")
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 30000")
     except Exception:
         conn.close()
         raise
@@ -44,10 +87,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     if current == 0:
         with transaction(conn):
-            for statement in schema.split(";"):
-                statement = statement.strip()
-                if statement:
-                    conn.execute(statement)
+            for statement in _split_sql_statements(schema):
+                conn.execute(statement)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     else:
         _run_migrations(conn)
@@ -136,10 +177,8 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = OFF")
         try:
             with transaction(conn):
-                for statement in sql.split(";"):
-                    statement = statement.strip()
-                    if statement:
-                        conn.execute(statement)
+                for statement in _split_sql_statements(sql):
+                    conn.execute(statement)
                 conn.execute(f"PRAGMA user_version = {target_version}")
             _reenable_fks(conn)
         except Exception:

@@ -22,7 +22,6 @@ def make_group_detail(**overrides) -> GroupDetail:
         title="Sprint 1",
         description=None,
         parent_id=None,
-        position=0,
         archived=False,
         created_at=0,
         tasks=(),

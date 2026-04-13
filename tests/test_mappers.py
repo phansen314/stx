@@ -204,7 +204,6 @@ class TestShallowFields:
             status_id=1,
             priority=1,
             due_date=None,
-            position=0,
             archived=False,
             created_at=0,
             start_date=None,
@@ -221,7 +220,6 @@ class TestShallowFields:
             "status_id",
             "priority",
             "due_date",
-            "position",
             "archived",
             "created_at",
             "start_date",
@@ -252,7 +250,6 @@ def _task() -> Task:
         status_id=1,
         priority=1,
         due_date=None,
-        position=0,
         archived=False,
         created_at=0,
         start_date=None,
@@ -273,7 +270,6 @@ def _group() -> Group:
         title="g",
         description=None,
         parent_id=None,
-        position=0,
         archived=False,
         created_at=0,
         metadata={},
@@ -282,20 +278,15 @@ def _group() -> Group:
 
 class TestTaskToListItem:
     def test_creates_list_item(self) -> None:
-        item = task_to_list_item(_task(), tag_names=("a", "b"))
+        item = task_to_list_item(_task())
         assert isinstance(item, TaskListItem)
         assert item.title == "t"
-        assert item.tag_names == ("a", "b")
 
     def test_task_fields_copied(self) -> None:
         task = _task()
-        item = task_to_list_item(task, tag_names=())
+        item = task_to_list_item(task)
         for f in dataclasses.fields(task):
             assert getattr(item, f.name) == getattr(task, f.name)
-
-    def test_defaults(self) -> None:
-        item = task_to_list_item(_task(), tag_names=())
-        assert item.tag_names == ()
 
 
 class TestTaskToDetail:
@@ -339,7 +330,6 @@ class TestTaskToDetail:
         assert detail.edge_sources == ()
         assert detail.edge_targets == ()
         assert detail.history == ()
-        assert detail.tags == ()
 
     def test_status_is_required_at_construction(self) -> None:
         """status is a plain required field — omitting it is a TypeError from Python."""
@@ -378,7 +368,6 @@ class TestGroupToDetail:
             title="child",
             description=None,
             parent_id=1,
-            position=0,
             archived=False,
             created_at=0,
             metadata={},
@@ -432,7 +421,6 @@ class TestPreInsertDefaults:
         assert task.description is None
         assert task.priority == 1
         assert task.due_date is None
-        assert task.position == 0
         assert task.start_date is None
         assert task.finish_date is None
         assert task.group_id is None

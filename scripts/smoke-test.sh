@@ -11,9 +11,10 @@ RESET='\033[0m'
 # ── Temp dir + cleanup ─────────────────────────────────────────────
 TMPDIR="$(mktemp -d)"
 DB="$TMPDIR/test.db"
+CONFIG="$TMPDIR/tui.toml"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-CMD="todo --db $DB"
+CMD="stx --db $DB --config $CONFIG"
 
 pass_count=0
 fail_count=0
@@ -59,8 +60,8 @@ run_expect_fail() {
 # ════════════════════════════════════════════════════════════════════
 section "Workspace commands"
 
-run "Create workspace 'Work'" \
-    $CMD workspace create Work
+run "Create workspace 'Work' with seeded statuses" \
+    $CMD workspace create Work --statuses "Backlog,In Progress,Done"
 
 run "Create workspace 'Personal'" \
     $CMD workspace create Personal
@@ -72,12 +73,12 @@ run "Switch to 'Work'" \
     $CMD workspace use Work
 
 run "Rename active workspace to 'Office'" \
-    $CMD workspace rename Office
+    $CMD workspace edit --name Office
 
 run "List workspaces (verify rename)" \
     $CMD workspace ls
 
-run "Switch back to 'Personal'" \
+run "Switch to 'Personal'" \
     $CMD workspace use Personal
 
 run "Archive 'Personal'" \
@@ -86,8 +87,8 @@ run "Archive 'Personal'" \
 run "List workspaces (archived hidden)" \
     $CMD workspace ls
 
-run "List workspaces --all (archived visible)" \
-    $CMD workspace ls --all
+run "List workspaces (--archived include)" \
+    $CMD workspace ls --archived include
 
 run "Switch to 'Office'" \
     $CMD workspace use Office
@@ -103,52 +104,23 @@ run_expect_fail "Duplicate workspace name" \
 # ════════════════════════════════════════════════════════════════════
 section "Status commands"
 
-run "Add status 'Backlog'" \
-    $CMD status create Backlog
-
-run "Add status 'In Progress'" \
-    $CMD status create "In Progress"
-
-run "Add status 'Done'" \
-    $CMD status create Done
-
-run "List statuses" \
+run "List statuses (seeded at workspace create)" \
     $CMD status ls
 
-run "Rename 'Backlog' to 'Todo'" \
-    $CMD status rename Backlog Todo
+run "Add status 'Review'" \
+    $CMD status create Review
+
+run "Rename 'Review' to 'In Review'" \
+    $CMD status edit Review --name "In Review"
 
 run "List statuses (verify rename)" \
     $CMD status ls
 
-run "Archive status 'Todo'" \
-    bash -c "echo y | $CMD status archive Todo --force"
+run "Archive status 'In Review'" \
+    $CMD status archive "In Review" --force
 
 run "List statuses (after archive)" \
     $CMD status ls
-
-# ════════════════════════════════════════════════════════════════════
-#  PROJECT
-# ════════════════════════════════════════════════════════════════════
-section "Project commands"
-
-run "Create project 'Backend'" \
-    $CMD project create Backend --desc "Backend services"
-
-run "Create project 'Frontend'" \
-    $CMD project create Frontend
-
-run "List projects" \
-    $CMD project ls
-
-run "Show project 'Backend'" \
-    $CMD project show Backend
-
-run "Archive project 'Frontend'" \
-    $CMD project archive Frontend --force
-
-run "List projects (after archive)" \
-    $CMD project ls
 
 # ════════════════════════════════════════════════════════════════════
 #  TASK
@@ -156,7 +128,7 @@ run "List projects (after archive)" \
 section "Task: create"
 
 run "Create task 'Set up CI'" \
-    $CMD task create "Set up CI" -S "In Progress" --desc "GitHub Actions pipeline" --project Backend --priority 2
+    $CMD task create "Set up CI" -S "In Progress" --desc "GitHub Actions pipeline" --priority 2
 
 run "Create task 'Write docs'" \
     $CMD task create "Write docs" -S "In Progress"
@@ -170,8 +142,8 @@ section "Task: ls"
 run "List tasks" \
     $CMD task ls
 
-run "List tasks --all (includes archived)" \
-    $CMD task ls --all
+run "List tasks (--archived include)" \
+    $CMD task ls --archived include
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: show"
@@ -194,14 +166,32 @@ run "Edit task description and priority" \
 run "Edit task due date" \
     $CMD task edit task-0002 --due 2026-05-01
 
+run "Preview edit (--dry-run)" \
+    $CMD task edit task-0002 --priority 5 --dry-run
+
 run "Show task 2 (verify edits)" \
     $CMD task show task-0002
+
+# ────────────────────────────────────────────────────────────────────
+section "Task: meta"
+
+run "Set metadata key" \
+    $CMD task meta set task-0001 branch feat/ci
+
+run "List metadata" \
+    $CMD task meta ls task-0001
+
+run "Get metadata key" \
+    $CMD task meta get task-0001 branch
+
+run "Delete metadata key" \
+    $CMD task meta del task-0001 branch
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: mv"
 
 run "Move task 1 to 'Done'" \
-    $CMD task mv task-0001 Done
+    $CMD task mv task-0001 --status Done
 
 run "List tasks (verify move)" \
     $CMD task ls
@@ -215,8 +205,8 @@ run "Archive task 2" \
 run "List tasks (task 2 hidden)" \
     $CMD task ls
 
-run "List tasks --all (task 2 visible)" \
-    $CMD task ls --all
+run "List tasks (--archived only)" \
+    $CMD task ls --archived only
 
 # ────────────────────────────────────────────────────────────────────
 section "Task: log"
@@ -225,61 +215,64 @@ run "Show change log for task 1" \
     $CMD task log task-0001
 
 # ════════════════════════════════════════════════════════════════════
-#  TAGS
-# ════════════════════════════════════════════════════════════════════
-section "Tag commands"
-
-run "Create tag 'urgent'" \
-    $CMD tag create urgent
-
-run "List tags" \
-    $CMD tag ls
-
-run "Tag task 3" \
-    $CMD task edit task-0003 --tag urgent
-
-run "Show task 3 (verify tag)" \
-    $CMD task show task-0003
-
-run "Archive tag 'urgent'" \
-    $CMD tag archive urgent --unassign --force
-
-# ════════════════════════════════════════════════════════════════════
 #  GROUPS
 # ════════════════════════════════════════════════════════════════════
 section "Group commands"
 
-run "Create group 'Sprint 1'" \
-    $CMD group create "Sprint 1" --project Backend
+run "Create group 'Backend'" \
+    $CMD group create Backend --desc "Core API services"
+
+run "Create nested group 'Auth' under 'Backend'" \
+    $CMD group create Auth --parent Backend
 
 run "List groups" \
-    $CMD group ls --project Backend
+    $CMD group ls
 
-run "Assign task 1 to group" \
-    $CMD group assign task-0001 "Sprint 1" --project Backend
+run "Show group 'Auth'" \
+    $CMD group show Auth
 
-run "Show group 'Sprint 1'" \
-    $CMD group show "Sprint 1" --project Backend
+run "Assign task 1 to 'Auth'" \
+    $CMD group assign task-0001 Auth
 
-run "Unassign task 1 from group" \
+run "Unassign task 1" \
     $CMD group unassign task-0001
 
-run "Archive group 'Sprint 1'" \
-    $CMD group archive "Sprint 1" --project Backend --force
+run "Move 'Auth' to root level" \
+    $CMD group mv Auth --to-top
+
+run "Archive group 'Auth'" \
+    $CMD group archive Auth --force
 
 # ════════════════════════════════════════════════════════════════════
-#  DEPENDENCIES
+#  EDGES
 # ════════════════════════════════════════════════════════════════════
-section "Dependency commands"
+section "Edge commands"
 
-run "Add dep: task 3 depends on task 1" \
-    $CMD dep create task-0003 task-0001
+run "Create task edge (task-0003 blocks task-0001)" \
+    $CMD edge create --source task-0003 --target task-0001 --kind blocks
 
-run "Show task 3 (verify dep)" \
+run "List edges" \
+    $CMD edge ls
+
+run "Show task 3 (verify edge)" \
     $CMD task show task-0003
 
+run "Set edge metadata" \
+    $CMD edge meta set --source task-0003 --target task-0001 --kind blocks rationale "CI pipeline required"
+
+run "List edge metadata" \
+    $CMD edge meta ls --source task-0003 --target task-0001 --kind blocks
+
 # ════════════════════════════════════════════════════════════════════
-#  EXPORT (run while dep exists so Mermaid diagram has content)
+#  WORKSPACE SHOW (snapshot)
+# ════════════════════════════════════════════════════════════════════
+section "Workspace show"
+
+run "Workspace snapshot" \
+    $CMD workspace show
+
+# ════════════════════════════════════════════════════════════════════
+#  EXPORT (run while edge exists so Mermaid diagram has content)
 # ════════════════════════════════════════════════════════════════════
 section "Export"
 
@@ -290,19 +283,11 @@ run "Export database to markdown" \
 
 echo -e "  Export written to: ${BOLD}${EXPORT_PATH}${RESET}"
 
-run "Remove dep: task 3 no longer depends on task 1" \
-    $CMD dep archive task-0003 task-0001
+run "Archive edge" \
+    $CMD edge archive --source task-0003 --target task-0001 --kind blocks
 
-run "Show task 3 (dep removed)" \
+run "Show task 3 (edge archived)" \
     $CMD task show task-0003
-
-# ════════════════════════════════════════════════════════════════════
-#  CONTEXT
-# ════════════════════════════════════════════════════════════════════
-section "Context"
-
-run "Workspace context snapshot" \
-    $CMD context
 
 # ════════════════════════════════════════════════════════════════════
 #  INFO
@@ -331,12 +316,13 @@ run_expect_fail "Show missing task" \
     $CMD task show task-9999
 
 run_expect_fail "Move missing task" \
-    $CMD task mv task-9999 "In Progress"
+    $CMD task mv task-9999 --status "In Progress"
 
-# Test no active workspace error: use a separate DB with no workspace set
+# Test no active workspace error: separate DB with no workspace set
 NO_WORKSPACE_DB="$TMPDIR/no-workspace.db"
+NO_WORKSPACE_CONFIG="$TMPDIR/no-workspace.toml"
 run_expect_fail "No active workspace" \
-    todo --db "$NO_WORKSPACE_DB" task ls
+    stx --db "$NO_WORKSPACE_DB" --config "$NO_WORKSPACE_CONFIG" task ls
 
 # ════════════════════════════════════════════════════════════════════
 #  SUMMARY

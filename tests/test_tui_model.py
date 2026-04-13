@@ -151,7 +151,6 @@ class TestFlattenGroupTree:
             title=title,
             description=None,
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             metadata={},

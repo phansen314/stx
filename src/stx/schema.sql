@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS groups (
     parent_id    INTEGER,
     title        TEXT NOT NULL COLLATE NOCASE,
     description  TEXT,
-    position     INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
     archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
@@ -37,7 +36,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     status_id INTEGER NOT NULL,
     priority INTEGER NOT NULL DEFAULT 1,
     due_date INTEGER,
-    position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     start_date INTEGER,
@@ -52,9 +50,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE TABLE IF NOT EXISTS edges (
-    from_type    TEXT NOT NULL CHECK (from_type IN ('workspace', 'group', 'task')),
+    from_type    TEXT NOT NULL CHECK (from_type IN ('workspace', 'group', 'task', 'status')),
     from_id      INTEGER NOT NULL,
-    to_type      TEXT NOT NULL CHECK (to_type IN ('workspace', 'group', 'task')),
+    to_type      TEXT NOT NULL CHECK (to_type IN ('workspace', 'group', 'task', 'status')),
     to_id        INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
     -- kind charset kept tight so export.py can safely interpolate it into
@@ -67,24 +65,6 @@ CREATE TABLE IF NOT EXISTS edges (
     archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     PRIMARY KEY (from_type, from_id, to_type, to_id, kind),
     CHECK (from_type != to_type OR from_id != to_id)
-);
-
-CREATE TABLE IF NOT EXISTS tags (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-    name TEXT NOT NULL COLLATE NOCASE,
-    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    UNIQUE (id, workspace_id)
-);
-
-CREATE TABLE IF NOT EXISTS task_tags (
-    task_id INTEGER NOT NULL,
-    tag_id INTEGER NOT NULL,
-    workspace_id INTEGER NOT NULL,
-    PRIMARY KEY (task_id, tag_id),
-    FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id, workspace_id) REFERENCES tags(id, workspace_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS journal (
@@ -106,26 +86,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_workspaces_name_active
     ON workspaces(name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_workspace_name_active
     ON statuses(workspace_id, name) WHERE archived = 0;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_workspace_name_active
-    ON tags(workspace_id, name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_workspace_parent_title_active
     ON groups(workspace_id, COALESCE(parent_id, -1), title) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_workspace_title_active
     ON tasks(workspace_id, title) WHERE archived = 0;
 
 -- Composite covering indexes aligned to actual query patterns
-CREATE INDEX IF NOT EXISTS idx_tasks_status_archived_position
-    ON tasks(status_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_tasks_workspace_archived_position
-    ON tasks(workspace_id, archived, position, id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status_archived
+    ON tasks(status_id, archived, id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace_archived
+    ON tasks(workspace_id, archived, id);
 CREATE INDEX IF NOT EXISTS idx_statuses_workspace_archived_name
     ON statuses(workspace_id, archived, name, id);
-CREATE INDEX IF NOT EXISTS idx_groups_parent_archived_position
-    ON groups(parent_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_groups_workspace_archived_position
-    ON groups(workspace_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_tags_workspace_archived_name
-    ON tags(workspace_id, archived, name);
+CREATE INDEX IF NOT EXISTS idx_groups_parent_archived
+    ON groups(parent_id, archived, id);
+CREATE INDEX IF NOT EXISTS idx_groups_workspace_archived
+    ON groups(workspace_id, archived, id);
 CREATE INDEX IF NOT EXISTS idx_journal_entity
     ON journal(entity_type, entity_id, changed_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_timeline
@@ -142,10 +118,6 @@ CREATE INDEX IF NOT EXISTS idx_edges_workspace_archived
     ON edges(workspace_id, archived);
 CREATE INDEX IF NOT EXISTS idx_edges_acyclic_archived
     ON edges(acyclic, archived);
-
--- FK indexes on junction tables (PK covers the leading column)
-CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id
-    ON task_tags(tag_id);
 
 -- FK index for tasks.group_id (not covered by composites above)
 CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import sqlite3
@@ -13,6 +14,7 @@ from .formatting import parse_task_num
 from .mappers import (
     group_to_detail,
     group_to_ref,
+    row_to_edge_detail,
     task_to_detail,
     task_to_list_item,
 )
@@ -24,18 +26,16 @@ from .models import (
     NewGroup,
     NewJournalEntry,
     NewStatus,
-    NewTag,
     NewTask,
     NewWorkspace,
     Status,
-    Tag,
     Task,
-    TaskField,
     TaskFilter,
     Workspace,
 )
 from .service_models import (
     ArchivePreview,
+    EdgeDetail,
     EdgeListItem,
     EdgeRef,
     EntityUpdatePreview,
@@ -43,7 +43,6 @@ from .service_models import (
     GroupRef,
     MoveToWorkspacePreview,
     TaskDetail,
-    TaskListItem,
     TaskMovePreview,
     WorkspaceContext,
     WorkspaceListStatus,
@@ -61,8 +60,8 @@ _UNSET: Any = object()
 _UNIQUE_MESSAGES: dict[str, str] = {
     "workspaces.name": "a workspace with this name already exists",
     "statuses.workspace_id, statuses.name": "a status with this name already exists on this workspace",
-    "tags.workspace_id, tags.name": "a tag with this name already exists on this workspace",
     "tasks.workspace_id, tasks.title": "a task with this title already exists on this workspace",
+    "uq_groups_workspace_parent_title_active": "a group with this title already exists under the same parent",
 }
 
 _UNIQUE_RE = re.compile(r"UNIQUE constraint failed: (.+)")
@@ -81,8 +80,6 @@ def _translate_integrity_error(
                 return ValueError(human_msg)
         if "edges" in constraint:
             return ValueError("an edge already exists between these entities with this kind")
-        if "task_tags" in constraint:
-            return ValueError("task already has this tag")
         return ValueError("a unique constraint was violated")
     if "FOREIGN KEY constraint failed" in msg:
         if context:
@@ -124,10 +121,6 @@ def _validate_task_fields(
         p = changes["priority"]
         if not isinstance(p, int):
             raise ValueError(f"priority must be an integer, got {p!r}")
-    if "position" in changes:
-        pos = changes["position"]
-        if not isinstance(pos, int) or pos < 0:
-            raise ValueError(f"position must be non-negative, got {pos}")
     start = changes.get("start_date")
     finish = changes.get("finish_date")
     if start is not None and finish is not None and finish < start:
@@ -153,14 +146,6 @@ def _validate_task_fields(
                 )
             if grp.archived:
                 raise ValueError(f"group {grp.id} is archived")
-
-
-def _ensure_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    """Return the active tag on workspace_id matching name, creating it if absent."""
-    tag = repo.get_tag_by_name(conn, workspace_id, name)
-    if tag is None:
-        tag = repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
-    return tag
 
 
 def _record_entity_changes(
@@ -284,25 +269,6 @@ def update_workspace(
     source: str = "cli",
 ) -> Workspace:
     with transaction(conn), _friendly_errors():
-        if changes.get("archived") is True:
-            active_cols = repo.list_statuses(conn, workspace_id)
-            if active_cols:
-                raise ValueError(
-                    f"workspace has {len(active_cols)} active status(es); "
-                    "use 'workspace archive' to cascade"
-                )
-            active_groups = repo.count_active_groups_in_workspace(conn, workspace_id)
-            if active_groups:
-                raise ValueError(
-                    f"workspace has {active_groups} active group(s); "
-                    "use 'workspace archive' to cascade"
-                )
-            active_tasks = repo.list_tasks(conn, workspace_id)
-            if active_tasks:
-                raise ValueError(
-                    f"workspace has {len(active_tasks)} active task(s); "
-                    "use 'workspace archive' to cascade"
-                )
         old = repo.get_workspace(conn, workspace_id)
         result = repo.update_workspace(conn, workspace_id, changes)
         if old is not None:
@@ -390,11 +356,41 @@ def archive_status(
         active_tasks = repo.list_tasks_by_status(conn, status_id)
         if active_tasks:
             if reassign_to_status_id is not None:
+                target = repo.get_status(conn, reassign_to_status_id)
+                if target is None:
+                    raise LookupError(f"status {reassign_to_status_id} not found")
+                if old is not None and target.workspace_id != old.workspace_id:
+                    raise ValueError(
+                        f"reassign target status {reassign_to_status_id} "
+                        f"belongs to a different workspace"
+                    )
+                if target.archived:
+                    raise ValueError(
+                        f"reassign target status {reassign_to_status_id} is archived"
+                    )
+                repo.reassign_tasks_by_status(conn, status_id, reassign_to_status_id)
                 for task in active_tasks:
-                    repo.update_task(conn, task.id, {"status_id": reassign_to_status_id})
+                    _record_entity_changes(
+                        conn,
+                        EntityType.TASK,
+                        task.id,
+                        task.workspace_id,
+                        task,
+                        {"status_id": reassign_to_status_id},
+                        source,
+                    )
             elif force:
+                repo.archive_tasks_by_status(conn, status_id)
                 for task in active_tasks:
-                    repo.update_task(conn, task.id, {"archived": True})
+                    _record_entity_changes(
+                        conn,
+                        EntityType.TASK,
+                        task.id,
+                        task.workspace_id,
+                        task,
+                        {"archived": True},
+                        source,
+                    )
             else:
                 raise ValueError(
                     f"status has {len(active_tasks)} active task(s); "
@@ -426,15 +422,12 @@ def create_task(
     description: str | None = None,
     priority: int = 1,
     due_date: int | None = None,
-    position: int = 0,
     start_date: int | None = None,
     finish_date: int | None = None,
     group_id: int | None = None,
-    tags: tuple[str, ...] = (),
 ) -> Task:
     fields: dict[str, Any] = {
         "priority": priority,
-        "position": position,
     }
     if start_date is not None:
         fields["start_date"] = start_date
@@ -444,7 +437,7 @@ def create_task(
         fields["group_id"] = group_id
     _validate_task_fields(fields, workspace_id=workspace_id, conn=conn)
     with transaction(conn), _friendly_errors():
-        task = repo.insert_task(
+        return repo.insert_task(
             conn,
             NewTask(
                 workspace_id=workspace_id,
@@ -453,16 +446,11 @@ def create_task(
                 description=description,
                 priority=priority,
                 due_date=due_date,
-                position=position,
                 start_date=start_date,
                 finish_date=finish_date,
                 group_id=group_id,
             ),
         )
-        for tag_name in tags:
-            tag = _ensure_tag(conn, workspace_id, tag_name)
-            repo.add_tag_to_task(conn, task.id, tag.id)
-        return task
 
 
 def get_task(conn: sqlite3.Connection, task_id: int) -> Task:
@@ -513,7 +501,6 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
         for nt, nid, title, k in repo.list_edge_targets_from_hydrated(conn, "task", task_id)
     )
     history = repo.list_journal(conn, EntityType.TASK, task_id)
-    tags = repo.list_tags_by_task(conn, task_id)
     return task_to_detail(
         task,
         status=status,
@@ -521,7 +508,6 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
         edge_sources=edge_sources,
         edge_targets=edge_targets,
         history=history,
-        tags=tags,
     )
 
 
@@ -548,7 +534,6 @@ def get_workspace_list_view(
     workspace_id: int,
     *,
     status_id: int | None = None,
-    tag_id: int | None = None,
     group_id: int | None = None,
     priority: int | None = None,
     search: str | None = None,
@@ -556,13 +541,12 @@ def get_workspace_list_view(
     only_archived: bool = False,
 ) -> WorkspaceListView:
     """Denormalized workspace view for list rendering. Groups task list items
-    by status with tag names pre-resolved."""
+    by status."""
     workspace = get_workspace(conn, workspace_id)
     task_filter = TaskFilter(
         status_id=status_id,
         priority=priority,
         search=search,
-        tag_id=tag_id,
         group_id=group_id,
         include_archived=include_archived,
         only_archived=only_archived,
@@ -571,11 +555,6 @@ def get_workspace_list_view(
     statuses = repo.list_statuses(
         conn, workspace_id, include_archived=include_archived or only_archived
     )
-    tags = repo.list_tags(conn, workspace_id, include_archived=True)
-    tag_name_by_id: dict[int, str] = {t.id: t.name for t in tags}
-
-    task_ids = tuple(t.id for t in tasks)
-    tag_map = repo.batch_tag_ids_by_task(conn, task_ids)
 
     items_by_status: dict[int, list[Task]] = {s.id: [] for s in statuses}
     for task in tasks:
@@ -583,25 +562,21 @@ def get_workspace_list_view(
         if bucket is not None:
             bucket.append(task)
 
-    def _to_item(task: Task) -> TaskListItem:
-        tag_names = tuple(
-            tag_name_by_id[tid] for tid in tag_map.get(task.id, ()) if tid in tag_name_by_id
-        )
-        return task_to_list_item(task, tag_names=tag_names)
-
     status_list = tuple(
-        WorkspaceListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
+        WorkspaceListStatus(
+            status=s,
+            tasks=tuple(task_to_list_item(t) for t in items_by_status[s.id]),
+        )
         for s in statuses
     )
     return WorkspaceListView(workspace=workspace, statuses=status_list)
 
 
 def get_workspace_context(conn: sqlite3.Connection, workspace_id: int) -> WorkspaceContext:
-    """Aggregated workspace state: view + tags + all groups. Active items only."""
+    """Aggregated workspace state: view + all groups. Active items only."""
     view = get_workspace_list_view(conn, workspace_id)
-    tags = list_tags(conn, workspace_id)
     groups = list_all_groups(conn, workspace_id)
-    return WorkspaceContext(view=view, tags=tags, groups=groups)
+    return WorkspaceContext(view=view, groups=groups)
 
 
 def update_task(
@@ -609,21 +584,11 @@ def update_task(
     task_id: int,
     changes: dict[str, Any],
     source: str,
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> Task:
-    if not changes and not add_tags and not remove_tags:
+    if not changes:
         return get_task(conn, task_id)
     with transaction(conn), _friendly_errors():
-        return _update_task_body(
-            conn,
-            task_id,
-            changes,
-            source,
-            add_tags=add_tags,
-            remove_tags=remove_tags,
-        )
+        return _update_task_body(conn, task_id, changes, source)
 
 
 def _validate_task_update(
@@ -651,9 +616,6 @@ def _update_task_body(
     task_id: int,
     changes: dict[str, Any],
     source: str,
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> Task:
     """Inner body of update_task. Assumes the caller holds a transaction.
 
@@ -663,24 +625,12 @@ def _update_task_body(
     """
     old = get_task(conn, task_id)
     _validate_task_update(conn, old, changes)
-    if changes:
-        updated = repo.update_task(conn, task_id, changes)
-        _record_entity_changes(
-            conn, EntityType.TASK, task_id, old.workspace_id, old, changes, source
-        )
-    else:
-        updated = old
-    for tag_name in add_tags:
-        tag = _ensure_tag(conn, old.workspace_id, tag_name)
-        repo.add_tag_to_task(conn, task_id, tag.id)
-    for tag_name in remove_tags:
-        existing_tag = repo.get_tag_by_name(conn, old.workspace_id, tag_name)
-        if existing_tag is None:
-            raise LookupError(f"tag {tag_name!r} not found")
-        existing = repo.list_tag_ids_by_task(conn, task_id)
-        if existing_tag.id not in existing:
-            raise LookupError(f"task {task_id} is not tagged {tag_name!r}")
-        repo.remove_tag_from_task(conn, task_id, existing_tag.id)
+    if not changes:
+        return old
+    updated = repo.update_task(conn, task_id, changes)
+    _record_entity_changes(
+        conn, EntityType.TASK, task_id, old.workspace_id, old, changes, source
+    )
     return updated
 
 
@@ -688,12 +638,10 @@ def move_task(
     conn: sqlite3.Connection,
     task_id: int,
     status_id: int,
-    position: int,
     source: str,
 ) -> Task:
-    """Move a task to (status_id, position)."""
-    changes: dict[str, Any] = {"status_id": status_id, "position": position}
-    return update_task(conn, task_id, changes, source)
+    """Move a task to a new status."""
+    return update_task(conn, task_id, {"status_id": status_id}, source)
 
 
 def _validate_move_to_workspace(
@@ -792,23 +740,10 @@ def move_task_to_workspace(
                 description=old.description,
                 priority=old.priority,
                 due_date=old.due_date,
-                position=0,
                 start_date=old.start_date,
                 finish_date=old.finish_date,
             ),
         )
-
-        # Migrate active tags by name to the target workspace.  Archived tags on
-        # the source workspace are intentionally skipped: they cannot be referenced
-        # on the destination workspace and recreating them there would resurrect
-        # tags the user had already retired.
-        for tag in repo.list_tags_by_task(conn, task_id):
-            target_tag = repo.get_tag_by_name(conn, target_workspace_id, tag.name)
-            if target_tag is None:
-                target_tag = repo.insert_tag(
-                    conn, NewTag(workspace_id=target_workspace_id, name=tag.name)
-                )
-            repo.add_tag_to_task(conn, new.id, target_tag.id)
 
         repo.copy_task_metadata(conn, task_id, new.id)
 
@@ -816,14 +751,14 @@ def move_task_to_workspace(
         _record_entity_changes(
             conn, EntityType.TASK, task_id, old.workspace_id, old, {"archived": True}, source
         )
-        # Refetch: `new` was built before tags/metadata were attached.
+        # Refetch: `new` was built before metadata was attached.
         return get_task(conn, new.id)
 
 
 # ---- Entity metadata ----
 #
-# Tasks, workspaces, projects, and groups all carry a JSON key/value metadata
-# blob. Keys are normalized to lowercase on write/read (matching the codebase's
+# Tasks, workspaces, and groups all carry a JSON key/value metadata blob.
+# Keys are normalized to lowercase on write/read (matching the codebase's
 # COLLATE NOCASE convention, which can't be applied directly to JSON keys).
 
 
@@ -871,6 +806,8 @@ def _get_entity_meta(
     """
     normalized = _normalize_meta_key(key)
     entity = fetcher(conn, entity_id)
+    if entity is None:
+        raise LookupError(f"{entity_name} {entity_id} not found")
     if normalized not in entity.metadata:
         raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
     return entity.metadata[normalized]
@@ -885,33 +822,40 @@ def _set_entity_meta(
     entity_type: EntityType,
     setter: Callable[[sqlite3.Connection, int, str, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
+    workspace_id_of: Callable[[Any], int],
+    entity_name: str,
     source: str = "cli",
 ) -> Any:
     """Generic entity-metadata write. Validates the key and value length,
-    then persists via `setter` and returns the refreshed entity from `fetcher`.
+    persists via `setter`, and returns the new entity built from the old
+    one — skipping a redundant re-fetch.
     """
     normalized = _normalize_meta_key(key)
     if len(value) > _META_VALUE_MAX:
         raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
     with transaction(conn), _friendly_errors():
         old_entity = fetcher(conn, entity_id)
-        old_value = old_entity.metadata.get(normalized) if old_entity is not None else None
+        if old_entity is None:
+            raise LookupError(f"{entity_name} {entity_id} not found")
+        old_value = old_entity.metadata.get(normalized)
         setter(conn, entity_id, normalized, value)
-        result = fetcher(conn, entity_id)
-        if old_value != value and result is not None:
+        if old_value != value:
             repo.insert_journal_entry(
                 conn,
                 NewJournalEntry(
                     entity_type=entity_type,
                     entity_id=entity_id,
-                    workspace_id=getattr(result, "workspace_id", entity_id),
+                    workspace_id=workspace_id_of(old_entity),
                     field=f"meta.{normalized}",
                     old_value=old_value,
                     new_value=value,
                     source=source,
                 ),
             )
-        return result
+        return dataclasses.replace(
+            old_entity,
+            metadata={**old_entity.metadata, normalized: value},
+        )
 
 
 def _remove_entity_meta(
@@ -922,6 +866,7 @@ def _remove_entity_meta(
     entity_type: EntityType,
     remover: Callable[[sqlite3.Connection, int, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
+    workspace_id_of: Callable[[Any], int],
     entity_name: str,
     source: str = "cli",
 ) -> str:
@@ -932,6 +877,8 @@ def _remove_entity_meta(
     normalized = _normalize_meta_key(key)
     with transaction(conn), _friendly_errors():
         old = fetcher(conn, entity_id)
+        if old is None:
+            raise LookupError(f"{entity_name} {entity_id} not found")
         if normalized not in old.metadata:
             raise LookupError(f"metadata key {key!r} not found on {entity_name} {entity_id}")
         old_value = old.metadata[normalized]
@@ -941,7 +888,7 @@ def _remove_entity_meta(
             NewJournalEntry(
                 entity_type=entity_type,
                 entity_id=entity_id,
-                workspace_id=getattr(old, "workspace_id", entity_id),
+                workspace_id=workspace_id_of(old),
                 field=f"meta.{normalized}",
                 old_value=old_value,
                 new_value=None,
@@ -959,6 +906,8 @@ def _replace_entity_metadata(
     entity_type: EntityType,
     writer: Callable[[sqlite3.Connection, int, str], None],
     fetcher: Callable[[sqlite3.Connection, int], Any],
+    workspace_id_of: Callable[[Any], int],
+    entity_name: str,
     source: str = "cli",
 ) -> Any:
     """Generic bulk-replace for an entity's metadata blob.
@@ -979,27 +928,28 @@ def _replace_entity_metadata(
         normalized[key] = value
     with transaction(conn), _friendly_errors():
         old_entity = fetcher(conn, entity_id)
-        old_meta = old_entity.metadata if old_entity is not None else {}
+        if old_entity is None:
+            raise LookupError(f"{entity_name} {entity_id} not found")
+        old_meta = old_entity.metadata
         writer(conn, entity_id, json.dumps(normalized))
-        result = fetcher(conn, entity_id)
-        if result is not None:
-            for k in set(old_meta) | set(normalized):
-                old_val = old_meta.get(k)
-                new_val = normalized.get(k)
-                if old_val != new_val:
-                    repo.insert_journal_entry(
-                        conn,
-                        NewJournalEntry(
-                            entity_type=entity_type,
-                            entity_id=entity_id,
-                            workspace_id=getattr(result, "workspace_id", entity_id),
-                            field=f"meta.{k}",
-                            old_value=old_val,
-                            new_value=new_val,
-                            source=source,
-                        ),
-                    )
-        return result
+        workspace_id = workspace_id_of(old_entity)
+        for k in set(old_meta) | set(normalized):
+            old_val = old_meta.get(k)
+            new_val = normalized.get(k)
+            if old_val != new_val:
+                repo.insert_journal_entry(
+                    conn,
+                    NewJournalEntry(
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        workspace_id=workspace_id,
+                        field=f"meta.{k}",
+                        old_value=old_val,
+                        new_value=new_val,
+                        source=source,
+                    ),
+                )
+        return dataclasses.replace(old_entity, metadata=dict(normalized))
 
 
 # ---- Task metadata ----
@@ -1009,7 +959,14 @@ def get_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
     return _get_entity_meta(conn, task_id, key, fetcher=get_task, entity_name="task")
 
 
-def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) -> Task:
+def set_task_meta(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+    value: str,
+    *,
+    source: str = "cli",
+) -> Task:
     return _set_entity_meta(
         conn,
         task_id,
@@ -1018,10 +975,19 @@ def set_task_meta(conn: sqlite3.Connection, task_id: int, key: str, value: str) 
         entity_type=EntityType.TASK,
         setter=repo.set_task_metadata_key,
         fetcher=get_task,
+        workspace_id_of=lambda t: t.workspace_id,
+        entity_name="task",
+        source=source,
     )
 
 
-def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
+def remove_task_meta(
+    conn: sqlite3.Connection,
+    task_id: int,
+    key: str,
+    *,
+    source: str = "cli",
+) -> str:
     return _remove_entity_meta(
         conn,
         task_id,
@@ -1029,7 +995,9 @@ def remove_task_meta(conn: sqlite3.Connection, task_id: int, key: str) -> str:
         entity_type=EntityType.TASK,
         remover=repo.remove_task_metadata_key,
         fetcher=get_task,
+        workspace_id_of=lambda t: t.workspace_id,
         entity_name="task",
+        source=source,
     )
 
 
@@ -1040,9 +1008,9 @@ def replace_task_metadata(
     *,
     source: str,
 ) -> Task:
-    """Atomically replace a task's entire metadata blob. `source` is accepted
-    for signature parity with `update_task`; metadata writes don't record
-    history today (consistent with per-key `set_task_meta` / `remove_task_meta`).
+    """Atomically replace a task's entire metadata blob. Each added, changed,
+    or removed key emits a `meta.<key>` journal entry via
+    `_replace_entity_metadata`.
     """
     return _replace_entity_metadata(
         conn,
@@ -1051,6 +1019,8 @@ def replace_task_metadata(
         entity_type=EntityType.TASK,
         writer=repo.replace_task_metadata,
         fetcher=get_task,
+        workspace_id_of=lambda t: t.workspace_id,
+        entity_name="task",
         source=source,
     )
 
@@ -1063,7 +1033,12 @@ def get_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) ->
 
 
 def set_workspace_meta(
-    conn: sqlite3.Connection, workspace_id: int, key: str, value: str
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    key: str,
+    value: str,
+    *,
+    source: str = "cli",
 ) -> Workspace:
     return _set_entity_meta(
         conn,
@@ -1073,10 +1048,19 @@ def set_workspace_meta(
         entity_type=EntityType.WORKSPACE,
         setter=repo.set_workspace_metadata_key,
         fetcher=get_workspace,
+        workspace_id_of=lambda w: w.id,
+        entity_name="workspace",
+        source=source,
     )
 
 
-def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str) -> str:
+def remove_workspace_meta(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    key: str,
+    *,
+    source: str = "cli",
+) -> str:
     return _remove_entity_meta(
         conn,
         workspace_id,
@@ -1084,7 +1068,9 @@ def remove_workspace_meta(conn: sqlite3.Connection, workspace_id: int, key: str)
         entity_type=EntityType.WORKSPACE,
         remover=repo.remove_workspace_metadata_key,
         fetcher=get_workspace,
+        workspace_id_of=lambda w: w.id,
         entity_name="workspace",
+        source=source,
     )
 
 
@@ -1095,8 +1081,8 @@ def replace_workspace_metadata(
     *,
     source: str,
 ) -> Workspace:
-    """Atomically replace a workspace's entire metadata blob. See
-    `replace_task_metadata` for the `source` parameter rationale.
+    """Atomically replace a workspace's entire metadata blob. Each added,
+    changed, or removed key emits a `meta.<key>` journal entry.
     """
     return _replace_entity_metadata(
         conn,
@@ -1105,6 +1091,8 @@ def replace_workspace_metadata(
         entity_type=EntityType.WORKSPACE,
         writer=repo.replace_workspace_metadata,
         fetcher=get_workspace,
+        workspace_id_of=lambda w: w.id,
+        entity_name="workspace",
         source=source,
     )
 
@@ -1116,7 +1104,14 @@ def get_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
     return _get_entity_meta(conn, group_id, key, fetcher=get_group, entity_name="group")
 
 
-def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> Group:
+def set_group_meta(
+    conn: sqlite3.Connection,
+    group_id: int,
+    key: str,
+    value: str,
+    *,
+    source: str = "cli",
+) -> Group:
     return _set_entity_meta(
         conn,
         group_id,
@@ -1125,10 +1120,19 @@ def set_group_meta(conn: sqlite3.Connection, group_id: int, key: str, value: str
         entity_type=EntityType.GROUP,
         setter=repo.set_group_metadata_key,
         fetcher=get_group,
+        workspace_id_of=lambda g: g.workspace_id,
+        entity_name="group",
+        source=source,
     )
 
 
-def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
+def remove_group_meta(
+    conn: sqlite3.Connection,
+    group_id: int,
+    key: str,
+    *,
+    source: str = "cli",
+) -> str:
     return _remove_entity_meta(
         conn,
         group_id,
@@ -1136,7 +1140,9 @@ def remove_group_meta(conn: sqlite3.Connection, group_id: int, key: str) -> str:
         entity_type=EntityType.GROUP,
         remover=repo.remove_group_metadata_key,
         fetcher=get_group,
+        workspace_id_of=lambda g: g.workspace_id,
         entity_name="group",
+        source=source,
     )
 
 
@@ -1147,8 +1153,8 @@ def replace_group_metadata(
     *,
     source: str,
 ) -> Group:
-    """Atomically replace a group's entire metadata blob. See
-    `replace_task_metadata` for the `source` parameter rationale.
+    """Atomically replace a group's entire metadata blob. Each added,
+    changed, or removed key emits a `meta.<key>` journal entry.
     """
     return _replace_entity_metadata(
         conn,
@@ -1157,6 +1163,8 @@ def replace_group_metadata(
         entity_type=EntityType.GROUP,
         writer=repo.replace_group_metadata,
         fetcher=get_group,
+        workspace_id_of=lambda g: g.workspace_id,
+        entity_name="group",
         source=source,
     )
 
@@ -1195,6 +1203,11 @@ def _resolve_edge_node(
         if ws is None:
             raise LookupError(f"workspace {node_id} not found")
         return ws.id, ws.archived
+    elif node_type == "status":
+        st = repo.get_status(conn, node_id)
+        if st is None:
+            raise LookupError(f"status {node_id} not found")
+        return st.workspace_id, st.archived
     else:
         raise ValueError(f"unknown node_type {node_type!r}")
 
@@ -1536,6 +1549,162 @@ def replace_edge_metadata(
                 )
 
 
+# ---- Edge detail / edit / log ----
+
+
+def get_edge_detail(
+    conn: sqlite3.Connection,
+    src: tuple[str, int],
+    dst: tuple[str, int],
+    *,
+    kind: str,
+) -> EdgeDetail:
+    """Return a fully hydrated single-edge view."""
+    from_type, from_id = src
+    to_type, to_id = dst
+    kind = _normalize_edge_kind(kind)
+    row = repo.get_edge_detail_row(conn, from_type, from_id, to_type, to_id, kind)
+    if row is None:
+        raise LookupError(
+            f"edge ({from_type}:{from_id} → {to_type}:{to_id} [{kind}]) not found"
+        )
+    history = repo.list_journal_for_edge(conn, from_type, from_id, to_type, to_id)
+    # Filter history to entries matching this specific kind (same endpoint,
+    # different kinds share entity_id + timestamps in pathological cases).
+    endpoint = f"{from_type}:{from_id}\u2192{to_type}:{to_id}"
+    history = _filter_edge_history(history, endpoint, kind)
+    return row_to_edge_detail(row, history=history)
+
+
+def _filter_edge_history(
+    history: tuple[JournalEntry, ...],
+    endpoint: str,
+    kind: str,
+) -> tuple[JournalEntry, ...]:
+    """Narrow edge journal entries to those attributable to one (endpoint, kind)
+    pair. Endpoint rows are unambiguous by content; sibling rows (kind,
+    acyclic, archived, meta.*) are kept when they share a `changed_at` with a
+    matched endpoint row AND, for kind rows, the value matches."""
+    matched_timestamps: set[int] = set()
+    for h in history:
+        if h.field == EdgeField.ENDPOINT and endpoint in (h.old_value or "", h.new_value or ""):
+            matched_timestamps.add(h.changed_at)
+    out: list[JournalEntry] = []
+    for h in history:
+        if h.changed_at not in matched_timestamps:
+            continue
+        if h.field == EdgeField.KIND:
+            if kind not in (h.old_value or "", h.new_value or ""):
+                continue
+        out.append(h)
+    return tuple(out)
+
+
+def update_edge(
+    conn: sqlite3.Connection,
+    src: tuple[str, int],
+    dst: tuple[str, int],
+    *,
+    kind: str,
+    changes: dict[str, Any],
+    source: str = "cli",
+) -> EdgeDetail:
+    """Update mutable edge fields (currently only ``acyclic``).
+
+    When flipping acyclic from 0 → 1, re-runs cycle detection over the
+    post-update acyclic subgraph. Journals both an ENDPOINT anchor row and
+    the ACYCLIC delta so `edge log` can recover the mutation via the
+    shared changed_at timestamp (entity_id + endpoint match)."""
+    from_type, from_id = src
+    to_type, to_id = dst
+    kind = _normalize_edge_kind(kind)
+    normalized_changes: dict[str, Any] = {}
+    if "acyclic" in changes:
+        normalized_changes["acyclic"] = 1 if changes["acyclic"] else 0
+    if not normalized_changes:
+        raise ValueError("no valid fields to update")
+    with transaction(conn), _friendly_errors():
+        row = repo.get_edge_detail_row(conn, from_type, from_id, to_type, to_id, kind)
+        if row is None or row["archived"]:
+            raise LookupError(
+                f"edge ({from_type}:{from_id} → {to_type}:{to_id} [{kind}]) not found"
+            )
+        workspace_id = row["workspace_id"]
+        old_acyclic = int(row["acyclic"])
+        new_acyclic = normalized_changes["acyclic"]
+        if new_acyclic == old_acyclic:
+            # No-op — skip write and journal.
+            history = repo.list_journal_for_edge(conn, from_type, from_id, to_type, to_id)
+            endpoint = f"{from_type}:{from_id}\u2192{to_type}:{to_id}"
+            return row_to_edge_detail(
+                row, history=_filter_edge_history(history, endpoint, kind)
+            )
+        repo.update_edge(
+            conn, from_type, from_id, to_type, to_id, kind, normalized_changes
+        )
+        if new_acyclic == 1 and old_acyclic == 0:
+            # Transition off→on: cycle check runs against the post-write
+            # edge set (our edge now participates as acyclic=1). Any cycle
+            # raises ValueError, rolling back the transaction.
+            _check_no_cycle(conn, from_type, from_id, to_type, to_id)
+        endpoint = f"{from_type}:{from_id}\u2192{to_type}:{to_id}"
+        repo.insert_journal_entry(
+            conn,
+            NewJournalEntry(
+                entity_type=EntityType.EDGE,
+                entity_id=from_id,
+                workspace_id=workspace_id,
+                field=EdgeField.ENDPOINT,
+                old_value=endpoint,
+                new_value=endpoint,
+                source=source,
+            ),
+        )
+        repo.insert_journal_entry(
+            conn,
+            NewJournalEntry(
+                entity_type=EntityType.EDGE,
+                entity_id=from_id,
+                workspace_id=workspace_id,
+                field=EdgeField.ACYCLIC,
+                old_value=str(old_acyclic),
+                new_value=str(new_acyclic),
+                source=source,
+            ),
+        )
+        # Also emit a kind row at the same timestamp so history filter can
+        # disambiguate multi-kind edges sharing an endpoint.
+        repo.insert_journal_entry(
+            conn,
+            NewJournalEntry(
+                entity_type=EntityType.EDGE,
+                entity_id=from_id,
+                workspace_id=workspace_id,
+                field=EdgeField.KIND,
+                old_value=kind,
+                new_value=kind,
+                source=source,
+            ),
+        )
+    return get_edge_detail(conn, src, dst, kind=kind)
+
+
+def list_journal_for_edge(
+    conn: sqlite3.Connection,
+    src: tuple[str, int],
+    dst: tuple[str, int],
+    *,
+    kind: str,
+) -> tuple[JournalEntry, ...]:
+    """Return journal entries attributable to a single (endpoint, kind) edge."""
+    from_type, from_id = src
+    to_type, to_id = dst
+    kind = _normalize_edge_kind(kind)
+    history = repo.list_journal_for_edge(conn, from_type, from_id, to_type, to_id)
+    endpoint = f"{from_type}:{from_id}\u2192{to_type}:{to_id}"
+    return _filter_edge_history(history, endpoint, kind)
+
+
 # ---- History ----
 
 
@@ -1564,7 +1733,6 @@ def create_group(
     workspace_id: int,
     title: str,
     parent_id: int | None = None,
-    position: int = 0,
     description: str | None = None,
 ) -> Group:
     with transaction(conn), _friendly_errors():
@@ -1586,7 +1754,6 @@ def create_group(
                 title=title,
                 description=description,
                 parent_id=parent_id,
-                position=position,
             ),
         )
 
@@ -1745,8 +1912,8 @@ def list_all_groups(
     include_archived: bool = False,
 ) -> tuple[GroupRef, ...]:
     """Return every group on a workspace (hydrated as GroupRef). Order is
-    by position/id but the hierarchy is flat — callers that need the tree
-    structure should walk `child_ids`.
+    by id; the hierarchy is flat — callers that need the tree structure
+    should walk `child_ids`.
     """
     groups = repo.list_groups_by_workspace(
         conn, workspace_id, include_archived=include_archived
@@ -1855,99 +2022,6 @@ def list_ungrouped_task_ids(
     return repo.list_ungrouped_task_ids(conn, workspace_id)
 
 
-# ---- Tag ----
-
-
-def create_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    with transaction(conn), _friendly_errors():
-        return repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
-
-
-def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag:
-    tag = repo.get_tag(conn, tag_id)
-    if tag is None:
-        raise LookupError(f"tag {tag_id} not found")
-    return tag
-
-
-def get_tag_by_name(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    tag = repo.get_tag_by_name(conn, workspace_id, name)
-    if tag is None:
-        raise LookupError(f"tag {name!r} not found")
-    return tag
-
-
-def list_tags(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    *,
-    include_archived: bool = False,
-    only_archived: bool = False,
-) -> tuple[Tag, ...]:
-    return repo.list_tags(
-        conn,
-        workspace_id,
-        include_archived=include_archived,
-        only_archived=only_archived,
-    )
-
-
-def update_tag(
-    conn: sqlite3.Connection,
-    tag_id: int,
-    changes: dict[str, Any],
-) -> Tag:
-    with transaction(conn), _friendly_errors():
-        return repo.update_tag(conn, tag_id, changes)
-
-
-def archive_tag(conn: sqlite3.Connection, tag_id: int, *, unassign: bool = False) -> Tag:
-    with transaction(conn), _friendly_errors():
-        if unassign:
-            repo.remove_all_task_tags_by_tag(conn, tag_id)
-        return repo.update_tag(conn, tag_id, {"archived": True})
-
-
-def tag_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_name: str,
-    workspace_id: int,
-) -> Tag:
-    with transaction(conn), _friendly_errors():
-        task = get_task(conn, task_id)
-        if task.workspace_id != workspace_id:
-            raise ValueError(
-                f"task {task_id} belongs to workspace {task.workspace_id}, "
-                f"not workspace {workspace_id}"
-            )
-        tag = _ensure_tag(conn, workspace_id, tag_name)
-        repo.add_tag_to_task(conn, task_id, tag.id)
-        return tag
-
-
-def untag_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_name: str,
-    workspace_id: int,
-) -> None:
-    with transaction(conn), _friendly_errors():
-        task = get_task(conn, task_id)
-        if task.workspace_id != workspace_id:
-            raise ValueError(
-                f"task {task_id} belongs to workspace {task.workspace_id}, "
-                f"not workspace {workspace_id}"
-            )
-        tag = repo.get_tag_by_name(conn, workspace_id, tag_name)
-        if tag is None:
-            raise LookupError(f"tag {tag_name!r} not found")
-        existing = repo.list_tag_ids_by_task(conn, task_id)
-        if tag.id not in existing:
-            raise LookupError(f"task {task_id} is not tagged {tag_name!r}")
-        repo.remove_tag_from_task(conn, task_id, tag.id)
-
-
 # ---- Archive (preview + cascade) ----
 
 
@@ -1999,25 +2073,10 @@ def preview_archive_status(conn: sqlite3.Connection, status_id: int) -> ArchiveP
     )
 
 
-def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview:
-    tag = get_tag(conn, tag_id)
-    return ArchivePreview(
-        entity_type="tag",
-        entity_name=tag.name,
-        already_archived=tag.archived,
-        task_count=repo.count_active_tasks_by_tag(conn, tag_id),
-        group_count=0,
-        status_count=0,
-    )
-
-
 def preview_update_task(
     conn: sqlite3.Connection,
     task_id: int,
     changes: dict[str, Any],
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> EntityUpdatePreview:
     """Compute a diff for `update_task` without writing. Validates the
     merged change set the same way `update_task` does so dry-run surfaces
@@ -2026,22 +2085,12 @@ def preview_update_task(
     old = get_task(conn, task_id)
     _validate_task_update(conn, old, changes)
     before, after = _diff_fields(old, changes)
-    current_tag_names = tuple(t.name for t in repo.list_tags_by_task(conn, task_id))
-    added = tuple(t for t in add_tags if t.lower() not in {n.lower() for n in current_tag_names})
-    removed: list[str] = []
-    for t in remove_tags:
-        matches = [n for n in current_tag_names if n.lower() == t.lower()]
-        if not matches:
-            raise LookupError(f"task {task_id} is not tagged {t!r}")
-        removed.append(matches[0])
     return EntityUpdatePreview(
         entity_type="task",
         entity_id=task_id,
         label=old.title,
         before=before,
         after=after,
-        tags_added=added,
-        tags_removed=tuple(removed),
     )
 
 
@@ -2049,7 +2098,6 @@ def preview_move_task(
     conn: sqlite3.Connection,
     task_id: int,
     status_id: int,
-    position: int,
 ) -> TaskMovePreview:
     """Compute a from/to snapshot for `move_task`. No DB writes."""
     task = get_task(conn, task_id)
@@ -2060,8 +2108,23 @@ def preview_move_task(
         title=task.title,
         from_status=from_status.name,
         to_status=to_status.name,
-        from_position=task.position,
-        to_position=position,
+    )
+
+
+def preview_update_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_workspace` without writing."""
+    old = get_workspace(conn, workspace_id)
+    before, after = _diff_fields(old, changes)
+    return EntityUpdatePreview(
+        entity_type="workspace",
+        entity_id=workspace_id,
+        label=old.name,
+        before=before,
+        after=after,
     )
 
 
@@ -2144,22 +2207,22 @@ def archive_task(
         return updated
 
 
-def _record_archive_history(
+def _record_bulk_archive(
     conn: sqlite3.Connection,
-    task_ids: tuple[int, ...],
+    entity_type: EntityType,
+    entity_ids: tuple[int, ...],
     workspace_id: int,
     source: str,
 ) -> None:
-    # Values must match str(bool) used by _record_changes for single-task archive.
-    # If Task.archived ever changes from bool, update both paths together.
-    for tid in task_ids:
+    # Values must match str(bool) used by _record_changes for single-entity archive.
+    for eid in entity_ids:
         repo.insert_journal_entry(
             conn,
             NewJournalEntry(
-                entity_type=EntityType.TASK,
-                entity_id=tid,
+                entity_type=entity_type,
+                entity_id=eid,
                 workspace_id=workspace_id,
-                field=TaskField.ARCHIVED,
+                field="archived",
                 old_value="False",
                 new_value="True",
                 source=source,
@@ -2176,9 +2239,14 @@ def cascade_archive_group(
     with transaction(conn), _friendly_errors():
         group = get_group(conn, group_id)
         task_ids = repo.list_active_task_ids_in_group_subtree(conn, group_id)
+        descendant_group_ids = repo.list_active_descendant_group_ids(conn, group_id)
         repo.archive_tasks_in_group_subtree(conn, group_id)
-        _record_archive_history(conn, task_ids, group.workspace_id, source)
+        _record_bulk_archive(conn, EntityType.TASK, task_ids, group.workspace_id, source)
         repo.archive_descendant_groups(conn, group_id)
+        _record_bulk_archive(
+            conn, EntityType.GROUP, descendant_group_ids, group.workspace_id, source
+        )
+        # parent group itself is journaled via update_group below
         return repo.update_group(conn, group_id, {"archived": True})
 
 
@@ -2190,8 +2258,12 @@ def cascade_archive_workspace(
 ) -> Workspace:
     with transaction(conn), _friendly_errors():
         task_ids = repo.list_active_task_ids_in_workspace(conn, workspace_id)
+        group_ids = repo.list_active_group_ids_in_workspace(conn, workspace_id)
+        status_ids = repo.list_active_status_ids_in_workspace(conn, workspace_id)
         repo.archive_tasks_in_workspace(conn, workspace_id)
-        _record_archive_history(conn, task_ids, workspace_id, source)
+        _record_bulk_archive(conn, EntityType.TASK, task_ids, workspace_id, source)
         repo.archive_groups_in_workspace(conn, workspace_id)
+        _record_bulk_archive(conn, EntityType.GROUP, group_ids, workspace_id, source)
         repo.archive_statuses_in_workspace(conn, workspace_id)
+        _record_bulk_archive(conn, EntityType.STATUS, status_ids, workspace_id, source)
         return repo.update_workspace(conn, workspace_id, {"archived": True})

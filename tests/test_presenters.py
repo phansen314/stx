@@ -6,7 +6,6 @@ from stx.models import (
     Group,
     JournalEntry,
     Status,
-    Tag,
     Task,
     TaskField,
     Workspace,
@@ -35,10 +34,6 @@ def _status(id: int, name: str, archived: bool = False) -> Status:
     return Status(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
 
 
-def _tag(id: int, name: str, archived: bool = False) -> Tag:
-    return Tag(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
-
-
 def _task(
     id: int,
     title: str,
@@ -55,7 +50,6 @@ def _task(
         status_id=status_id,
         priority=priority,
         due_date=due_date,
-        position=0,
         archived=False,
         created_at=0,
         start_date=None,
@@ -71,7 +65,6 @@ def _list_item(
     *,
     status_id: int = 1,
     priority: int = 1,
-    tag_names: tuple[str, ...] = (),
 ) -> TaskListItem:
     return TaskListItem(
         id=id,
@@ -81,14 +74,12 @@ def _list_item(
         status_id=status_id,
         priority=priority,
         due_date=None,
-        position=0,
         archived=False,
         created_at=0,
         start_date=None,
         finish_date=None,
         group_id=None,
         metadata={},
-        tag_names=tag_names,
     )
 
 
@@ -112,12 +103,12 @@ def _history(
     )
 
 
-# ---- format_history_entry / format_task_history ----
+# ---- format_history_entry / format_journal_entries ----
 
 
 class TestHistoryFormatter:
     def test_empty_history_shows_placeholder(self):
-        assert presenters.format_task_history(()) == "no history"
+        assert presenters.format_journal_entries(()) == "no history"
 
     def test_entry_format(self):
         h = _history(1, TaskField.TITLE, "old", "new")
@@ -134,7 +125,7 @@ class TestHistoryFormatter:
     def test_multiple_entries_joined(self):
         h1 = _history(1, TaskField.TITLE, "a", "b")
         h2 = _history(2, TaskField.PRIORITY, "1", "3")
-        out = presenters.format_task_history((h1, h2))
+        out = presenters.format_journal_entries((h1, h2))
         assert out.count("\n") == 1
 
 
@@ -187,20 +178,6 @@ class TestFormatStatusList:
         assert "(archived)" not in out
 
 
-# ---- format_tag_list ----
-
-
-class TestFormatTagList:
-    def test_empty(self):
-        assert presenters.format_tag_list(()) == "no tags"
-
-    def test_with_archived(self):
-        tags = (_tag(1, "bug"), _tag(2, "old", archived=True))
-        out = presenters.format_tag_list(tags)
-        assert "  bug" in out
-        assert "  old (archived)" in out
-
-
 # ---- format_task_detail ----
 
 
@@ -214,7 +191,6 @@ class TestFormatTaskDetail:
             status_id=1,
             priority=2,
             due_date=None,
-            position=0,
             archived=False,
             created_at=0,
             start_date=None,
@@ -226,7 +202,6 @@ class TestFormatTaskDetail:
             edge_sources=(),
             edge_targets=(),
             history=(),
-            tags=(),
         )
         base.update(overrides)
         return TaskDetail(**base)
@@ -248,12 +223,10 @@ class TestFormatTaskDetail:
                 title="g",
                 description=None,
                 parent_id=None,
-                position=0,
                 archived=False,
                 created_at=0,
                 metadata={},
             ),
-            tags=(_tag(1, "bug"), _tag(2, "urgent")),
             description="do the thing",
             due_date=1_000_000,
             edge_sources=(EdgeRef(node_type="task", node_id=2, node_title="blocker", kind="blocks"),),
@@ -262,7 +235,6 @@ class TestFormatTaskDetail:
         )
         out = presenters.format_task_detail(d)
         assert "Group:       g (group-0003)" in out
-        assert "Tags:        bug, urgent" in out
         assert "Due:" in out
         assert "Edge sources: task:2 blocker (blocks)" in out
         assert "Edge targets: task:3 blocked (related-to)" in out
@@ -296,7 +268,7 @@ class TestFormatWorkspaceListView:
                 WorkspaceListStatus(
                     status=_status(1, "Todo"),
                     tasks=(
-                        _list_item(1, "do it", priority=3, tag_names=("bug",)),
+                        _list_item(1, "do it", priority=3),
                     ),
                 ),
             ),
@@ -305,30 +277,15 @@ class TestFormatWorkspaceListView:
         assert "task-0001" in out
         assert "[P3]" in out
         assert "do it" in out
-        assert "[bug]" in out
-
-    def test_no_tags(self):
-        view = WorkspaceListView(
-            workspace=_workspace(1),
-            statuses=(
-                WorkspaceListStatus(
-                    status=_status(1, "Todo"),
-                    tasks=(_list_item(1, "bare"),),
-                ),
-            ),
-        )
-        out = presenters.format_workspace_list_view(view)
-        assert "bare" in out
-        assert "[bug]" not in out
 
 
 # ---- format_workspace_context ----
 
 
 class TestFormatWorkspaceContext:
-    def _ctx(self, *, name="dev", tags=(), groups=()) -> WorkspaceContext:
+    def _ctx(self, *, name="dev", groups=()) -> WorkspaceContext:
         view = WorkspaceListView(workspace=_workspace(1, name), statuses=())
-        return WorkspaceContext(view=view, tags=tags, groups=groups)
+        return WorkspaceContext(view=view, groups=groups)
 
     def _ref(self, id: int, title: str) -> GroupRef:
         return GroupRef(
@@ -337,7 +294,6 @@ class TestFormatWorkspaceContext:
             title=title,
             description=None,
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             metadata={},
@@ -347,18 +303,10 @@ class TestFormatWorkspaceContext:
         out = presenters.format_workspace_context(self._ctx(name="work"))
         assert out.startswith("== work ==")
 
-    def test_tags_line(self):
-        out = presenters.format_workspace_context(self._ctx(tags=(_tag(1, "bug"),)))
-        assert "Tags: bug" in out
-
     def test_groups_line(self):
         g = self._ref(1, "G1")
         out = presenters.format_workspace_context(self._ctx(groups=(g,)))
         assert "Groups: G1" in out
-
-    def test_no_tags_no_line(self):
-        out = presenters.format_workspace_context(self._ctx())
-        assert "Tags:" not in out
 
     def test_no_groups_no_line(self):
         out = presenters.format_workspace_context(self._ctx())
@@ -376,7 +324,6 @@ class TestFormatGroupList:
             title=title,
             description=None,
             parent_id=None,
-            position=0,
             archived=archived,
             created_at=0,
             metadata={},
@@ -413,7 +360,6 @@ class TestFormatGroupDetail:
             title="G",
             description=None,
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             tasks=(),
@@ -435,7 +381,6 @@ class TestFormatGroupDetail:
             title="G",
             description="Important group",
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             tasks=(),
@@ -456,7 +401,6 @@ class TestFormatGroupDetail:
             title="G",
             description=None,
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             tasks=(),
@@ -478,7 +422,6 @@ class TestFormatGroupDetail:
             title="ChildA",
             description=None,
             parent_id=1,
-            position=0,
             archived=False,
             created_at=0,
             metadata={},
@@ -489,7 +432,6 @@ class TestFormatGroupDetail:
             title="Root",
             description=None,
             parent_id=None,
-            position=0,
             archived=False,
             created_at=0,
             tasks=(_task(10, "work", priority=3, due_date=1_000_000),),
@@ -616,7 +558,6 @@ class TestFormatTaskDetailMetadata:
             status_id=1,
             priority=2,
             due_date=None,
-            position=0,
             archived=False,
             created_at=0,
             start_date=None,
@@ -628,7 +569,6 @@ class TestFormatTaskDetailMetadata:
             edge_sources=(),
             edge_targets=(),
             history=(),
-            tags=(),
         )
         base.update(overrides)
         return TaskDetail(**base)

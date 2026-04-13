@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Group, JournalEntry, Status, Tag, Task, Workspace
+from .models import Group, JournalEntry, Status, Task, Workspace
 
 # ---- Edge ref types (hydrated edge endpoint with kind) ----
 
 
 # Polymorphic edge endpoint discriminator. Kept in sync with the
 # `CHECK (from_type IN (...))` constraint on the edges table.
-type NodeType = Literal["task", "group", "workspace"]
+type NodeType = Literal["task", "group", "workspace", "status"]
 
 
 @dataclass(frozen=True)
@@ -55,14 +55,12 @@ class TaskListItem:
     status_id: int
     priority: int
     due_date: int | None
-    position: int
     archived: bool
     created_at: int
     start_date: int | None
     finish_date: int | None
     group_id: int | None
     metadata: dict[str, str]
-    tag_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,7 +73,6 @@ class GroupRef:
     title: str
     description: str | None
     parent_id: int | None
-    position: int
     archived: bool
     created_at: int
     metadata: dict[str, str]
@@ -100,7 +97,6 @@ class WorkspaceContext:
     """Aggregated workspace state for one-call session startup."""
 
     view: WorkspaceListView
-    tags: tuple[Tag, ...]
     groups: tuple[GroupRef, ...]
 
 
@@ -127,7 +123,6 @@ class TaskDetail:
     status_id: int
     priority: int
     due_date: int | None
-    position: int
     archived: bool
     created_at: int
     start_date: int | None
@@ -139,7 +134,27 @@ class TaskDetail:
     edge_sources: tuple[EdgeRef, ...]
     edge_targets: tuple[EdgeRef, ...]
     history: tuple[JournalEntry, ...]
-    tags: tuple[Tag, ...]
+
+
+@dataclass(frozen=True)
+class EdgeDetail:
+    """Fully hydrated polymorphic edge view. Flat redeclaration of edge
+    fields plus hydrated endpoint titles, metadata, and journal history.
+    Follows the TaskDetail/GroupDetail pattern — does not inherit from
+    EdgeListItem."""
+
+    from_type: NodeType
+    from_id: int
+    from_title: str
+    to_type: NodeType
+    to_id: int
+    to_title: str
+    workspace_id: int
+    kind: str
+    acyclic: bool
+    archived: bool
+    metadata: dict[str, str]
+    history: tuple[JournalEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -158,7 +173,6 @@ class GroupDetail:
     title: str
     description: str | None
     parent_id: int | None
-    position: int
     archived: bool
     created_at: int
     tasks: tuple[Task, ...]
@@ -190,7 +204,7 @@ class ArchivePreview:
     """Dry-run result for an archive command. Counts reflect additional
     entities beyond the root that *would* be archived."""
 
-    entity_type: Literal["task", "group", "status", "tag", "workspace"]
+    entity_type: Literal["task", "group", "status", "workspace"]
     entity_name: str
     already_archived: bool
     task_count: int
@@ -202,8 +216,7 @@ class ArchivePreview:
 class EntityUpdatePreview:
     """Dry-run result for a field-level update (task/group edit).
     `before` / `after` contain only fields that differ — unchanged fields
-    are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
-    other entity kinds leave those empty.
+    are omitted.
 
     Note: `before` and `after` are mutable dicts (shallow-frozen). This is
     an intentional exception to the tuple-everywhere convention because
@@ -216,17 +229,13 @@ class EntityUpdatePreview:
     label: str  # task title, group title
     before: dict[str, Any] = field(default_factory=dict)
     after: dict[str, Any] = field(default_factory=dict)
-    tags_added: tuple[str, ...] = ()
-    tags_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class TaskMovePreview:
-    """Dry-run result for `task mv`. Shows from/to status and position."""
+    """Dry-run result for `task mv`. Shows from/to status."""
 
     task_id: int
     title: str
     from_status: str
     to_status: str
-    from_position: int
-    to_position: int

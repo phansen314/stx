@@ -10,9 +10,6 @@ erDiagram
     tasks ||--o{ task_edges : ""
     groups ||--o{ group_edges : ""
     groups ||--o{ group_edges : ""
-    workspaces ||--o{ tags : ""
-    tasks ||--o{ task_tags : ""
-    tags ||--o{ task_tags : ""
     workspaces ||--o{ journal : ""
 
     workspaces {
@@ -37,7 +34,6 @@ erDiagram
         INTEGER parent_id FK
         TEXT title
         TEXT description
-        INTEGER position
         INTEGER archived
         INTEGER created_at
         TEXT metadata
@@ -51,7 +47,6 @@ erDiagram
         INTEGER status_id FK
         INTEGER priority
         INTEGER due_date
-        INTEGER position
         INTEGER archived
         INTEGER created_at
         INTEGER start_date
@@ -76,20 +71,6 @@ erDiagram
         INTEGER archived
         TEXT kind
         TEXT metadata
-    }
-
-    tags {
-        INTEGER id PK
-        INTEGER workspace_id FK
-        TEXT name
-        INTEGER archived
-        INTEGER created_at
-    }
-
-    task_tags {
-        INTEGER task_id FK "PK"
-        INTEGER tag_id FK "PK"
-        INTEGER workspace_id FK
     }
 
     journal {

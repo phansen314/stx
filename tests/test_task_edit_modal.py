@@ -16,7 +16,6 @@ def _group(id: int, title: str) -> Group:
         title=title,
         description=None,
         parent_id=None,
-        position=0,
         archived=False,
         created_at=0,
         metadata={},
@@ -32,7 +31,6 @@ def make_detail(**overrides) -> TaskDetail:
         status_id=1,
         priority=2,
         due_date=None,
-        position=0,
         archived=False,
         created_at=0,
         start_date=None,
@@ -44,7 +42,6 @@ def make_detail(**overrides) -> TaskDetail:
         edge_sources=(),
         edge_targets=(),
         history=(),
-        tags=(),
     )
     defaults.update(overrides)
     return TaskDetail(**defaults)

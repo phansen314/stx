@@ -10,7 +10,6 @@ from stx.models import (
     Group,
     JournalEntry,
     Status,
-    Tag,
     Task,
     TaskFilter,
     Workspace,
@@ -30,16 +29,10 @@ from tests.helpers import (
     insert_status as _raw_insert_status,
 )
 from tests.helpers import (
-    insert_tag as _raw_insert_tag,
-)
-from tests.helpers import (
     insert_task as _raw_insert_task,
 )
 from tests.helpers import (
     insert_task_dependency as _raw_insert_task_dependency,
-)
-from tests.helpers import (
-    insert_task_tag as _raw_insert_task_tag,
 )
 from tests.helpers import (
     insert_workspace as _raw_insert_workspace,
@@ -90,22 +83,10 @@ def insert_group(
     workspace_id: int,
     title: str = "group1",
     parent_id: int | None = None,
-    position: int = 0,
 ) -> int:
-    rid = _raw_insert_group(conn, workspace_id, title, parent_id, position)
+    rid = _raw_insert_group(conn, workspace_id, title, parent_id)
     _commit(conn)
     return rid
-
-
-def insert_tag(conn: sqlite3.Connection, workspace_id: int, name: str = "tag1") -> int:
-    rid = _raw_insert_tag(conn, workspace_id, name)
-    _commit(conn)
-    return rid
-
-
-def insert_task_tag(conn: sqlite3.Connection, task_id: int, tag_id: int) -> None:
-    _raw_insert_task_tag(conn, task_id, tag_id)
-    _commit(conn)
 
 
 # ---- Workspace ----
@@ -162,12 +143,6 @@ class TestWorkspaceService:
         workspace = service.create_workspace(conn, "old")
         updated = service.update_workspace(conn, workspace.id, {"name": "new"})
         assert updated.name == "new"
-
-    def test_update_archive_with_active_children_blocked(self, conn: sqlite3.Connection) -> None:
-        workspace = service.create_workspace(conn, "work")
-        service.create_status(conn, workspace.id, "todo")
-        with pytest.raises(ValueError, match="active status"):
-            service.update_workspace(conn, workspace.id, {"archived": True})
 
     def test_archive_empty_workspace_allowed(self, conn: sqlite3.Connection) -> None:
         workspace = service.create_workspace(conn, "work")
@@ -251,22 +226,6 @@ class TestTaskService:
         assert isinstance(task, Task)
         assert task.title == "do stuff"
         assert task.priority == 1
-
-    def test_create_with_tags_auto_creates(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        task = service.create_task(conn, bid, "t", cid, tags=("bug", "urgent"))
-        detail = service.get_task_detail(conn, task.id)
-        assert {t.name for t in detail.tags} == {"bug", "urgent"}
-
-    def test_create_with_tags_reuses_existing(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        existing = service.create_tag(conn, bid, "bug")
-        task = service.create_task(conn, bid, "t", cid, tags=("bug",))
-        detail = service.get_task_detail(conn, task.id)
-        assert len(detail.tags) == 1
-        assert detail.tags[0].id == existing.id
 
     def test_get(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -364,31 +323,6 @@ class TestTaskService:
         updated = service.update_task(conn, task.id, {"title": "new"}, "tui")
         assert updated.title == "new"
 
-    def test_update_with_add_and_remove_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        task = service.create_task(conn, bid, "t", cid, tags=("bug",))
-        service.update_task(
-            conn,
-            task.id,
-            {"title": "t2"},
-            "cli",
-            add_tags=("urgent",),
-            remove_tags=("bug",),
-        )
-        detail = service.get_task_detail(conn, task.id)
-        assert detail.title == "t2"
-        assert {t.name for t in detail.tags} == {"urgent"}
-
-    def test_update_tag_only_no_field_changes(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        task = service.create_task(conn, bid, "t", cid)
-        updated = service.update_task(conn, task.id, {}, "cli", add_tags=("bug",))
-        assert updated.title == "t"
-        detail = service.get_task_detail(conn, task.id)
-        assert {t.name for t in detail.tags} == {"bug"}
-
     def test_update_with_no_changes_is_noop(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
@@ -396,21 +330,6 @@ class TestTaskService:
         result = service.update_task(conn, task.id, {}, "cli")
         assert result.id == task.id
         assert result.title == task.title
-
-    def test_update_remove_nonexistent_tag_rolls_back(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        task = service.create_task(conn, bid, "old", cid)
-        with pytest.raises(LookupError):
-            service.update_task(
-                conn,
-                task.id,
-                {"title": "new"},
-                "cli",
-                remove_tags=("nonexistent",),
-            )
-        # field change must be rolled back since remove_tags failed in same transaction
-        assert service.get_task(conn, task.id).title == "old"
 
     def test_update_records_history(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -460,7 +379,7 @@ class TestTaskService:
         c1 = insert_status(conn, bid, "todo")
         c2 = insert_status(conn, bid, "done")
         task = service.create_task(conn, bid, "t", c1)
-        moved = service.move_task(conn, task.id, c2, 0, "tui")
+        moved = service.move_task(conn, task.id, c2, "tui")
         assert moved.status_id == c2
         history = service.list_journal(conn, EntityType.TASK, task.id)
         assert any(h.field == "status_id" for h in history)
@@ -481,12 +400,6 @@ class TestTaskService:
         with pytest.raises(ValueError, match="priority"):
             service.create_task(conn, bid, "t", cid, priority="high")  # type: ignore[arg-type]
 
-    def test_create_negative_position(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        with pytest.raises(ValueError, match="position"):
-            service.create_task(conn, bid, "t", cid, position=-1)
-
     def test_create_finish_before_start(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
@@ -499,13 +412,6 @@ class TestTaskService:
         task = service.create_task(conn, bid, "t", cid)
         updated = service.update_task(conn, task.id, {"priority": 99}, "test")
         assert updated.priority == 99
-
-    def test_update_negative_position(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        task = service.create_task(conn, bid, "t", cid)
-        with pytest.raises(ValueError, match="position"):
-            service.update_task(conn, task.id, {"position": -1}, "test")
 
     def test_update_finish_before_existing_start(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -527,9 +433,6 @@ class TestTaskService:
         # finish before start — date merge edge case shared by both paths
         with pytest.raises(ValueError, match="finish date"):
             service.preview_update_task(conn, task.id, {"finish_date": 100})
-        # negative position
-        with pytest.raises(ValueError, match="position"):
-            service.preview_update_task(conn, task.id, {"position": -1})
         # non-int priority
         with pytest.raises(ValueError, match="priority"):
             service.preview_update_task(conn, task.id, {"priority": "high"})  # type: ignore[dict-item]
@@ -845,6 +748,83 @@ class TestEdgeService:
         g2 = insert_group(conn, b2, "g2")
         with pytest.raises(ValueError, match="same workspace"):
             service.add_edge(conn, ("group", g1), ("group", g2), kind="blocks")
+
+
+# ---- Status edges ----
+
+
+class TestStatusEdges:
+    def test_status_edge_stored(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        s_todo = insert_status(conn, bid, "todo")
+        s_doing = insert_status(conn, bid, "doing")
+        service.add_edge(
+            conn, ("status", s_todo), ("status", s_doing), kind="transition"
+        )
+        edges = service.list_edges(conn, bid)
+        assert any(
+            e.from_type == "status"
+            and e.from_id == s_todo
+            and e.to_type == "status"
+            and e.to_id == s_doing
+            and e.kind == "transition"
+            for e in edges
+        )
+
+    def test_status_edges_are_pure_annotation(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Regression guard: status edges carry no write-path semantics.
+        Defining a transition graph must not constrain task status moves."""
+        bid = insert_workspace(conn)
+        s_todo = insert_status(conn, bid, "todo")
+        s_doing = insert_status(conn, bid, "doing")
+        s_done = insert_status(conn, bid, "done")
+        service.add_edge(
+            conn, ("status", s_todo), ("status", s_doing), kind="transition"
+        )
+        t = insert_task(conn, bid, "t", s_todo)
+        # 'done' is not in the transition graph — must still be allowed.
+        service.update_task(conn, t, {"status_id": s_done}, "test")
+        assert service.get_task(conn, t).status_id == s_done
+
+    def test_cross_workspace_status_edge_rejected(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        b1 = insert_workspace(conn, "w1")
+        b2 = insert_workspace(conn, "w2")
+        s1 = insert_status(conn, b1, "todo")
+        s2 = insert_status(conn, b2, "doing")
+        with pytest.raises(ValueError, match="same workspace"):
+            service.add_edge(
+                conn, ("status", s1), ("status", s2), kind="transition"
+            )
+
+    def test_archived_status_endpoint_rejected(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        s1 = insert_status(conn, bid, "todo")
+        s2 = insert_status(conn, bid, "doing")
+        conn.execute("UPDATE statuses SET archived = 1 WHERE id = ?", (s2,))
+        conn.commit()
+        with pytest.raises(ValueError, match="archived"):
+            service.add_edge(
+                conn, ("status", s1), ("status", s2), kind="transition"
+            )
+
+    def test_status_edges_allow_cycles(self, conn: sqlite3.Connection) -> None:
+        """State machines have rollback loops; status edges default to
+        acyclic=0, so cycle detection must not fire."""
+        bid = insert_workspace(conn)
+        s_doing = insert_status(conn, bid, "doing")
+        s_done = insert_status(conn, bid, "done")
+        service.add_edge(
+            conn, ("status", s_doing), ("status", s_done), kind="transition"
+        )
+        service.add_edge(
+            conn, ("status", s_done), ("status", s_doing), kind="rollback"
+        )
 
 
 # ---- History ----
@@ -1446,191 +1426,6 @@ class TestTaskGroupHistory:
         assert len(group_entries) == 1
 
 
-# ---- Tag ----
-
-
-class TestTagService:
-    def test_create_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "bug")
-        assert isinstance(tag, Tag)
-        assert tag.name == "bug"
-        assert tag.workspace_id == bid
-        assert tag.archived is False
-
-    def test_create_tag_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        service.create_tag(conn, bid, "bug")
-        with pytest.raises(ValueError, match="tag with this name already exists"):
-            service.create_tag(conn, bid, "bug")
-
-    def test_get_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "bug")
-        assert service.get_tag(conn, tag.id) == tag
-
-    def test_get_tag_missing_raises(self, conn: sqlite3.Connection) -> None:
-        with pytest.raises(LookupError):
-            service.get_tag(conn, 999)
-
-    def test_get_tag_by_name(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "bug")
-        assert service.get_tag_by_name(conn, bid, "bug") == tag
-
-    def test_get_tag_by_name_missing_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        with pytest.raises(LookupError, match="not found"):
-            service.get_tag_by_name(conn, bid, "nope")
-
-    def test_list_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        service.create_tag(conn, bid, "bug")
-        service.create_tag(conn, bid, "feature")
-        tags = service.list_tags(conn, bid)
-        assert len(tags) == 2
-        assert tags[0].name == "bug"
-        assert tags[1].name == "feature"
-
-    def test_list_tags_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "old")
-        service.create_tag(conn, bid, "active")
-        service.archive_tag(conn, tag.id)
-        tags = service.list_tags(conn, bid)
-        assert len(tags) == 1
-        assert tags[0].name == "active"
-
-    def test_list_tags_include_archived(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "old")
-        service.create_tag(conn, bid, "active")
-        service.archive_tag(conn, tag.id)
-        tags = service.list_tags(conn, bid, include_archived=True)
-        assert len(tags) == 2
-
-    def test_archive_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "bug")
-        archived = service.archive_tag(conn, tag.id)
-        assert archived.archived is True
-        assert archived.id == tag.id
-
-    def test_archive_tag_integrity_error_becomes_value_error(
-        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from stx import repository as repo_mod
-
-        bid = insert_workspace(conn)
-        tag = service.create_tag(conn, bid, "bug")
-
-        def raise_integrity(*args, **kwargs):
-            raise sqlite3.IntegrityError("UNIQUE constraint failed: tags.workspace_id, tags.name")
-
-        monkeypatch.setattr(repo_mod, "update_tag", raise_integrity)
-        with pytest.raises(ValueError):
-            service.archive_tag(conn, tag.id)
-
-    def test_tag_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        tag = service.tag_task(conn, tid, "bug", bid)
-        assert isinstance(tag, Tag)
-        assert tag.name == "bug"
-        detail = service.get_task_detail(conn, tid)
-        assert any(t.id == tag.id for t in detail.tags)
-
-    def test_tag_task_duplicate_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        service.tag_task(conn, tid, "bug", bid)
-        with pytest.raises(ValueError, match="already has this tag"):
-            service.tag_task(conn, tid, "bug", bid)
-
-    def test_tag_task_creates_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        tag = service.tag_task(conn, tid, "newlabel", bid)
-        assert service.get_tag_by_name(conn, bid, "newlabel") == tag
-
-    def test_tag_task_missing_task_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        with pytest.raises(LookupError):
-            service.tag_task(conn, 9999, "bug", bid)
-
-    def test_tag_task_cross_workspace_raises(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_workspace(conn, "workspace1")
-        b2 = insert_workspace(conn, "workspace2")
-        c1 = insert_status(conn, b1)
-        tid = insert_task(conn, b1, "t", c1)
-        with pytest.raises(ValueError, match="not workspace"):
-            service.tag_task(conn, tid, "bug", b2)
-
-    def test_untag_task_cross_workspace_raises(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_workspace(conn, "workspace1")
-        b2 = insert_workspace(conn, "workspace2")
-        c1 = insert_status(conn, b1)
-        tid = insert_task(conn, b1, "t", c1)
-        service.tag_task(conn, tid, "bug", b1)
-        with pytest.raises(ValueError, match="not workspace"):
-            service.untag_task(conn, tid, "bug", b2)
-
-    def test_untag_task(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        service.tag_task(conn, tid, "bug", bid)
-        service.untag_task(conn, tid, "bug", bid)
-        detail = service.get_task_detail(conn, tid)
-        assert detail.tags == ()
-
-    def test_untag_task_missing_tag_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        with pytest.raises(LookupError, match="not found"):
-            service.untag_task(conn, tid, "nonexistent", bid)
-
-    def test_untag_task_not_tagged_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        service.create_tag(conn, bid, "bug")
-        with pytest.raises(LookupError, match="not tagged"):
-            service.untag_task(conn, tid, "bug", bid)
-
-    def test_untag_task_missing_task_raises(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        service.create_tag(conn, bid, "bug")
-        with pytest.raises(LookupError, match="task 9999 not found"):
-            service.untag_task(conn, 9999, "bug", bid)
-
-    def test_get_task_detail_has_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        tid = insert_task(conn, bid, "t", cid)
-        tag_id = insert_tag(conn, bid, "bug")
-        insert_task_tag(conn, tid, tag_id)
-        detail = service.get_task_detail(conn, tid)
-        assert len(detail.tags) == 1
-        assert detail.tags[0].id == tag_id
-        assert detail.tags[0].name == "bug"
-
-    def test_list_tasks_filtered_by_tag(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        t1 = insert_task(conn, bid, "a", cid)
-        insert_task(conn, bid, "b", cid)
-        tag_id = insert_tag(conn, bid, "bug")
-        insert_task_tag(conn, t1, tag_id)
-        tasks = service.list_tasks_filtered(conn, bid, task_filter=TaskFilter(tag_id=tag_id))
-        assert len(tasks) == 1
-        assert tasks[0].id == t1
-
-
 # ---- Workspace list view ----
 
 
@@ -1663,21 +1458,6 @@ class TestGetWorkspaceListView:
         c_wip = insert_status(conn, bid, "wip")
         view = service.get_workspace_list_view(conn, bid)
         assert [c.status.id for c in view.statuses] == [c_done, c_todo, c_wip]
-
-    def test_task_items_carry_tag_names(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        t_tagged = insert_task(conn, bid, "tagged", cid)
-        insert_task(conn, bid, "untagged", cid)
-        bug = insert_tag(conn, bid, "bug")
-        urgent = insert_tag(conn, bid, "urgent")
-        insert_task_tag(conn, t_tagged, bug)
-        insert_task_tag(conn, t_tagged, urgent)
-        view = service.get_workspace_list_view(conn, bid)
-        items = view.statuses[0].tasks
-        by_title = {i.title: i for i in items}
-        assert set(by_title["tagged"].tag_names) == {"bug", "urgent"}
-        assert by_title["untagged"].tag_names == ()
 
     def test_include_archived_shows_archived_statuses(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -1714,17 +1494,6 @@ class TestGetWorkspaceListView:
         assert cols_by_id[c_todo].tasks[0].title == "in-todo"
         assert cols_by_id[c_done].tasks == ()
 
-    def test_filter_by_tag_id(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        cid = insert_status(conn, bid)
-        t1 = insert_task(conn, bid, "tagged", cid)
-        insert_task(conn, bid, "untagged", cid)
-        tag = insert_tag(conn, bid, "bug")
-        insert_task_tag(conn, t1, tag)
-        view = service.get_workspace_list_view(conn, bid, tag_id=tag)
-        titles = [t.title for t in view.statuses[0].tasks]
-        assert titles == ["tagged"]
-
     def test_filter_by_priority(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
@@ -1748,15 +1517,7 @@ class TestGetWorkspaceContext:
         ctx = service.get_workspace_context(conn, bid)
         assert isinstance(ctx, WorkspaceContext)
         assert ctx.view.workspace.id == bid
-        assert ctx.tags == ()
         assert ctx.groups == ()
-
-    def test_includes_tags(self, conn: sqlite3.Connection) -> None:
-        bid = insert_workspace(conn)
-        insert_tag(conn, bid, "bug")
-        ctx = service.get_workspace_context(conn, bid)
-        assert len(ctx.tags) == 1
-        assert ctx.tags[0].name == "bug"
 
     def test_includes_groups(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -1777,14 +1538,11 @@ class TestGetWorkspaceContext:
 
     def test_archived_excluded(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
-        insert_tag(conn, bid, "tag1")
         service.create_group(conn, bid, "grp")
         # archive via raw SQL
-        conn.execute("UPDATE tags SET archived=1 WHERE workspace_id=?", (bid,))
         conn.execute("UPDATE groups SET archived=1 WHERE workspace_id=?", (bid,))
         conn.commit()
         ctx = service.get_workspace_context(conn, bid)
-        assert ctx.tags == ()
         assert ctx.groups == ()
 
     def test_missing_workspace_raises(self, conn: sqlite3.Connection) -> None:
@@ -1830,29 +1588,12 @@ class TestPreviewHelpers:
         assert "title" not in preview.after
         assert preview.after["priority"] == 4
 
-    def test_task_tag_already_present_not_added(self, conn: sqlite3.Connection) -> None:
-        bid, cid, _ = self._setup(conn)
-        task = service.create_task(conn, bid, "t", cid, tags=("bug",))
-        preview = service.preview_update_task(
-            conn,
-            task.id,
-            {},
-            add_tags=("bug",),
-        )
-        assert preview.tags_added == ()
-
-    def test_task_tag_remove_raises_on_untagged(self, conn: sqlite3.Connection) -> None:
-        bid, cid, _ = self._setup(conn)
-        task = service.create_task(conn, bid, "t", cid)
-        with pytest.raises(LookupError):
-            service.preview_update_task(conn, task.id, {}, remove_tags=("nope",))
-
     # ---- preview_move_task ----
 
     def test_move_happy_path(self, conn: sqlite3.Connection) -> None:
         bid, cid_todo, cid_done = self._setup(conn)
         task = service.create_task(conn, bid, "t", cid_todo)
-        preview = service.preview_move_task(conn, task.id, cid_done, position=0)
+        preview = service.preview_move_task(conn, task.id, cid_done)
         assert preview.from_status == "todo"
         assert preview.to_status == "done"
 
@@ -1986,6 +1727,38 @@ class TestArchivePreviewAndCascade:
             history = service.list_journal(conn, EntityType.TASK, tid)
             archived_entries = [h for h in history if h.field == "archived"]
             assert len(archived_entries) == 1
+
+    def test_cascade_archive_group_journals_descendant_groups(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid, g1, g2, t1, t2 = self._setup_full(conn)
+        # g1 is the parent (journaled via update_group); g2 is the descendant.
+        service.cascade_archive_group(conn, g1, source="test")
+        descendant_history = service.list_journal(conn, EntityType.GROUP, g2)
+        archived = [h for h in descendant_history if h.field == "archived"]
+        assert len(archived) == 1
+        assert archived[0].old_value == "False"
+        assert archived[0].new_value == "True"
+        assert archived[0].source == "test"
+
+    def test_cascade_archive_workspace_journals_groups_and_statuses(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid, g1, g2, t1, t2 = self._setup_full(conn)
+        from stx import repository as repo
+
+        status_ids = tuple(s.id for s in repo.list_statuses(conn, bid))
+        service.cascade_archive_workspace(conn, bid, source="test")
+        for gid in (g1, g2):
+            history = service.list_journal(conn, EntityType.GROUP, gid)
+            archived = [h for h in history if h.field == "archived"]
+            assert len(archived) == 1
+            assert archived[0].source == "test"
+        for sid in status_ids:
+            history = service.list_journal(conn, EntityType.STATUS, sid)
+            archived = [h for h in history if h.field == "archived"]
+            assert len(archived) == 1
+            assert archived[0].source == "test"
 
     # ---- Dep re-creation after archive ----
 
@@ -2641,6 +2414,12 @@ class TestJournalRecordingGroup:
         assert len(entries) == 1
         assert entries[0]["field"] == "title"
         assert entries[0]["new_value"] == "New"
+
+    def test_group_title_collision_friendly_error(self, conn):
+        wid, sid, gid = self._seed(conn)
+        service.create_group(conn, wid, "Other")
+        with pytest.raises(ValueError, match="already exists under the same parent"):
+            service.update_group(conn, gid, {"title": "Other"}, source="test")
 
 
 class TestJournalRecordingWorkspace:

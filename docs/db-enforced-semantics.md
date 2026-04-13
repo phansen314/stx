@@ -7,8 +7,8 @@ interface (CLI, TUI) or code path is used.
 
 ## Ownership & Scoping
 
-- **Workspaces are the top-level container.** Everything — statuses, groups, tasks, tags — belongs to exactly one workspace.
-- **A task cannot reference entities from a different workspace.** Its status and tags must all belong to the same workspace as the task itself.
+- **Workspaces are the top-level container.** Everything — statuses, groups, tasks — belongs to exactly one workspace.
+- **A task cannot reference entities from a different workspace.** Its status must belong to the same workspace as the task itself.
 - **A task can exist without a group; assignment is optional.**
 
 ## Naming & Identity
@@ -16,7 +16,7 @@ interface (CLI, TUI) or code path is used.
 - **Names and titles are case-insensitive.** "Backlog" and "backlog" are treated as the same name everywhere — lookups, sorting, and uniqueness checks.
 - **Active names must be unique within their scope:**
   - Workspace names are globally unique
-  - Status, tag, and task names are unique per workspace
+  - Status and task names are unique per workspace
   - Group titles are unique per (workspace, parent) — root groups are unique per workspace; nested groups are unique within their parent
 - **Archiving frees the name.** Uniqueness only applies to active (non-archived) rows. Multiple archived rows can share a name, and archiving a row allows creating a new active row with the same name.
 
@@ -30,12 +30,6 @@ interface (CLI, TUI) or code path is used.
 - **An edge between two tasks is unique across all kinds.** The PK is `(source_id, target_id)` on `task_edges`, so a second edge between the same pair is rejected regardless of `kind`.
 - **Task metadata is a JSON object.** The `tasks.metadata` column has `CHECK (json_valid(metadata))` and defaults to `'{}'`. The schema does not constrain keys or values beyond valid JSON — key normalization and length limits are enforced by the service layer. The same JSON-blob metadata column exists on `workspaces` and `groups` with identical constraints.
 
-## Tags
-
-- **Tags and tasks have a many-to-many relationship.** A task can have multiple tags; a tag can apply to multiple tasks.
-- **A tag can only be applied to tasks on the same workspace.**
-- **Each tag is applied to a task at most once** (no duplicate tagging).
-
 ## Groups
 
 - **Groups form a hierarchy.** A group can have a parent group, and the parent must belong to the same workspace. Enforced by a composite FK: `(parent_id, workspace_id)` → `groups(id, workspace_id)`. Root-group uniqueness uses `COALESCE(parent_id, -1)` to handle SQLite's NULL-in-unique pitfall.
@@ -45,7 +39,7 @@ interface (CLI, TUI) or code path is used.
 ## Deletion & Archival
 
 - **You cannot delete a workspace that has groups, statuses, or tasks.** Same for groups with child groups or tasks, and statuses with tasks — the database blocks it with `ON DELETE RESTRICT`.
-- **Deleting a task cascades to its junction data:** tag associations and edges are cleaned up automatically (`ON DELETE CASCADE`). Journal entries persist (they belong to the workspace, not the task).
+- **Deleting a task cascades to its junction data:** edges are cleaned up automatically (`ON DELETE CASCADE`). Journal entries persist (they belong to the workspace, not the task).
 - **Edges are soft-archived, not deleted.** `task_edges` and `group_edges` have an `archived` column. Archiving an edge sets `archived = 1`; all active queries filter on `archived = 0`. There is no unarchive CLI surface — re-creating an archived edge via `stx edge create` clears its metadata blob and flips `archived = 0` (a journal entry records the flip).
 
 *Note: The convention of never hard-deleting entities (using `archived` instead) is enforced by the application, not the schema. The schema permits direct `DELETE` statements.*

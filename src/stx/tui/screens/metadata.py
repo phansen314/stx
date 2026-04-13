@@ -10,8 +10,8 @@ from stx.tui.screens.base_edit import BaseEditModal, ModalScroll
 
 class MetadataModal(BaseEditModal):
     """Generic key/value metadata editor. Used for tasks, workspaces,
-    projects, and groups — the caller supplies an already-formatted header
-    label, the initial metadata dict, and the result-payload key to identify
+    and groups — the caller supplies an already-formatted header label,
+    the initial metadata dict, and the result-payload key to identify
     which entity kind dismissed the modal.
     """
 

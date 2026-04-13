@@ -10,11 +10,11 @@ from .models import (
     Group,
     JournalEntry,
     Status,
-    Tag,
     Task,
     Workspace,
 )
 from .service_models import (
+    EdgeDetail,
     EdgeListItem,
     EdgeRef,
     GroupDetail,
@@ -58,7 +58,6 @@ def row_to_task(row: Row) -> Task:
         status_id=row["status_id"],
         priority=row["priority"],
         due_date=row["due_date"],
-        position=row["position"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
         start_date=row["start_date"],
@@ -75,20 +74,9 @@ def row_to_group(row: Row) -> Group:
         title=row["title"],
         description=row["description"],
         parent_id=row["parent_id"],
-        position=row["position"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],
         metadata=json.loads(row["metadata"]),
-    )
-
-
-def row_to_tag(row: Row) -> Tag:
-    return Tag(
-        id=row["id"],
-        workspace_id=row["workspace_id"],
-        name=row["name"],
-        archived=bool(row["archived"]),
-        created_at=row["created_at"],
     )
 
 
@@ -120,6 +108,27 @@ def row_to_edge_list_item(row: Row) -> EdgeListItem:
     )
 
 
+def row_to_edge_detail(
+    row: Row,
+    *,
+    history: tuple[JournalEntry, ...],
+) -> EdgeDetail:
+    return EdgeDetail(
+        from_type=row["from_type"],
+        from_id=row["from_id"],
+        from_title=row["from_title"],
+        to_type=row["to_type"],
+        to_id=row["to_id"],
+        to_title=row["to_title"],
+        workspace_id=row["workspace_id"],
+        kind=row["kind"],
+        acyclic=bool(row["acyclic"]),
+        archived=bool(row["archived"]),
+        metadata=json.loads(row["metadata"]),
+        history=history,
+    )
+
+
 # ---- Utility ----
 
 
@@ -134,15 +143,8 @@ def shallow_fields(instance: object, cls: type) -> dict[str, Any]:
 # ---- Domain model -> list / ref ----
 
 
-def task_to_list_item(
-    task: Task,
-    *,
-    tag_names: tuple[str, ...],
-) -> TaskListItem:
-    return TaskListItem(
-        **shallow_fields(task, Task),
-        tag_names=tag_names,
-    )
+def task_to_list_item(task: Task) -> TaskListItem:
+    return TaskListItem(**shallow_fields(task, Task))
 
 
 def group_to_ref(
@@ -169,7 +171,6 @@ def task_to_detail(
     edge_sources: tuple[EdgeRef, ...],
     edge_targets: tuple[EdgeRef, ...],
     history: tuple[JournalEntry, ...],
-    tags: tuple[Tag, ...] = (),
 ) -> TaskDetail:
     return TaskDetail(
         **shallow_fields(task, Task),
@@ -178,7 +179,6 @@ def task_to_detail(
         edge_sources=edge_sources,
         edge_targets=edge_targets,
         history=history,
-        tags=tags,
     )
 
 

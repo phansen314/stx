@@ -99,6 +99,20 @@ class StxApp(App):
     _models: dict[int, WorkspaceModel]
     _refresh_timer: object | None = None
     _rerendering: bool = False
+    _last_data_version: int | None = None
+
+    def _read_data_version(self) -> int | None:
+        """Return SQLite's ``PRAGMA data_version`` or None if unavailable.
+
+        This counter bumps every time another connection commits to the DB,
+        so the auto-refresh timer can skip the expensive workspace reload
+        when nothing has changed since the last tick.
+        """
+        try:
+            row = self.conn.execute("PRAGMA data_version").fetchone()
+        except Exception:
+            return None
+        return int(row[0]) if row is not None else None
 
     @property
     def _active_model(self) -> WorkspaceModel | None:
@@ -171,10 +185,19 @@ class StxApp(App):
         self._rerendering = False
 
     def request_refresh(self) -> None:
+        """Timer-driven refresh — gated on PRAGMA data_version so we skip
+        the reload entirely when no external writer has committed since the
+        last tick."""
+        version = self._read_data_version()
+        if version is not None and version == self._last_data_version:
+            return
+        self._last_data_version = version
         self.post_message(_RefreshRequested())
 
     def action_refresh(self) -> None:
-        self.request_refresh()
+        """Manual `r`-key refresh — always reload, bypass the data_version gate."""
+        self._last_data_version = self._read_data_version()
+        self.post_message(_RefreshRequested())
 
     async def on__refresh_requested(self, event: _RefreshRequested) -> None:
         # Skip auto-refresh while a modal is open to avoid stealing focus

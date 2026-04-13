@@ -7,159 +7,225 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-04-13
+
 ### Added
-- **Polymorphic edges.** `task_edges` + `group_edges` collapse into one
+
+- **Polymorphic kinded edges with per-edge metadata.** The old
+  `task_dependencies` / `group_dependencies` tables collapse into a single
   `edges` table keyed on `(from_type, from_id, to_type, to_id, kind)`.
-  Cross-type edges are now possible: task→group, group→workspace, etc.
-  Multiple edge kinds between the same node pair are allowed (distinguished
-  by `kind` in the PK).
-- **Cycle detection (first implementation).** Reintroduced via recursive
-  CTE `get_reachable_nodes` over `acyclic=1 AND archived=0` edges.
-  `service.add_edge` runs the check when the new edge is acyclic. Design:
-  all acyclic edges share one DAG regardless of kind — `blocks` + `spawns`
+  Endpoints can be `task`, `group`, `workspace`, or `status` — cross-type
+  edges are supported (task→group, group→workspace, status→status, etc.).
+  Each edge carries a `kind TEXT` label (lowercase, `[a-z0-9_.-]+`, 1–64
+  chars, DB-enforced via CHECK), a per-edge `metadata` JSON blob (same
+  rules as entity metadata), and an `acyclic` flag. Multiple edge kinds
+  between the same node pair are allowed (distinguished by `kind` in the
+  primary key). `kind='blocks'` backfills the prior dependency semantics.
+- **Cycle detection** on acyclic edges via a recursive-CTE
+  `get_reachable_nodes` over `acyclic=1 AND archived=0` rows.
+  `service.add_edge` runs the check when the new edge is acyclic. All
+  acyclic edges share one DAG regardless of kind — `blocks` + `spawns`
   cross-kind cycles are rejected. Non-acyclic edges (`informs`,
   `references`, `related-to`) can form cycles freely and don't participate
   in reachability.
 - **Per-edge `acyclic` flag** with per-kind defaults: `blocks` / `spawns`
   default to `acyclic=1`, everything else defaults to `0`. CLI override
   via `stx edge create --acyclic` / `--no-acyclic`.
-- **Typed node refs on the edge CLI.** `stx edge create --source task-0001
-  --target group:foo --kind blocks` resolves mixed-type endpoints.
-  `workspace:<name>` is also supported. `--source-parent` / `--target-parent`
-  flags disambiguate groups with colliding titles under different parents.
+- **`stx edge` command group.** Unified, polymorphic replacement for
+  `stx dep`: `stx edge create|archive|ls|show|edit|log` and `stx edge meta
+  ls|get|set|del`. Endpoint refs are typed: `stx edge create --source
+  task-0001 --target group:foo --kind blocks`; `workspace:<name>` and
+  `status:<name>` are also supported. `--source-parent` /
+  `--target-parent` disambiguate groups with colliding titles under
+  different parents.
+- **`stx edge show`** — full detail view for a single edge, including
+  endpoint titles, `acyclic` / `archived` flags, metadata, and filtered
+  journal history.
+- **`stx edge edit`** — mutate the `acyclic` flag on an existing edge.
+  Kind and endpoints are immutable (composite PK). Flipping `0 → 1`
+  re-runs cycle detection and rejects the edit if a cycle would result.
+- **`stx edge log`** — journal history for a single edge, recovered via
+  paired endpoint/kind rows sharing a transaction timestamp.
+- **Archived-endpoint checks on edge create.** `service.add_edge` raises
+  `ValueError` when either endpoint is archived, matching the convention
+  already applied elsewhere (status/group assignment, etc.).
+- **`stx task edit --group <title>`** assigns a task to a group; pass an
+  empty string (`--group ""`) to unassign. Complements the existing
+  `stx group assign` / `stx group unassign` — both routes funnel through
+  `service.update_task` / `_update_task_body`.
+- **`stx status show <name>`** — detail view reporting the referencing
+  task count alongside core fields.
+- **`stx group log <title>` / `stx workspace log`** expose the unified
+  journal for groups and workspaces (task `log` was already there).
+  Presenter helper `format_task_history` renamed to
+  `format_journal_entries` to reflect its entity-agnostic body.
+- **`stx workspace edit --dry-run`** previews the diff without writing.
+  Backed by new `service.preview_update_workspace` mirroring
+  `preview_update_group`.
+- **Optional `description` column on `groups`.** Carried over from old
+  project descriptions during the projects-removal migration.
 
 ### Changed
-- **BREAKING:** `stx group edge …` removed. All edge commands unify under
-  `stx edge create|archive|ls` and `stx edge meta ls|get|set|del`.
-- **BREAKING:** Export JSON shape — `"task_edges"` + `"group_edges"` keys
-  replaced by a single `"edges"` key whose rows carry `from_type`/`from_id`/
-  `to_type`/`to_id` instead of `source_id`/`target_id`.
-- **BREAKING:** Markdown export section heading: `### Task Edges` →
-  `### Edges`. Mermaid block now mixes node shapes by type.
-- **BREAKING:** `journal.entity_type` CHECK tightened to the new allowlist —
-  rows with `'task_edge'` / `'group_edge'` are rewritten to `'edge'` by
-  migration 016. `EntityType.TASK_EDGE` / `GROUP_EDGE` → `EntityType.EDGE`.
-- **BREAKING:** `EdgeField.TARGET` → `EdgeField.ENDPOINT`. Edge endpoint
-  identity in the journal is encoded as `"<from_type>:<from_id>→<to_type>:<to_id>"`
-  on the `endpoint` field; `kind` is journaled on its own row.
+
+- **BREAKING:** `TaskDetail.blocked_by` / `blocks` → `edge_sources` /
+  `edge_targets`, each a tuple of `EdgeRef` `{node_type, node_id, kind}`.
+  Symmetric change on `GroupDetail`. Breaking for JSON consumers of
+  `stx task show`, `stx task create`, and siblings.
 - **BREAKING:** `TaskEdgeRef` / `GroupEdgeRef` / `TaskEdgeListItem` /
   `GroupEdgeListItem` → `EdgeRef` / `EdgeListItem`. Both carry a
-  `NodeType = Literal["task","group","workspace"]` tagged union for
-  endpoints. `TaskDetail.edge_sources` / `edge_targets` now yield
-  `tuple[EdgeRef, ...]` that can point at any node type.
-- **BREAKING:** `service.add_edge` / `archive_edge` take endpoint pairs as
-  `(node_type, node_id)` tuples: `service.add_edge(conn, src, dst, *,
-  kind, ...)`. Typo prevention — the old 4-arg signature made `from_id`/
-  `to_id` swap-typos invisible.
+  `NodeType = Literal["task","group","workspace","status"]` tagged union
+  for endpoints.
+- **BREAKING:** `service.add_edge` / `archive_edge` take endpoint pairs
+  as `(node_type, node_id)` tuples: `service.add_edge(conn, src, dst, *,
+  kind, ...)`. Typo prevention — the old 4-arg signature made
+  `from_id`/`to_id` swap-typos invisible.
+- **BREAKING:** Export JSON shape — `"task_dependencies"` /
+  `"group_dependencies"` collapse into a single `"edges"` key whose rows
+  carry `from_type` / `from_id` / `to_type` / `to_id`, `kind`,
+  `metadata`, `acyclic`, `archived`, `workspace_id`.
+- **BREAKING:** Markdown export section heading: `### Task Dependencies`
+  → `### Edges`. Mermaid block now mixes node shapes by type.
+- **BREAKING:** `journal.entity_type` CHECK tightened to the new
+  allowlist — rows with `'task_dependency'` / `'group_dependency'` /
+  `'task_edge'` / `'group_edge'` are all rewritten to `'edge'` by
+  migrations 014 and 016. `EntityType.TASK_EDGE` / `GROUP_EDGE` →
+  `EntityType.EDGE`.
+- **BREAKING:** `EdgeField.TARGET` → `EdgeField.ENDPOINT`. Edge endpoint
+  identity in the journal is encoded as
+  `"<from_type>:<from_id>→<to_type>:<to_id>"` on the `endpoint` field;
+  `kind` is journaled on its own row.
 - **BREAKING:** `MoveToWorkspacePreview.edge_ids: tuple[int, ...]` →
-  `edge_endpoints: tuple[tuple[NodeType, int], ...]`. Task transfer dry-run
-  JSON now reports typed endpoints so cross-type edges don't collide on ID.
-- Cross-workspace edges are now rejected at the service layer (not via a
-  DB FK). The unified edges table has no composite FK to endpoints because
-  they are polymorphic; workspace alignment is checked in `service.add_edge`
-  before insert.
-- `stx edge create --kind BLOCKS` normalizes the kind to lowercase in the
-  JSON output — previously CLI echoed the raw input while the DB stored
-  the normalized form.
+  `edge_endpoints: tuple[tuple[NodeType, int], ...]`. Task transfer
+  dry-run JSON now reports typed endpoints so cross-type edges don't
+  collide on ID.
+- **BREAKING:** `task transfer --dry-run` renames `dependency_ids` →
+  `edge_ids`.
+- **BREAKING:** `stx workspace rename` removed. Use
+  `stx workspace edit --name <new>` — operates on the active workspace
+  or `-w` override (no more positional `old_name`).
+- **BREAKING:** `stx group rename` removed. Use
+  `stx group edit <title> --title <new>`. The `edit` verb is now the
+  single mutation surface for group fields; `--dry-run` still previews
+  the diff.
+- **BREAKING:** `stx status rename` removed. Use
+  `stx status edit <name> --name <new>`.
+- **BREAKING:** `stx config unset` renamed to `stx config del`, matching
+  the `del` verb family used by `{task,workspace,group} meta del`.
+- **`WorkspaceContext`** no longer has a `projects` field. The TUI tree
+  now renders `Workspace → root groups → subgroups → tasks`, with
+  unassigned tasks (no `group_id`) shown at the workspace level.
+- **Cross-workspace edges** are rejected at the service layer (not via a
+  DB FK). The unified `edges` table has no composite FK to endpoints
+  because they are polymorphic; workspace alignment is checked in
+  `service.add_edge` before insert.
+- **`stx edge create --kind BLOCKS`** normalizes the kind to lowercase in
+  the JSON output — previously CLI echoed the raw input while the DB
+  stored the normalized form.
+- **`stx status archive --force`** now emits a stderr warning line when
+  active tasks will be cascade-archived (parity with task / group /
+  workspace prompts — informational only, not a prompt, preserves
+  pipe-friendliness).
+- **Edge listings filter archived endpoints.** `list_edges_by_workspace`
+  joins against a nodes CTE and returns only edges whose source and
+  target are both active, matching the convention that archived entities
+  stay hidden by default.
+- **Docs refreshed end-to-end** for the edge / project / tag / position
+  refactors: `docs/erd.md`, `docs/db-enforced-semantics.md`,
+  `docs/service-enforced-semantics.md`, `README.md`, `CLAUDE.md`,
+  `skills/stx/SKILL.md`, `skills/stx/references/cli-reference.md`,
+  `skills/stx/references/json-schema.md`.
 
 ### Fixed
-- `_validate_move_to_workspace` no longer blocks a task transfer when the
-  only active edges point at archived endpoints. The unhydrated edge list
-  functions join on the nodes CTE to match the hydrated + workspace-list
-  behavior. Regression caught post-task-18, re-fixed.
+
+- **`_validate_move_to_workspace` no longer blocks a task transfer** when
+  the only active edges point at archived endpoints. The unhydrated edge
+  list functions now join on the nodes CTE to match the hydrated +
+  workspace-list behavior.
+- **`archive_status` bulk task moves bypassed the journal.** When
+  archiving a status with `--reassign-to` or `--force`, every affected
+  task was updated via `repo.update_task` without emitting a `TASK`
+  journal entry. The status row itself was journaled, leaving a silent
+  audit gap. Task reassignment and force-archive now record per-task
+  `status_id` / `archived` entries via `_record_entity_changes`, and the
+  reassign path validates the target status (same workspace, not
+  archived) before touching tasks.
+- **`_get_entity_meta` raised `AttributeError` on deleted entities.**
+  Siblings defensively checked `if entity is None` before reading
+  `.metadata`; this one did not, so `stx <entity> meta get` on a
+  nonexistent id crashed instead of raising `LookupError`.
+- **TUI auto-refresh reloaded the full workspace every tick** regardless
+  of whether anything changed. Timer-driven refreshes now read
+  `PRAGMA data_version` and short-circuit when the value is unchanged
+  since the last tick. Manual `r`-key refresh still always reloads.
+- **Connection `busy_timeout` was unset.** `get_connection` now passes
+  `timeout=30.0` to `sqlite3.connect` and issues
+  `PRAGMA busy_timeout = 30000` alongside `foreign_keys` /
+  `journal_mode`. Under TUI + CLI contention the previous 5 s default
+  surfaced as `database is locked` errors with no retry window.
+- **SQL statement splitter could slice mid-definition.** `connection.py`
+  migration and schema loading no longer use `sql.split(";")`, which
+  broke when a semicolon appeared inside a string literal or line
+  comment. The new `_split_sql_statements` accumulates lines through
+  `sqlite3.complete_statement` after stripping `-- ...` comments.
+
+### Removed
+
+- **BREAKING:** `projects` as a first-class entity. Old projects become
+  root groups (groups with `parent_id IS NULL`) via migration 015.
+  `stx project *` subcommands are gone. `--project/-p` flags are dropped
+  across `task create/ls/edit/mv/transfer` and `group *`. Group
+  disambiguation is now title-only within a workspace (nested groups
+  under different parents remain distinct).
+- **BREAKING:** `tags` feature. Tasks no longer carry tags; the `tags` /
+  `task_tags` tables are dropped, all `stx tag` subcommands are gone, and
+  `--tag` / `--untag` flags are removed from `task create`, `task ls`,
+  and `task edit`. `TaskListItem.tag_names`, `TaskDetail.tags`, and
+  `WorkspaceContext.tags` are gone from JSON output. Use per-entity
+  metadata JSON blobs if tagging-like grouping is needed.
+- **BREAKING:** `position` column on `tasks` and `groups`. The field was
+  defaulted to 0 for every row, no TUI surface wrote it, and the
+  cross-workspace transfer reset it anyway — ordering effectively
+  collapsed to insertion order. `stx task mv` no longer accepts
+  `--position` or the legacy positional position argument,
+  `TaskMovePreview` drops `from_position` / `to_position`, and task /
+  group JSON no longer includes a `position` field. Task and group list
+  order is now `id ASC`.
+- **TUI dependency ordering.** The kanban board and workspace tree no
+  longer topologically sort by edges; task / group order is
+  insertion-order.
+- **`stx dep` / `stx group dep` command groups.** Replaced by the
+  unified `stx edge` surface.
 
 ### Migrations
-- **016_unified_edges.sql.** Creates the new `edges` table, copies
-  `task_edges` and `group_edges` into it with `acyclic=1` (all pre-016
-  edges were dependency edges, which imply DAG semantics), drops the
-  legacy tables, cascade-recreates `journal` to update its `entity_type`
-  CHECK and rewrite old `task_edge` / `group_edge` rows to `edge`.
-  `SCHEMA_VERSION = 16`.
 
-## [0.13.0] — 2026-04-13
-
-### Removed
-- **BREAKING:** `projects` are removed as a first-class entity. Old projects
-  become root groups (groups with `parent_id IS NULL`) via migration 015.
-  `stx project *` subcommands are gone. `--project/-p` flags are dropped
-  across `task create/ls/edit/mv/transfer` and `group *`. Group disambiguation
-  is now title-only within a workspace (nested groups under different parents
-  remain distinct).
-
-### Added
-- Optional `description` column on `groups`. Carried over from old project
-  descriptions during migration.
-
-### Changed
-- `WorkspaceContext` no longer has a `projects` field. The TUI tree now
-  renders `Workspace → root groups → subgroups → tasks`, with unassigned
-  tasks (no `group_id`) shown at the workspace level.
-
-## [0.12.0] — 2026-04-12
-
-### Added
-
-- **Kinded edges with per-edge metadata.** `task_dependencies` and `group_dependencies`
-  tables replaced with `task_edges` and `group_edges`. Each edge carries a `kind TEXT`
-  label (lowercase, `[a-z0-9_.-]+`, 1–64 chars, DB-enforced via CHECK) and a per-edge
-  `metadata` JSON blob (same rules as entity metadata). `kind='blocks'` backfills the
-  prior dependency semantics during migration.
-- **`stx edge` command group.** Replaces `stx dep`: `stx edge create|archive|ls`,
-  `stx edge meta ls|get|set|del`. Flags are `--source`, `--target`, `--kind`.
-  `stx group edge …` mirrors the task surface with `--source-project` /
-  `--target-project` for cross-project disambiguation.
-- **Migration 014.** Renames the edge tables, backfills `kind='blocks'`, adds
-  composite `UNIQUE (id, workspace_id)` to `groups` so `group_edges` can use a
-  workspace-scoped composite FK (mirrors how `task_edges` anchors to `tasks`).
-  Also recreates the `journal` table with updated `entity_type` CHECK covering
-  `task_edge` / `group_edge`.
-- **Workspace-scoped FK on group edges.** `group_edges.(source_id, workspace_id)`
-  and `(target_id, workspace_id)` reference `groups(id, workspace_id)`. Cross-
-  workspace group edges are now rejected at the DB layer, not just the service.
-- **Archived-endpoint checks on edge create.** `add_task_edge` / `add_group_edge`
-  raise a service-layer `ValueError` when either endpoint is archived, matching
-  the convention already applied elsewhere (e.g. status/project/group assignment).
-- **Schema `CHECK` on `kind`.** `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind)
-  BETWEEN 1 AND 64)` on both edge tables. Friendly error translation surfaces
-  the rule when a raw-SQL violation slips through.
-
-### Changed
-
-- **`TaskDetail.blocked_by` / `blocks` → `edge_sources` / `edge_targets`**, each now a
-  tuple of `TaskEdgeRef` `{task, kind}`. Breaking for JSON consumers of `stx task show`,
-  `stx task create`, and friends. Symmetric change on `GroupDetail`.
-- **JSON export keys renamed.** `task_dependencies` → `task_edges`,
-  `group_dependencies` → `group_edges`. Each row now carries `source_id`, `target_id`,
-  `workspace_id`, `archived`, `kind`, `metadata`.
-- **`task transfer --dry-run`** renames `dependency_ids` → `edge_ids`.
-- **Journal `entity_type`** values `task_dependency` / `group_dependency` renamed
-  to `task_edge` / `group_edge`. Migration 014 rewrites existing rows via `CASE`
-  in `INSERT SELECT`.
-- **Schema version bumped to 14.**
-- **`stx group edge ls`** uses `--source-project` (not `--project`) to disambiguate
-  sources, matching `create` / `archive` / `meta *`. Breaking.
-- **Edge listings filter archived endpoints.** `list_task_edges_by_workspace` and
-  `list_group_edges_by_workspace` return only edges whose source and target are
-  both active, matching the convention that archived entities stay hidden by default.
-- **Repository edge metadata CRUD deduped** via `_EDGE_METADATA_TABLES` allowlist
-  + generic `_get/_set/_remove/_replace_edge_metadata*` helpers mirroring the
-  existing `_METADATA_TABLES` pattern for single-id entities. Public wrappers are
-  one-line delegates.
-- **Docs refreshed end-to-end** for the edge refactor: `docs/erd.md`,
-  `docs/db-enforced-semantics.md`, `docs/service-enforced-semantics.md`,
-  `README.md`, `CLAUDE.md`, `skills/stx/SKILL.md`,
-  `skills/stx/references/cli-reference.md`, `skills/stx/references/json-schema.md`.
-
-### Removed
-
-- **Cycle detection.** Multi-hop cycles (A → B → C → A) are now allowed pending
-  blocking-kind semantics rework — with `kind`-labelled edges, "cycle" is kind-
-  dependent. The DB still rejects self-loops via `CHECK (source_id != target_id)`.
-- **TUI dependency ordering.** The kanban board and workspace tree no longer
-  topologically sort by edges; task/group order is insertion-order. Deferred
-  along with cycle detection.
-- **`stx dep` / `stx group dep` command groups.** Replaced by `stx edge` /
-  `stx group edge`.
+- **014_task_edges.sql.** Renames `task_dependencies` /
+  `group_dependencies` to `task_edges` / `group_edges`, backfills
+  `kind='blocks'`, adds composite `UNIQUE (id, workspace_id)` to
+  `groups` so `group_edges` can use a workspace-scoped composite FK
+  (mirrors how `task_edges` anchors to `tasks`), and recreates `journal`
+  with an updated `entity_type` CHECK covering the new edge entity
+  names.
+- **015_remove_projects.sql.** Folds old projects into root groups
+  (`parent_id IS NULL`) preserving title, description, and workspace
+  association, then drops the `projects` table.
+- **016_unified_edges.sql.** Creates the polymorphic `edges` table,
+  copies `task_edges` + `group_edges` into it with `acyclic=1` (all
+  pre-016 edges were dependency edges, which imply DAG semantics),
+  drops the legacy tables, and cascade-recreates `journal` to rewrite
+  old `task_edge` / `group_edge` rows to `edge`.
+- **017_drop_tags.sql.** Drops `tags` and `task_tags` tables plus their
+  indexes. Historical `journal` rows with `entity_type='tag'` /
+  `'task_tag'` are left untouched as dead history
+  (`journal.entity_type` is an unconstrained TEXT column).
+- **018_drop_position.sql.** Cascade-recreates `tasks` and `groups`
+  without the `position` column, replaces the four
+  `*_archived_position` covering indexes with `*_archived` variants,
+  and preserves all row data. Historical `journal` rows with
+  `field='position'` are left intact as dead history.
+- **019_status_edges.sql.** Widens the `edges.from_type` / `to_type`
+  CHECK constraints to include `'status'` so statuses can act as
+  polymorphic edge endpoints. No data migration needed — existing rows
+  are unaffected. `SCHEMA_VERSION = 19`.
 
 ## [0.11.0] — 2026-04-12
 

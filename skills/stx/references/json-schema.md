@@ -73,7 +73,6 @@ All mutation commands return a full **TaskDetail** object:
     "metadata": {},
     "status": {"id": 2, "name": "In Progress", "archived": false, "workspace_id": 1},
     "group": null,
-    "tags": [],
     "edge_sources": [],
     "edge_targets": [],
     "history": []
@@ -82,7 +81,7 @@ All mutation commands return a full **TaskDetail** object:
 ```
 
 `group` is `null` when not assigned.  
-`tags`, `edge_sources`, `edge_targets`, `history` are arrays (empty when none). Each element of `edge_sources` / `edge_targets` is a **TaskEdgeRef**: `{"task": Task, "kind": str}`.
+`edge_sources`, `edge_targets`, `history` are arrays (empty when none). Each element of `edge_sources` / `edge_targets` is a **TaskEdgeRef**: `{"task": Task, "kind": str}`.
 
 **Naming convention — read literally:**
 
@@ -106,8 +105,7 @@ Returns a flat array of **TaskListItem** objects (status grouping is text-only):
       "priority": 3,
       "due_date": null,
       "created_at": 1712700000,
-      "status_id": 2,
-      "tag_names": ["bug", "auth"]
+      "status_id": 2
     }
   ]
 }
@@ -154,7 +152,6 @@ Returns `{"task": TaskDetail, "source_task_id": N}`. `task` is the new TaskDetai
       "metadata": {},
       "status": {"id": 5, "name": "Backlog", "archived": false, "workspace_id": 2},
       "group": null,
-      "tags": [],
       "edge_sources": [],
       "edge_targets": [],
       "history": []
@@ -206,7 +203,7 @@ Returns a **MoveToWorkspacePreview** object:
 
 ## Workspace Commands
 
-### `workspace create` / `workspace rename`
+### `workspace create` / `workspace edit`
 
 ```json
 {
@@ -245,7 +242,6 @@ Full **WorkspaceContext** — grouped kanban view:
         }
       ]
     },
-    "tags": [...],
     "groups": [...]
   }
 }
@@ -310,7 +306,7 @@ Array of Status objects.
 
 ## Group Commands
 
-### `group create` / `group edit` / `group rename` / `group mv` / `group archive`
+### `group create` / `group edit` / `group mv` / `group archive`
 
 ```json
 {
@@ -374,20 +370,6 @@ identified via `--source`/`--target` (and optional `--source-parent` /
 ### Group Metadata
 
 Same four-verb pattern as task metadata.
-
----
-
-## Tag Commands
-
-### `tag create` / `tag rename` / `tag archive`
-
-```json
-{"ok": true, "data": {"id": 1, "name": "bug", "archived": false, "workspace_id": 1}}
-```
-
-### `tag ls`
-
-Array of Tag objects.
 
 ---
 

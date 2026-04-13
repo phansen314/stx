@@ -24,20 +24,18 @@ description: Use when the user wants to persist structured context, a kanban boa
 
 4. **Check workspace state** at any point:
    ```sh
-   stx workspace show   # full snapshot: statuses, tasks, tags, groups
-   stx task ls          # task list with filters (--status, --group, --tag, --search)
+   stx workspace show   # full snapshot: statuses, tasks, groups
+   stx task ls          # task list with filters (--status, --group, --search)
    ```
 
 ### Optional capabilities
 
-- **Edges** — `stx edge create --source task-0003 --target task-0001 --kind blocks` links task-0003 to task-0001 with the `blocks` kind. `kind` is a free-form lowercase label (`[a-z0-9_.-]+`, 1-64 chars); `blocks` is the convention for prior dependency semantics, but any token is accepted. Each edge also carries its own metadata blob via `stx edge meta ls|get|set|del --source <t> --target <t>`.
-- **Tags** — workspace-scoped, repeatable: `stx task create "..." -S Backlog --tag backend --tag ci`. Auto-created if missing.
+- **Polymorphic edges** — `stx edge create --source task-0003 --target task-0001 --kind blocks` links task-0003 to task-0001 with the `blocks` kind. Endpoints are typed refs: `task-NNNN`, `group:<title>`, `workspace:<name>`, `status:<name>`. Cross-type edges work (e.g. `--source task-0001 --target group:Auth --kind informs`). `kind` is a free-form lowercase label (`[a-z0-9_.-]+`, 1-64 chars). Each edge carries a metadata blob via `stx edge meta ls|get|set|del --source <ref> --target <ref> --kind <k>` and an `acyclic` flag (default on for `blocks`/`spawns`). Disambiguate colliding group titles with `--source-parent` / `--target-parent`.
 - **Groups** — workspace-scoped hierarchies, nestable without depth limit: `stx group create "Sprint 1"`, then `stx group assign <task> <group>` (or pass `--group/-g` at task create time to skip the separate assign step). Groups can be nested: `stx group create "Sub-group" --parent "Sprint 1"`.
-- **Group edges** — `stx group edge create --source <title> --target <title> --kind blocks` (titles resolved within the active workspace; pass `--source-parent`/`--target-parent` to disambiguate when titles collide). Mirror commands for `archive`, `ls`, and `meta *`.
 - **Entity metadata** — arbitrary key/value pairs on any task, workspace, or group: `stx task meta set task-0001 branch feat/kv`, `stx workspace meta set region us-east-1`, `stx group meta set "Sprint 1" start 2026-01-01`. Keys are lowercase-normalized (`Branch` → `branch`), charset `[a-z0-9_.-]+`, max 64 chars. Values free-form up to 500 chars. Use for linking to external IDs (JIRA, GitHub, branches, PRs), environment tags, ownership, sprint windows, etc.
-- **Cross-workspace move** — use `stx task transfer` (not `stx task mv`): `stx task transfer task-0001 --to ops --status Backlog`. Tags and metadata are carried over; group assignment is not.
-- **Archive (soft-delete)** — `stx {task,group,workspace,status,tag} archive <id>`. Cascade-archives descendants where applicable. **Pass `--force` in scripts/loops** — archive commands prompt y/N interactively and fail-fast on non-interactive stdin. No unarchive command; restore via SQLite directly.
-- **Audit trail** — `stx task log <task>` shows task field-change history. The underlying `journal` table covers all entity types (tasks, groups, workspaces, statuses, task/group edges) and per-key metadata diffs — queryable directly via `stx export` or SQLite.
+- **Cross-workspace move** — use `stx task transfer` (not `stx task mv`): `stx task transfer task-0001 --to ops --status Backlog`. Metadata is carried over; group assignment is not.
+- **Archive (soft-delete)** — `stx {task,group,workspace,status} archive <id>`. Cascade-archives descendants where applicable. **Pass `--force` in scripts/loops** — archive commands prompt y/N interactively and fail-fast on non-interactive stdin. No unarchive command; restore via SQLite directly.
+- **Audit trail** — `stx task log <task>` shows task field-change history. The underlying `journal` table covers all entity types (tasks, groups, workspaces, statuses, edges) and per-key metadata diffs — queryable directly via `stx export` or SQLite.
 - **Milestone snapshot** — `stx export` (all workspaces, Mermaid edge graphs labelled by `kind`); `-o FILE` writes to disk.
 
 See `references/cli-reference.md` for full flag details, JSON envelope shapes, and error codes.

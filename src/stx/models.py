@@ -9,7 +9,6 @@ class TaskFilter:
     status_id: int | None = None
     priority: int | None = None
     search: str | None = None
-    tag_id: int | None = None
     group_id: int | None = None
     include_archived: bool = False
     only_archived: bool = False
@@ -29,7 +28,6 @@ class TaskField(StrEnum):
     STATUS_ID = "status_id"
     PRIORITY = "priority"
     DUE_DATE = "due_date"
-    POSITION = "position"
     ARCHIVED = "archived"
     START_DATE = "start_date"
     FINISH_DATE = "finish_date"
@@ -40,7 +38,6 @@ class GroupField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"
     PARENT_ID = "parent_id"
-    POSITION = "position"
     ARCHIVED = "archived"
 
 
@@ -82,7 +79,6 @@ class NewTask:
     description: str | None = None
     priority: int = 1
     due_date: int | None = None
-    position: int = 0
     start_date: int | None = None
     finish_date: int | None = None
     group_id: int | None = None
@@ -94,7 +90,6 @@ class NewGroup:
     title: str
     description: str | None = None
     parent_id: int | None = None
-    position: int = 0
 
 
 @dataclass(frozen=True)
@@ -108,22 +103,7 @@ class NewJournalEntry:
     old_value: str | None = None
 
 
-@dataclass(frozen=True)
-class NewTag:
-    workspace_id: int
-    name: str
-
-
 # ---- Persisted types (full row from DB) ----
-
-
-@dataclass(frozen=True)
-class Tag:
-    id: int
-    workspace_id: int
-    name: str
-    archived: bool
-    created_at: int
 
 
 @dataclass(frozen=True)
@@ -153,7 +133,6 @@ class Task:
     status_id: int
     priority: int
     due_date: int | None
-    position: int
     archived: bool
     created_at: int
     start_date: int | None
@@ -169,7 +148,6 @@ class Group:
     title: str
     description: str | None
     parent_id: int | None
-    position: int
     archived: bool
     created_at: int
     metadata: dict[str, str]
