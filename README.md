@@ -7,10 +7,10 @@ Organize context into nestable hierarchies of workspaces and groups. Track tasks
 - **Structured context, not just tasks** — the primary unit is the hierarchy itself: workspaces and recursively nestable groups (Group → Group → … via `parent_id`).
 - **Metadata everywhere** — every node (workspace, group, task) carries a JSON key/value blob (`stx {entity} meta set/get/del`) and an optional long-form description on groups and tasks (rendered as Markdown in the TUI).
 - **Task management** — tasks have statuses, priorities, dates, tags, kinded edges, and positions. Statuses are user-defined per workspace — kanban columns are just one interpretation.
-- **Kinded edge graphs** — tasks link to tasks and groups link to groups via labelled edges (`stx edge`, `stx group edge`). Each edge carries a `kind` label and its own metadata blob. Mermaid diagrams generated on export.
+- **Kinded polymorphic edges** — labelled directional links with typed endpoints (`stx edge create --source task-0001 --target group:foo --kind blocks`). Tasks, groups, and workspaces can all be edge endpoints, and cross-type edges are supported. Each edge carries a `kind` label, its own metadata blob, and an `acyclic` flag (on by default for `blocks`/`spawns`). Mermaid diagrams generated on export.
 - **Agent-first CLI** — output auto-switches to JSON when piped (`stx task ls | jq`). Every command is composable without screen-scraping.
 - **Human-friendly TUI** — renders the hierarchy as a kanban board. The left panel shows the full workspace tree; the right panel shows one column per status.
-- **Full audit trail** — field changes across all entities (tasks, groups, workspaces, statuses), edge link/unlink events (task and group), and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
+- **Full audit trail** — field changes across all entities (tasks, groups, workspaces, statuses), edge link/unlink events, and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
 - **SQLite-backed** — WAL journal mode, XDG paths, atomic backups, numbered migrations.
 
 ## Data Model
@@ -26,9 +26,9 @@ Workspace
 └── Task  (ungrouped)
 ```
 
-All entities support:
-- `archived` flag (nothing is deleted)
-- `metadata` — JSON key/value blob, keys normalized to lowercase
+All entities support an `archived` flag (nothing is deleted).
+
+Workspaces, groups, and tasks additionally carry a JSON `metadata` key/value blob (keys normalized to lowercase). Statuses and tags do not.
 
 Groups and tasks additionally support `description` (free-text, Markdown).
 
@@ -103,8 +103,8 @@ Entry point: `stx`
 
 | Command | Description |
 |---------|-------------|
-| `stx workspace ...` | `create [--statuses a,b,c]`, `ls`, `show`, `use`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
-| `stx group ...` | `create [--parent <group>] [--desc]`, `ls`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `edge create\|archive\|ls\|meta *`, `meta ls\|get\|set\|del <title>` |
+| `stx workspace ...` | `create [--statuses a,b,c]`, `ls`, `show`, `use`, `edit [--name]`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
+| `stx group ...` | `create [--parent <group>] [--desc]`, `ls`, `show`, `edit [--title] [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `meta ls\|get\|set\|del <title>` (edges live under top-level `stx edge`) |
 
 ### Task Commands
 
@@ -138,9 +138,9 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 
 | Command | Description |
 |---------|-------------|
-| `stx status ...` | `create`, `ls`, `rename`, `order <workspace> <statuses...>`, `archive [--reassign-to STATUS\|--force]` |
+| `stx status ...` | `create`, `ls`, `show`, `edit [--name]`, `order <statuses...>`, `archive [--reassign-to STATUS\|--force]` |
 | `stx edge ...` | `create --source <t> --target <t> --kind <k>`, `archive --source <t> --target <t>`, `ls [--source <t>] [--kind <k>]`, `meta ls\|get\|set\|del --source <t> --target <t>` |
-| `stx tag ...` | `create`, `ls`, `rename`, `archive [--unassign\|--force\|--dry-run]` |
+| `stx tag ...` | `create`, `ls`, `show`, `edit [--name]`, `archive [--unassign\|--force\|--dry-run]` |
 | `stx export` | Export database as JSON (default) or Markdown with Mermaid edge graphs labelled by `kind` (`--md`) |
 | `stx info` | Show stx file locations |
 | `stx backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |

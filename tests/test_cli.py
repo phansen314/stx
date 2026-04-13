@@ -146,10 +146,37 @@ class TestWorkspaceCommands:
         out, _ = cli("workspace", "ls")
         assert "dev *" in out
 
-    def test_rename(self, cli):
+    def test_edit_rename(self, cli):
         cli("workspace", "create", "dev")
-        out, _ = cli("workspace", "rename", "dev", "staging")
+        out, _ = cli("workspace", "edit", "--name", "staging")
         assert "renamed workspace 'dev' -> 'staging'" in out
+
+    def test_edit_rename_via_w_override(self, cli):
+        cli("workspace", "create", "dev")
+        cli("workspace", "create", "ops")
+        cli("workspace", "use", "dev")
+        out, _ = cli("-w", "ops", "workspace", "edit", "--name", "operations")
+        assert "renamed workspace 'ops' -> 'operations'" in out
+
+    def test_edit_noop_no_name(self, cli):
+        cli("workspace", "create", "dev")
+        out, _ = cli("workspace", "edit")
+        assert "nothing to update" in out
+
+    def test_log(self, cli):
+        cli("workspace", "create", "dev")
+        cli("workspace", "edit", "--name", "staging")
+        out, _ = cli("workspace", "log")
+        assert "name" in out
+        assert "dev -> staging" in out
+
+    def test_edit_dry_run(self, cli):
+        cli("workspace", "create", "dev")
+        out, _ = cli("workspace", "edit", "--name", "staging", "--dry-run")
+        assert "dry-run" in out or "name" in out
+        ls, _ = cli("workspace", "ls")
+        assert "dev" in ls
+        assert "staging" not in ls
 
     def test_archive(self, cli):
         cli("workspace", "create", "dev")
@@ -224,11 +251,18 @@ class TestStatusCommands:
         out, _ = cli("status", "ls")
         assert "no statuses" in out
 
-    def test_rename(self, cli):
+    def test_edit_rename(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        out, _ = cli("status", "rename", "todo", "backlog")
+        out, _ = cli("status", "edit", "todo", "--name", "backlog")
         assert "renamed status 'todo' -> 'backlog'" in out
+
+    def test_show(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        out, _ = cli("status", "show", "todo")
+        assert "status  todo" in out
+        assert "Tasks:" in out
 
     def test_archive(self, cli):
         cli("workspace", "create", "dev")
@@ -786,11 +820,18 @@ class TestGroupCLI:
         _, err = self.cli("group", "show", "nope", expect_exit=3)
         assert "not found" in err
 
-    def test_rename_group(self):
+    def test_edit_rename_group(self):
         self.cli("group", "create", "Frontend")
-        out, _ = self.cli("group", "rename", "Frontend", "UI")
+        out, _ = self.cli("group", "edit", "Frontend", "--title", "UI")
         assert "renamed" in out
         assert "'UI'" in out
+
+    def test_group_log(self):
+        self.cli("group", "create", "Frontend")
+        self.cli("group", "edit", "Frontend", "--title", "UI")
+        out, _ = self.cli("group", "log", "UI")
+        assert "title" in out
+        assert "Frontend -> UI" in out
 
     def test_archive_group(self):
         self.cli("group", "create", "Frontend")
@@ -933,9 +974,15 @@ class TestTagCommands:
         out, _ = cli("tag", "ls")
         assert "no tags" in out
 
-    def test_tag_rename(self, cli):
+    def test_tag_show(self, cli):
         cli("tag", "create", "bug")
-        out, _ = cli("tag", "rename", "bug", "defect")
+        out, _ = cli("tag", "show", "bug")
+        assert "tag  bug" in out
+        assert "Tasks:" in out
+
+    def test_tag_edit_rename(self, cli):
+        cli("tag", "create", "bug")
+        out, _ = cli("tag", "edit", "bug", "--name", "defect")
         assert "renamed tag 'bug' -> 'defect'" in out
         out2, _ = cli("tag", "ls")
         assert "defect" in out2
@@ -970,13 +1017,13 @@ class TestTagCommands:
         assert "bug" in out
 
     def test_add_with_multiple_tags(self, cli):
-        cli("task", "create", "Fix bug", "-t", "bug", "-t", "urgent", "-S", "todo")
+        cli("task", "create", "Fix bug", "--tag", "bug", "--tag", "urgent", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "bug" in out
         assert "urgent" in out
 
     def test_add_tag_auto_creates(self, cli):
-        cli("task", "create", "Fix", "-t", "new-tag", "-S", "todo")
+        cli("task", "create", "Fix", "--tag", "new-tag", "-S", "todo")
         out, _ = cli("tag", "ls")
         assert "new-tag" in out
 
@@ -989,14 +1036,14 @@ class TestTagCommands:
         assert "bug" in out
 
     def test_edit_untag(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-S", "todo")
+        cli("task", "create", "Task", "--tag", "bug", "-S", "todo")
         cli("task", "edit", "1", "--untag", "bug")
         out, _ = cli("task", "show", "1")
         assert "Tags:" not in out
 
     def test_edit_tag_only_no_field_changes(self, cli):
         cli("task", "create", "Task", "-S", "todo")
-        out, _ = cli("task", "edit", "1", "-t", "bug")
+        out, _ = cli("task", "edit", "1", "--tag", "bug")
         assert "updated" in out
 
     def test_edit_untag_not_found(self, cli):
@@ -1012,19 +1059,19 @@ class TestTagCommands:
     # -- Tags on ls --
 
     def test_ls_filter_by_tag(self, cli):
-        cli("task", "create", "Tagged", "-t", "bug", "-S", "todo")
+        cli("task", "create", "Tagged", "--tag", "bug", "-S", "todo")
         cli("task", "create", "Untagged", "-S", "todo")
         out, _ = cli("task", "ls", "--tag", "bug")
         assert "Tagged" in out
         assert "Untagged" not in out
 
     def test_ls_shows_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-S", "todo")
+        cli("task", "create", "Task", "--tag", "bug", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "[bug]" in out
 
     def test_ls_shows_multiple_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-t", "urgent", "-S", "todo")
+        cli("task", "create", "Task", "--tag", "bug", "--tag", "urgent", "-S", "todo")
         out, _ = cli("task", "ls")
         assert "[bug, urgent]" in out
 
@@ -1035,7 +1082,7 @@ class TestTagCommands:
     # -- Tags on show --
 
     def test_show_displays_tags(self, cli):
-        cli("task", "create", "Task", "-t", "bug", "-t", "feature", "-S", "todo")
+        cli("task", "create", "Task", "--tag", "bug", "--tag", "feature", "-S", "todo")
         out, _ = cli("task", "show", "1")
         assert "Tags:" in out
         assert "bug" in out
@@ -1258,7 +1305,7 @@ class TestJsonOutput:
     def test_show_with_tags(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
-        cli("task", "create", "Task A", "-t", "bug", "-t", "feature", "-S", "todo")
+        cli("task", "create", "Task A", "--tag", "bug", "--tag", "feature", "-S", "todo")
         data = self._json(cli, "task", "show", "1")
         assert data["ok"] is True
         payload = data["data"]
@@ -1723,8 +1770,8 @@ class TestEditDryRun:
         assert "dry-run" in out
         assert "description" in out
 
-    def test_group_rename_dry_run(self):
-        out, _ = self.cli("group", "rename", "top", "top-renamed", "--dry-run")
+    def test_group_edit_title_dry_run(self):
+        out, _ = self.cli("group", "edit", "top", "--title", "top-renamed", "--dry-run")
         assert "dry-run" in out
         assert "title" in out
         # Still exists under old name — new name must not have been written
@@ -2600,7 +2647,7 @@ class TestTtyAwareOutput:
 
 
 class TestConfigCommands:
-    """Tests for `todo config ls/get/set/unset` and active_workspace storage migration."""
+    """Tests for `stx config ls/get/set/del` and active_workspace storage migration."""
 
     @pytest.fixture(autouse=True)
     def setup(self, cli, config_path):
@@ -2674,15 +2721,15 @@ class TestConfigCommands:
         _, err = self.cli("config", "set", "theme", "dark", expect_exit=4)
         assert "not editable" in err
 
-    def test_config_unset_resets_auto_refresh_to_default(self):
+    def test_config_del_resets_auto_refresh_to_default(self):
         self.cli("config", "set", "auto_refresh_seconds", "10")
-        self.cli("config", "unset", "auto_refresh_seconds")
+        self.cli("config", "del", "auto_refresh_seconds")
         from stx.tui.config import load_config
 
         assert load_config(self.cfg_path).auto_refresh_seconds == 30
 
-    def test_config_unset_rejects_non_editable_key(self):
-        _, err = self.cli("config", "unset", "theme", expect_exit=4)
+    def test_config_del_rejects_non_editable_key(self):
+        _, err = self.cli("config", "del", "theme", expect_exit=4)
         assert "not editable" in err
 
     def test_config_set_active_workspace_via_workspace_use_matches(self):

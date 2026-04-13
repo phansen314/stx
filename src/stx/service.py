@@ -2065,6 +2065,23 @@ def preview_move_task(
     )
 
 
+def preview_update_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    changes: dict[str, Any],
+) -> EntityUpdatePreview:
+    """Compute a diff for `update_workspace` without writing."""
+    old = get_workspace(conn, workspace_id)
+    before, after = _diff_fields(old, changes)
+    return EntityUpdatePreview(
+        entity_type="workspace",
+        entity_id=workspace_id,
+        label=old.name,
+        before=before,
+        after=after,
+    )
+
+
 def preview_update_group(
     conn: sqlite3.Connection,
     group_id: int,

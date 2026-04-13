@@ -43,7 +43,7 @@ def format_history_entry(h: JournalEntry) -> str:
     return f"{format_timestamp(h.changed_at)}  {h.field}: {old_str} -> {new_str}  ({h.source})"
 
 
-def format_task_history(history: tuple[JournalEntry, ...]) -> str:
+def format_journal_entries(history: tuple[JournalEntry, ...]) -> str:
     if not history:
         return "no history"
     return "\n".join(format_history_entry(h) for h in history)
@@ -77,6 +77,24 @@ def format_tag_list(tags: tuple[Tag, ...]) -> str:
     for t in tags:
         archived = " (archived)" if t.archived else ""
         lines.append(f"  {t.name}{archived}")
+    return "\n".join(lines)
+
+
+def format_status_detail(status: Status, task_count: int) -> str:
+    lines = [f"status  {status.name}"]
+    lines.append(f"  ID:          {status.id}")
+    lines.append(f"  Archived:    {status.archived}")
+    lines.append(f"  Tasks:       {task_count}")
+    lines.append(f"  Created:     {format_timestamp(status.created_at)}")
+    return "\n".join(lines)
+
+
+def format_tag_detail(tag: Tag, task_count: int) -> str:
+    lines = [f"tag  {tag.name}"]
+    lines.append(f"  ID:          {tag.id}")
+    lines.append(f"  Archived:    {tag.archived}")
+    lines.append(f"  Tasks:       {task_count}")
+    lines.append(f"  Created:     {format_timestamp(tag.created_at)}")
     return "\n".join(lines)
 
 

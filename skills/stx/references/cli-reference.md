@@ -61,7 +61,7 @@ Archives are **soft-deletes** — rows are never removed from the database; the 
 | `--desc` | `-d` | — | Description |
 | `--priority` | — | `1` | Priority (free-form integer; interpretation is user-defined — use metadata for labeled schemes) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
-| `--tag` | `-t` | — | Tag name (repeatable) |
+| `--tag` | — | — | Tag name (repeatable) |
 | `--group` | `-g` | — | Group title |
 
 ```sh
@@ -84,7 +84,7 @@ The JSON response is a full `TaskDetail` (same shape as `stx task show`), includ
 | `--priority` | — | — | Filter by priority integer |
 | `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
-| `--tag` | `-t` | — | Filter by tag name (single value; not repeatable — unlike `task create`/`task edit` which accept multiple `-t` flags) |
+| `--tag` | — | — | Filter by tag name (single value; not repeatable — unlike `task create`/`task edit` which accept multiple `--tag` flags) |
 
 ```sh
 stx task ls
@@ -116,7 +116,7 @@ All flags are optional; only provided fields are updated.
 | `--desc` | `-d` | — | New description |
 | `--priority` | — | — | New priority integer |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
-| `--tag` | `-t` | — | Add tag (repeatable) |
+| `--tag` | — | — | Add tag (repeatable) |
 | `--untag` | — | — | Remove tag (repeatable; errors if tag not currently on task) |
 | `--dry-run` | — | off | Preview the field + tag diff without writing |
 
@@ -278,7 +278,8 @@ stx task transfer task-0001 --to ops --status Backlog --dry-run
 | `workspace ls` | — | `--archived {hide,include,only}` (default `hide`) | List workspaces; marks active workspace |
 | `workspace show` | `[name]` | — | Single-call workspace snapshot: statuses with task counts, tasks, tags, groups. Designed as a one-shot startup view for AI sessions. Operates on named workspace, active workspace, or `-w` override. |
 | `workspace use` | `name` | — | Switch active workspace |
-| `workspace rename` | `old new` | — | Rename workspace from `old` to `new` |
+| `workspace edit` | — | `--name NEW`, `--dry-run` | Edit active workspace (or `-w` override). `--name` renames it; `--dry-run` previews the diff. |
+| `workspace log` | — | — | Show journal / change history for the active workspace. |
 | `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
 
 ```sh
@@ -288,7 +289,7 @@ stx workspace ls
 stx workspace show
 stx workspace show other-ws
 stx --json workspace show
-stx workspace rename "work" "work-q2"
+stx -w work workspace edit --name "work-q2"
 stx workspace archive work --dry-run
 stx workspace archive work --force
 ```
@@ -301,7 +302,8 @@ stx workspace archive work --force
 |---|---|---|---|
 | `status create` | `name` | — | Create a status on the active workspace |
 | `status ls` | — | `--archived hide\|include\|only` | List statuses on active workspace; default hides archived |
-| `status rename` | `old new` | — | Rename a status |
+| `status show` | `name` | — | Show status detail (including task count) |
+| `status edit` | `name` | `--name NEW` | Edit status (rename via `--name`) |
 | `status order` | `status1 status2 ...` | — | Set the TUI display order for statuses on the active workspace (or `-w`). Writes `~/.config/stx/tui.toml`. Partial ordering allowed — unlisted statuses fall to the end. |
 | `status archive` | `name` | `--reassign-to STATUS`, `--force`, `--dry-run` | Archive status. `--dry-run` previews without executing. `--reassign-to` moves tasks to another status before archiving. `--force` archives all tasks in the status instead. Neither flag triggers a confirmation prompt — `--reassign-to` and `--force` both proceed immediately (works from pipes and CI without `--force` being special-cased). Without either flag the service layer blocks on active tasks and exits with an error. |
 
@@ -317,28 +319,33 @@ stx status archive "Old Status" --force
 
 ## `stx edge` Subcommands
 
-Edges are directional links between tasks with a free-form `kind` label and their own metadata blob. Flags are explicit: `--source X --target Y --kind blocks` means **X points to Y with kind `blocks`** (the prior-dependency convention). The PK is `(source_id, target_id)` — a second edge between the same pair is rejected regardless of kind. Self-loops are rejected by a DB CHECK. Multi-hop cycles are currently allowed (cycle detection is deferred pending blocking-kind semantics rework).
+Edges are polymorphic directional links with a free-form `kind` label and their own metadata blob. Endpoints are typed refs: `task-NNNN` / `#NNNN` / `<task title>` for tasks, `group:<title>` for groups, `workspace:<name>` for workspaces. Cross-type edges are allowed (task→group, group→workspace, etc.). Flags are explicit: `--source X --target Y --kind blocks` means **X points to Y with kind `blocks`**. The PK is `(from_type, from_id, to_type, to_id, kind)` — multiple kinds between the same node pair coexist; re-adding the same `(source, target, kind)` tuple clears the metadata blob and flips `archived = 0`. Self-loops are rejected by a DB CHECK. Cross-workspace edges are rejected at the service layer.
 
 **Kind constraint:** lowercase `[a-z0-9_.-]+`, 1-64 characters. Enforced by the service layer's `_normalize_edge_kind` and a DB `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
 
+**Acyclic flag:** each edge carries `acyclic` (default: `1` for `kind in {blocks, spawns}`, `0` otherwise). Cycle detection runs over the union of active acyclic edges — so mixing `blocks` and `spawns` in a cycle is rejected, but `informs` / `references` / `related-to` can freely form cycles. Override with `--acyclic` / `--no-acyclic`.
+
+**Group disambiguation:** when multiple groups share a title under different parents, pass `--source-parent <parent-title>` / `--target-parent <parent-title>` on the create/archive/meta/ls surface.
+
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `edge create` | — | `--source TASK --target TASK --kind KIND` (all required) | Add an edge from source to target with the given kind. Re-adding an archived `(source, target)` pair clears its metadata blob and flips `archived = 0`. |
-| `edge archive` | — | `--source TASK --target TASK` (both required) | Soft-archive the active edge. There is no unarchive surface — re-create via `edge create`. |
-| `edge ls` | — | `--source TASK`, `--kind KIND` | List active edges on the active workspace, filtered by endpoint and/or kind. Both source and target must also be active (archived endpoints are hidden). |
-| `edge meta ls` | — | `--source TASK --target TASK` | List all metadata on the edge. |
-| `edge meta get` | `key` | `--source TASK --target TASK` | Read a single metadata value. |
-| `edge meta set` | `key value` | `--source TASK --target TASK` | Write or overwrite a metadata value. Same charset/length rules as task metadata (lowercase key, `[a-z0-9_.-]+`, 64-char key cap, 500-char value cap). |
-| `edge meta del` | `key` | `--source TASK --target TASK` | Remove a metadata key. |
+| `edge create` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent`, `--acyclic`/`--no-acyclic` | Add an edge from source to target with the given kind. |
+| `edge archive` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent` | Soft-archive the active edge. Re-create via `edge create`. |
+| `edge ls` | — | `--source REF`, `--target REF`, `--kind KIND`, `--source-parent`, `--target-parent` | List active edges on the active workspace; filters are optional. Both endpoints must be active (archived endpoints are hidden). |
+| `edge meta ls` | — | `--source REF --target REF --kind KIND` | List all metadata on the edge. |
+| `edge meta get` | `key` | `--source REF --target REF --kind KIND` | Read a single metadata value. |
+| `edge meta set` | `key value` | `--source REF --target REF --kind KIND` | Write or overwrite a metadata value. Same charset/length rules as entity metadata (lowercase key, `[a-z0-9_.-]+`, 64-char key cap, 500-char value cap). |
+| `edge meta del` | `key` | `--source REF --target REF --kind KIND` | Remove a metadata key. |
 
 ```sh
 stx edge create --source task-0003 --target task-0001 --kind blocks
+stx edge create --source task-0002 --target "group:Auth" --kind informs
 stx edge ls
 stx edge ls --kind blocks
 stx edge ls --source task-0003
-stx edge meta set --source task-0003 --target task-0001 rationale "depends on refactor"
-stx edge meta ls --source task-0003 --target task-0001
-stx edge archive --source task-0003 --target task-0001
+stx edge meta set --source task-0003 --target task-0001 --kind blocks rationale "depends on refactor"
+stx edge meta ls --source task-0003 --target task-0001 --kind blocks
+stx edge archive --source task-0003 --target task-0001 --kind blocks
 ```
 
 ---
@@ -351,7 +358,8 @@ Tags are workspace-scoped. Many-to-many with tasks. `stx task create`/`stx task 
 |---|---|---|---|
 | `tag create` | `name` | — | Create a tag (workspace-scoped) |
 | `tag ls` | — | `--archived {hide,include,only}` (default `hide`) | List tags |
-| `tag rename` | `old new` | — | Rename tag from `old` to `new` |
+| `tag show` | `name` | — | Show tag detail (including task count) |
+| `tag edit` | `name` | `--name NEW` | Edit tag (rename via `--name`) |
 | `tag archive` | `name` | `--unassign`, `--force`, `--dry-run` | Archive tag; `--unassign` strips it from all tasks first. Prompts y/N unless `--force`. |
 
 ```sh
@@ -371,16 +379,13 @@ Groups are workspace-scoped hierarchical collections of tasks. Root groups have 
 | `group create` | `title` | `--parent TITLE`, `--desc/-d` | Create group; optionally nested under a parent group |
 | `group ls` | — | `--archived {hide,include,only}` (default `hide`) | List groups (flat, root-level by default) |
 | `group show` | `title` | — | Show detail with ancestry |
-| `group rename` | `title new_title` | `--dry-run` | Rename; `--dry-run` previews the diff |
-| `group edit` | `title` | `--desc/-d`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
+| `group edit` | `title` | `--title NEW`, `--desc/-d`, `--dry-run` | Edit group fields; `--title` renames the group; `--dry-run` previews the diff |
+| `group log` | `title` | — | Show journal / change history for the group. |
 | `group archive` | `title` | `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
 | `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--dry-run` | Reparent under another group, or `--to-top` to promote to root level; `--dry-run` previews the diff |
 | `group assign` | `task title` | — | Assign task to group |
 | `group unassign` | `task` | — | Unassign task from its group |
-| `group edge create` | — | `-s/--source TITLE --target TITLE --kind KIND` (all required), `--source-parent`, `--target-parent` | Add an edge between groups with the given kind. Parent flags disambiguate when titles collide. |
-| `group edge archive` | — | `-s/--source TITLE --target TITLE` (both required), `--source-parent`, `--target-parent` | Archive an active group edge. |
-| `group edge ls` | — | `-s/--source TITLE`, `--kind KIND` | List active group edges on the active workspace; optional source/kind filters. |
-| `group edge meta ls\|get\|set\|del` | `[key [value]]` | `-s/--source TITLE --target TITLE --source-parent --target-parent` | Metadata CRUD on a single group edge. Same rules as task-edge metadata. |
+Edges between groups (and any other node types) live under the top-level `stx edge` command — see the `stx edge` section. Use the typed ref form `group:<title>` with `--source-parent`/`--target-parent` when group titles collide under different parents.
 
 ```sh
 stx group create "Backend" --desc "Core API services"
@@ -389,7 +394,7 @@ stx group assign task-0005 "Auth"
 stx group ls
 stx group mv "Auth" --parent "Frontend"
 stx group mv "Backend" --to-top  # promote to root level
-stx group edge create --source "Sprint 2" --target "Sprint 1" --kind blocks
+stx edge create --source "group:Sprint 2" --target "group:Sprint 1" --kind blocks
 ```
 
 ---
@@ -461,7 +466,7 @@ stx config ls
 stx config get auto_refresh_seconds
 stx config set auto_refresh_seconds 60
 stx config set active_workspace myproject
-stx config unset active_workspace
+stx config del active_workspace
 ```
 
 **Active workspace storage:** `active_workspace` is stored in `tui.toml`. A legacy `~/.local/share/stx/active-workspace` file is still read as a fallback for one release; writes no longer go there.
@@ -525,6 +530,6 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `task meta get/set/del`, `workspace meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
 | `config ls` | full TuiConfig dict: `{theme, show_task_descriptions, show_archived, confirm_archive, default_priority, auto_refresh_seconds, active_workspace, status_order}` |
 | `config get` | `{"key": str, "value": any}` |
-| `config set`, `config unset` | `{"key": str, "value": any}` — value after write |
+| `config set`, `config del` | `{"key": str, "value": any}` — value after write |
 
 > **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "tags": [...], "groups": [...]}`) for full workspace snapshot.

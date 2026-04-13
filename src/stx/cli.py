@@ -325,7 +325,7 @@ def cmd_task_log(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCon
     from .models import EntityType
 
     history = service.list_journal(conn, EntityType.TASK, task_id)
-    return Ok(data=history, text=presenters.format_task_history(history))
+    return Ok(data=history, text=presenters.format_journal_entries(history))
 
 
 # ---- Workspace subcommands ----
@@ -365,12 +365,33 @@ def cmd_workspace_use(
     return Ok(data=workspace, text=f"switched to workspace '{workspace.name}'")
 
 
-def cmd_workspace_rename(
+def cmd_workspace_log(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
-    workspace = service.get_workspace_by_name(conn, args.old_name)
-    updated = service.update_workspace(conn, workspace.id, {"name": args.new_name})
-    return Ok(data=updated, text=f"renamed workspace '{args.old_name}' -> '{args.new_name}'")
+    workspace = _resolve_workspace(conn, args, ctx)
+    from .models import EntityType
+
+    history = service.list_journal(conn, EntityType.WORKSPACE, workspace.id)
+    return Ok(data=history, text=presenters.format_journal_entries(history))
+
+
+def cmd_workspace_edit(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    changes: dict[str, Any] = {}
+    if args.name is not None:
+        changes["name"] = args.name
+    if args.dry_run:
+        preview = service.preview_update_workspace(conn, workspace.id, changes)
+        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
+    if not changes:
+        return Ok(data=workspace, text="nothing to update")
+    old_name = workspace.name
+    updated = service.update_workspace(conn, workspace.id, changes)
+    if "name" in changes and changes["name"] != old_name:
+        return Ok(data=updated, text=f"renamed workspace '{old_name}' -> '{updated.name}'")
+    return Ok(data=updated, text=f"updated workspace '{updated.name}'")
 
 
 def cmd_workspace_archive(
@@ -422,13 +443,34 @@ def cmd_status_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCo
     return Ok(data=statuses, text=presenters.format_status_list(statuses))
 
 
-def cmd_status_rename(
+def cmd_status_show(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    col = service.get_status_by_name(conn, workspace.id, args.old_name)
-    updated = service.update_status(conn, col.id, {"name": args.new_name})
-    return Ok(data=updated, text=f"renamed status '{args.old_name}' -> '{args.new_name}'")
+    col = service.get_status_by_name(conn, workspace.id, args.name)
+    from .models import TaskFilter
+
+    tasks = service.list_tasks_filtered(
+        conn, workspace.id, task_filter=TaskFilter(status_id=col.id)
+    )
+    return Ok(data=col, text=presenters.format_status_detail(col, len(tasks)))
+
+
+def cmd_status_edit(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    col = service.get_status_by_name(conn, workspace.id, args.name)
+    changes: dict[str, Any] = {}
+    if args.new_name is not None:
+        changes["name"] = args.new_name
+    if not changes:
+        return Ok(data=col, text="nothing to update")
+    old_name = col.name
+    updated = service.update_status(conn, col.id, changes)
+    if "name" in changes and changes["name"] != old_name:
+        return Ok(data=updated, text=f"renamed status '{old_name}' -> '{updated.name}'")
+    return Ok(data=updated, text=f"updated status '{updated.name}'")
 
 
 def cmd_status_order(
@@ -721,25 +763,14 @@ def cmd_group_show(
     return Ok(data=detail, text=text)
 
 
-def cmd_group_rename(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.old_title)
-    changes = {"title": args.new_title}
-    if args.dry_run:
-        preview = service.preview_update_group(conn, grp.id, changes)
-        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
-    updated = service.update_group(conn, grp.id, changes)
-    return Ok(data=updated, text=f"renamed group '{args.old_title}' -> '{args.new_title}'")
-
-
 def cmd_group_edit(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     grp = service.resolve_group(conn, workspace.id, args.title)
     changes: dict[str, Any] = {}
+    if args.new_title is not None:
+        changes["title"] = args.new_title
     if args.desc is not None:
         changes["description"] = args.desc.strip() or None
     if args.dry_run:
@@ -747,8 +778,22 @@ def cmd_group_edit(
         return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     if not changes:
         return Ok(data=grp, text="nothing to update")
+    old_title = grp.title
     updated = service.update_group(conn, grp.id, changes)
+    if "title" in changes and changes["title"] != old_title:
+        return Ok(data=updated, text=f"renamed group '{old_title}' -> '{updated.title}'")
     return Ok(data=updated, text=f"updated group '{updated.title}'")
+
+
+def cmd_group_log(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    grp = service.resolve_group(conn, workspace.id, args.title)
+    from .models import EntityType
+
+    history = service.list_journal(conn, EntityType.GROUP, grp.id)
+    return Ok(data=history, text=presenters.format_journal_entries(history))
 
 
 def cmd_group_archive(
@@ -828,13 +873,34 @@ def cmd_tag_create(
     return Ok(data=tag, text=f"created tag '{tag.name}'")
 
 
-def cmd_tag_rename(
+def cmd_tag_show(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    tag = service.get_tag_by_name(conn, workspace.id, args.old_name)
-    updated = service.update_tag(conn, tag.id, {"name": args.new_name})
-    return Ok(data=updated, text=f"renamed tag '{args.old_name}' -> '{args.new_name}'")
+    tag = service.get_tag_by_name(conn, workspace.id, args.name)
+    from .models import TaskFilter
+
+    tasks = service.list_tasks_filtered(
+        conn, workspace.id, task_filter=TaskFilter(tag_id=tag.id)
+    )
+    return Ok(data=tag, text=presenters.format_tag_detail(tag, len(tasks)))
+
+
+def cmd_tag_edit(
+    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
+) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    tag = service.get_tag_by_name(conn, workspace.id, args.name)
+    changes: dict[str, Any] = {}
+    if args.new_name is not None:
+        changes["name"] = args.new_name
+    if not changes:
+        return Ok(data=tag, text="nothing to update")
+    old_name = tag.name
+    updated = service.update_tag(conn, tag.id, changes)
+    if "name" in changes and changes["name"] != old_name:
+        return Ok(data=updated, text=f"renamed tag '{old_name}' -> '{updated.name}'")
+    return Ok(data=updated, text=f"updated tag '{updated.name}'")
 
 
 def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
@@ -1194,7 +1260,7 @@ def cmd_config_set(
     return Ok(data={"key": args.key, "value": new_value}, text=f"set {args.key} = {new_value}")
 
 
-def cmd_config_unset(
+def cmd_config_del(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     from dataclasses import fields
@@ -1211,7 +1277,7 @@ def cmd_config_unset(
     save_config(config, ctx.config_path)
     return Ok(
         data={"key": args.key, "value": default_value},
-        text=f"unset {args.key} (reset to {default_value!r})",
+        text=f"deleted {args.key} (reset to {default_value!r})",
     )
 
 
@@ -1234,7 +1300,8 @@ HANDLERS: dict[str, CommandHandler] = {
     "workspace_create": cmd_workspace_create,
     "workspace_ls": cmd_workspace_ls,
     "workspace_use": cmd_workspace_use,
-    "workspace_rename": cmd_workspace_rename,
+    "workspace_edit": cmd_workspace_edit,
+    "workspace_log": cmd_workspace_log,
     "workspace_archive": cmd_workspace_archive,
     "workspace_meta_ls": cmd_workspace_meta_ls,
     "workspace_meta_get": cmd_workspace_meta_get,
@@ -1242,7 +1309,8 @@ HANDLERS: dict[str, CommandHandler] = {
     "workspace_meta_del": cmd_workspace_meta_del,
     "status_create": cmd_status_create,
     "status_ls": cmd_status_ls,
-    "status_rename": cmd_status_rename,
+    "status_show": cmd_status_show,
+    "status_edit": cmd_status_edit,
     "status_order": cmd_status_order,
     "status_archive": cmd_status_archive,
     "edge_create": cmd_edge_create,
@@ -1255,8 +1323,8 @@ HANDLERS: dict[str, CommandHandler] = {
     "group_create": cmd_group_create,
     "group_ls": cmd_group_ls,
     "group_show": cmd_group_show,
-    "group_rename": cmd_group_rename,
     "group_edit": cmd_group_edit,
+    "group_log": cmd_group_log,
     "group_archive": cmd_group_archive,
     "group_mv": cmd_group_mv,
     "group_assign": cmd_group_assign,
@@ -1267,13 +1335,14 @@ HANDLERS: dict[str, CommandHandler] = {
     "group_meta_del": cmd_group_meta_del,
     "tag_create": cmd_tag_create,
     "tag_ls": cmd_tag_ls,
-    "tag_rename": cmd_tag_rename,
+    "tag_show": cmd_tag_show,
+    "tag_edit": cmd_tag_edit,
     "tag_archive": cmd_tag_archive,
     "workspace_show": cmd_workspace_show,
     "config_ls": cmd_config_ls,
     "config_get": cmd_config_get,
     "config_set": cmd_config_set,
-    "config_unset": cmd_config_unset,
+    "config_del": cmd_config_del,
     "export": cmd_export,
     "backup": cmd_backup,
     "info": cmd_info,
@@ -1311,7 +1380,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--priority", "-p", type=int, default=1)
     p_create.add_argument("--due", default=None, help="YYYY-MM-DD")
     p_create.add_argument(
-        "--tag", "-t", action="append", default=None, help="tag name (repeatable)"
+        "--tag", action="append", default=None, help="tag name (repeatable)"
     )
     p_create.add_argument("--group", "-g", default=None, help="group title")
 
@@ -1327,7 +1396,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--priority", "-p", type=int, default=None, help="filter by priority integer")
     p_ls.add_argument("--search", default=None, help="search title substring")
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
-    p_ls.add_argument("--tag", "-t", default=None, help="filter by tag name")
+    p_ls.add_argument("--tag", default=None, help="filter by tag name")
 
     p_show = task_sub.add_parser("show", help="show task detail")
     p_show.set_defaults(command="task_show")
@@ -1340,7 +1409,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--desc", "-d", default=None)
     p_edit.add_argument("--priority", "-p", type=int, default=None)
     p_edit.add_argument("--due", default=None, help="YYYY-MM-DD")
-    p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
+    p_edit.add_argument("--tag", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
     p_edit.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
@@ -1422,10 +1491,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_wu.set_defaults(command="workspace_use")
     p_wu.add_argument("name")
 
-    p_wr = workspace_sub.add_parser("rename", help="rename a workspace")
-    p_wr.set_defaults(command="workspace_rename")
-    p_wr.add_argument("old_name", help="existing workspace name")
-    p_wr.add_argument("new_name", help="new workspace name")
+    p_we = workspace_sub.add_parser("edit", help="edit a workspace (rename, etc.)")
+    p_we.set_defaults(command="workspace_edit")
+    p_we.add_argument(
+        "--name",
+        default=None,
+        help="new workspace name (renames the workspace)",
+    )
+    p_we.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_wsh = workspace_sub.add_parser(
         "show", help="workspace snapshot: statuses, tasks, groups, tags"
@@ -1444,6 +1517,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_warc.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_warc.add_argument("--dry-run", action="store_true", help="preview without executing")
+
+    p_wlog = workspace_sub.add_parser("log", help="show workspace journal / change history")
+    p_wlog.set_defaults(command="workspace_log")
 
     p_wmeta = workspace_sub.add_parser("meta", help="workspace metadata key/value management")
     wmeta_sub = p_wmeta.add_subparsers()
@@ -1482,10 +1558,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="archived visibility: hide (default), include, or only",
     )
 
-    p_cr = status_sub.add_parser("rename", help="rename a status")
-    p_cr.set_defaults(command="status_rename")
-    p_cr.add_argument("old_name")
-    p_cr.add_argument("new_name")
+    p_csh = status_sub.add_parser("show", help="show status detail")
+    p_csh.set_defaults(command="status_show")
+    p_csh.add_argument("name")
+
+    p_cedit = status_sub.add_parser("edit", help="edit a status (rename, etc.)")
+    p_cedit.set_defaults(command="status_edit")
+    p_cedit.add_argument("name", help="existing status name")
+    p_cedit.add_argument(
+        "--name",
+        dest="new_name",
+        default=None,
+        help="new status name (renames the status)",
+    )
 
     p_corder = status_sub.add_parser(
         "order", help="set status display order for active workspace (used by TUI)"
@@ -1607,17 +1692,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_gs.set_defaults(command="group_show")
     p_gs.add_argument("title")
 
-    p_grn = grp_sub.add_parser("rename", help="rename a group")
-    p_grn.set_defaults(command="group_rename")
-    p_grn.add_argument("old_title", help="current group title")
-    p_grn.add_argument("new_title", help="new group title")
-    p_grn.add_argument("--dry-run", action="store_true", help="preview rename without writing")
-
     p_ge = grp_sub.add_parser("edit", help="edit a group")
     p_ge.set_defaults(command="group_edit")
     p_ge.add_argument("title")
+    p_ge.add_argument(
+        "--title",
+        dest="new_title",
+        default=None,
+        help="new group title (renames the group)",
+    )
     p_ge.add_argument("--desc", "-d", default=None, help="group description")
     p_ge.add_argument("--dry-run", action="store_true", help="preview changes without writing")
+
+    p_glog = grp_sub.add_parser("log", help="show group journal / change history")
+    p_glog.set_defaults(command="group_log")
+    p_glog.add_argument("title")
 
     p_garc = grp_sub.add_parser(
         "archive", help="cascade-archive group and all descendant groups/tasks"
@@ -1687,10 +1776,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="archived visibility: hide (default), include, or only",
     )
 
-    p_tren = tag_sub.add_parser("rename", help="rename a tag")
-    p_tren.set_defaults(command="tag_rename")
-    p_tren.add_argument("old_name")
-    p_tren.add_argument("new_name")
+    p_tsh = tag_sub.add_parser("show", help="show tag detail")
+    p_tsh.set_defaults(command="tag_show")
+    p_tsh.add_argument("name")
+
+    p_tedit = tag_sub.add_parser("edit", help="edit a tag (rename, etc.)")
+    p_tedit.set_defaults(command="tag_edit")
+    p_tedit.add_argument("name", help="existing tag name")
+    p_tedit.add_argument(
+        "--name",
+        dest="new_name",
+        default=None,
+        help="new tag name (renames the tag)",
+    )
 
     p_tr = tag_sub.add_parser("archive", help="archive a tag")
     p_tr.set_defaults(command="tag_archive")
@@ -1722,9 +1820,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg_set.add_argument("key", help="config key name")
     p_cfg_set.add_argument("value", help="new value")
 
-    p_cfg_unset = config_sub.add_parser("unset", help="reset a config value to its default")
-    p_cfg_unset.set_defaults(command="config_unset")
-    p_cfg_unset.add_argument("key", help="config key name")
+    p_cfg_del = config_sub.add_parser("del", help="reset a config value to its default")
+    p_cfg_del.set_defaults(command="config_del")
+    p_cfg_del.add_argument("key", help="config key name")
 
     # ---- Export ----
 

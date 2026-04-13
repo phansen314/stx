@@ -206,7 +206,7 @@ Returns a **MoveToWorkspacePreview** object:
 
 ## Workspace Commands
 
-### `workspace create` / `workspace rename`
+### `workspace create` / `workspace edit`
 
 ```json
 {
@@ -310,7 +310,7 @@ Array of Status objects.
 
 ## Group Commands
 
-### `group create` / `group edit` / `group rename` / `group mv` / `group archive`
+### `group create` / `group edit` / `group mv` / `group archive`
 
 ```json
 {

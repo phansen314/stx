@@ -112,12 +112,12 @@ def _history(
     )
 
 
-# ---- format_history_entry / format_task_history ----
+# ---- format_history_entry / format_journal_entries ----
 
 
 class TestHistoryFormatter:
     def test_empty_history_shows_placeholder(self):
-        assert presenters.format_task_history(()) == "no history"
+        assert presenters.format_journal_entries(()) == "no history"
 
     def test_entry_format(self):
         h = _history(1, TaskField.TITLE, "old", "new")
@@ -134,7 +134,7 @@ class TestHistoryFormatter:
     def test_multiple_entries_joined(self):
         h1 = _history(1, TaskField.TITLE, "a", "b")
         h2 = _history(2, TaskField.PRIORITY, "1", "3")
-        out = presenters.format_task_history((h1, h2))
+        out = presenters.format_journal_entries((h1, h2))
         assert out.count("\n") == 1
 
 

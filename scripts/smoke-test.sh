@@ -72,7 +72,7 @@ run "Switch to 'Work'" \
     $CMD workspace use Work
 
 run "Rename active workspace to 'Office'" \
-    $CMD workspace rename Office
+    $CMD workspace edit --name Office
 
 run "List workspaces (verify rename)" \
     $CMD workspace ls

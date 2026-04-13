@@ -143,14 +143,15 @@ generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
   the per-key and bulk-replace code paths emit `journal` rows with `field` set
   to `meta.<key>` and the old/new values filled in. The `source` parameter is
   propagated through all delegates and recorded on the journal entry.
-- **Edges also carry metadata.** `task_edges` and `group_edges` each have their
+- **Edges also carry metadata.** The unified polymorphic `edges` table has its
   own `metadata` JSON column with identical rules (lowercase-normalized keys,
   `[a-z0-9_.-]+` charset, 64-char key cap, 500-char value cap). Access via
-  `stx edge meta ls|get|set|del --source <t> --target <t>` and `stx group edge
-  meta …`. Repository-level helpers are generic over a `_EDGE_METADATA_TABLES`
-  allowlist mirroring the `_METADATA_TABLES` pattern used by single-id entities.
-  Edge metadata mutations also emit `meta.<key>` journal rows (with
-  `entity_type = task_edge` or `group_edge`, `entity_id = source_id`).
+  `stx edge meta ls|get|set|del --source <ref> --target <ref> --kind <k>`.
+  Repository-level helpers operate on the composite `(from_type, from_id,
+  to_type, to_id, kind)` key rather than the single-id `_METADATA_TABLES`
+  allowlist used by tasks/workspaces/groups. Edge metadata mutations emit
+  `meta.<key>` journal rows with `entity_type = edge` and endpoints encoded
+  on the `endpoint` field as `"<from_type>:<from_id>→<to_type>:<to_id>"`.
 
 ## Audit Trail (service-only logic, DB-enforced schema)
 

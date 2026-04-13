@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** `stx workspace rename` removed. Use `stx workspace edit --name <new>`.
+  Operates on the active workspace or `-w` override (no more positional `old_name`).
+- **BREAKING:** `stx group rename` removed. Use `stx group edit <title> --title <new>`.
+  The `edit` verb is now the single mutation surface for group fields; `--dry-run`
+  still previews the diff.
+- **BREAKING:** `stx status rename` removed. Use `stx status edit <name> --name <new>`.
+- **BREAKING:** `stx tag rename` removed. Use `stx tag edit <name> --name <new>`.
+- **BREAKING:** `stx config unset` renamed to `stx config del`, matching the
+  `del` verb family used by `{task,workspace,group} meta del`.
+- **BREAKING:** task `-t` short flag (alias for `--tag`) removed; use the long
+  form. Short `-t` now exclusively means `--target` under `stx edge`. Resolves
+  a cross-subcommand semantic collision.
+
+### Added
+- `stx status show <name>` and `stx tag show <name>` detail views. Both report
+  the referencing task count alongside core fields.
+- `stx group log <title>` and `stx workspace log` expose the unified journal
+  for groups and workspaces (task `log` was already there). Presenter helper
+  `format_task_history` renamed to `format_journal_entries` to reflect its
+  entity-agnostic body.
+- `stx workspace edit --dry-run` previews the diff without writing. Backed by
+  new `service.preview_update_workspace` mirroring `preview_update_group`.
+
+### Docs
+- README no longer claims metadata is supported on every entity kind — statuses
+  and tags have no metadata column.
+- CLAUDE.md brought forward to `SCHEMA_VERSION = 16` and the unified `edges` table
+  (polymorphic endpoints, `acyclic` flag, collapsed `EntityType.EDGE`).
+
+## [0.14.0] — 2026-04-13
+
 ### Added
 - **Polymorphic edges.** `task_edges` + `group_edges` collapse into one
   `edges` table keyed on `(from_type, from_id, to_type, to_id, kind)`.
@@ -259,7 +291,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`project edit --name/-n`** removed; use the new `project rename` instead. `project edit` now only handles description changes.
 - **Dropped `-P` / `-s` short flags** from `task create` / `task ls` / `task edit`. They case-collided with `-p` (project) and `-S` (status), making shift-key typos silently do the wrong thing. Long forms `--priority` and `--search` remain. Breaking for any script relying on the shorts.
 
-[Unreleased]: https://github.com/phansen314/stx/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/phansen314/stx/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/phansen314/stx/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/phansen314/stx/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/phansen314/stx/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/phansen314/stx/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/phansen314/stx/compare/v0.9.0...v0.10.0
