@@ -7,7 +7,6 @@ from typing import NamedTuple
 import pytest
 from helpers import (
     insert_journal_entry,
-    insert_project,
     insert_status,
     insert_task,
     insert_task_dependency,
@@ -18,9 +17,7 @@ from stx.connection import read_schema, transaction
 from stx.mappers import (
     group_to_detail,
     group_to_ref,
-    project_to_detail,
     row_to_journal_entry,
-    row_to_project,
     row_to_status,
     row_to_task,
     row_to_workspace,
@@ -32,12 +29,11 @@ from stx.models import (
     EntityType,
     Group,
     JournalEntry,
+    NewGroup,
     NewJournalEntry,
-    NewProject,
     NewStatus,
     NewTask,
     NewWorkspace,
-    Project,
     Status,
     Task,
     Workspace,
@@ -45,7 +41,6 @@ from stx.models import (
 from stx.service_models import (
     GroupDetail,
     GroupRef,
-    ProjectDetail,
     TaskDetail,
     TaskListItem,
 )
@@ -56,7 +51,6 @@ from stx.service_models import (
 class FullSeed(NamedTuple):
     conn: sqlite3.Connection
     workspace_id: int
-    project_id: int
     status_id: int
     task1_id: int
     task2_id: int
@@ -68,14 +62,12 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
     """Full data graph for tests that need tasks, deps, and history."""
     with transaction(conn):
         workspace_id = insert_workspace(conn)
-        project_id = insert_project(conn, workspace_id)
         status_id = insert_status(conn, workspace_id)
         task1_id = insert_task(
             conn,
             workspace_id,
             "task1",
             status_id,
-            project_id,
             priority=5,
         )
         task2_id = insert_task(conn, workspace_id, "task2", status_id, priority=3)
@@ -91,7 +83,6 @@ def seeded(conn: sqlite3.Connection) -> FullSeed:
     return FullSeed(
         conn=conn,
         workspace_id=workspace_id,
-        project_id=project_id,
         status_id=status_id,
         task1_id=task1_id,
         task2_id=task2_id,
@@ -159,34 +150,6 @@ class TestRowToStatus:
         assert col.archived is True
 
 
-class TestRowToProject:
-    def test_maps_row(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            workspace_id = insert_workspace(conn)
-            proj_id = insert_project(conn, workspace_id)
-        row = conn.execute(
-            "SELECT * FROM projects WHERE id = ?",
-            (proj_id,),
-        ).fetchone()
-        project = row_to_project(row)
-        assert isinstance(project, Project)
-        assert project.name == "proj1"
-        assert project.description == "desc"
-
-    def test_archived_is_bool(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            workspace_id = insert_workspace(conn)
-            proj_id = insert_project(conn, workspace_id)
-        with transaction(conn):
-            conn.execute("UPDATE projects SET archived = 1 WHERE id = ?", (proj_id,))
-        row = conn.execute(
-            "SELECT * FROM projects WHERE id = ?",
-            (proj_id,),
-        ).fetchone()
-        project = row_to_project(row)
-        assert project.archived is True
-
-
 class TestRowToTask:
     def test_maps_row(self, seeded: FullSeed) -> None:
         row = seeded.conn.execute(
@@ -197,17 +160,15 @@ class TestRowToTask:
         assert isinstance(task, Task)
         assert task.title == "task1"
         assert task.priority == 5
-        assert task.project_id == seeded.project_id
         assert task.archived is False
 
     def test_maps_null_optional_fields(self, seeded: FullSeed) -> None:
-        """Task with NULL project_id, description, due_date, start_date, finish_date."""
+        """Task with NULL description, due_date, start_date, finish_date."""
         row = seeded.conn.execute(
             "SELECT * FROM tasks WHERE id = ?",
             (seeded.task2_id,),
         ).fetchone()
         task = row_to_task(row)
-        assert task.project_id is None
         assert task.description is None
         assert task.due_date is None
         assert task.start_date is None
@@ -239,7 +200,6 @@ class TestShallowFields:
             id=1,
             workspace_id=1,
             title="t",
-            project_id=None,
             description=None,
             status_id=1,
             priority=1,
@@ -257,7 +217,6 @@ class TestShallowFields:
             "id",
             "workspace_id",
             "title",
-            "project_id",
             "description",
             "status_id",
             "priority",
@@ -289,7 +248,6 @@ def _task() -> Task:
         id=1,
         workspace_id=1,
         title="t",
-        project_id=None,
         description=None,
         status_id=1,
         priority=1,
@@ -312,7 +270,6 @@ def _group() -> Group:
     return Group(
         id=1,
         workspace_id=1,
-        project_id=1,
         title="g",
         description=None,
         parent_id=None,
@@ -325,21 +282,19 @@ def _group() -> Group:
 
 class TestTaskToListItem:
     def test_creates_list_item(self) -> None:
-        item = task_to_list_item(_task(), project_name="MyProj", tag_names=("a", "b"))
+        item = task_to_list_item(_task(), tag_names=("a", "b"))
         assert isinstance(item, TaskListItem)
         assert item.title == "t"
-        assert item.project_name == "MyProj"
         assert item.tag_names == ("a", "b")
 
     def test_task_fields_copied(self) -> None:
         task = _task()
-        item = task_to_list_item(task, project_name=None, tag_names=())
+        item = task_to_list_item(task, tag_names=())
         for f in dataclasses.fields(task):
             assert getattr(item, f.name) == getattr(task, f.name)
 
     def test_defaults(self) -> None:
-        item = task_to_list_item(_task(), project_name=None, tag_names=())
-        assert item.project_name is None
+        item = task_to_list_item(_task(), tag_names=())
         assert item.tag_names == ()
 
 
@@ -349,7 +304,6 @@ class TestTaskToDetail:
         detail = task_to_detail(
             _task(),
             status=status,
-            project=None,
             group=None,
             edge_sources=(),
             edge_targets=(),
@@ -364,7 +318,6 @@ class TestTaskToDetail:
         detail = task_to_detail(
             task,
             status=_status(),
-            project=None,
             group=None,
             edge_sources=(),
             edge_targets=(),
@@ -377,13 +330,11 @@ class TestTaskToDetail:
         detail = task_to_detail(
             _task(),
             status=_status(),
-            project=None,
             group=None,
             edge_sources=(),
             edge_targets=(),
             history=(),
         )
-        assert detail.project is None
         assert detail.group is None
         assert detail.edge_sources == ()
         assert detail.edge_targets == ()
@@ -395,44 +346,11 @@ class TestTaskToDetail:
         with pytest.raises(TypeError):
             task_to_detail(  # type: ignore[call-arg]
                 _task(),
-                project=None,
                 group=None,
                 edge_sources=(),
                 edge_targets=(),
                 history=(),
             )
-
-
-class TestProjectToDetail:
-    def test_creates_detail(self) -> None:
-        project = Project(
-            id=1,
-            workspace_id=1,
-            name="p",
-            description=None,
-            archived=False,
-            created_at=0,
-            metadata={},
-        )
-        task = _task()
-        detail = project_to_detail(project, tasks=(task,))
-        assert isinstance(detail, ProjectDetail)
-        assert detail.name == "p"
-        assert detail.tasks == (task,)
-
-    def test_project_fields_copied(self) -> None:
-        project = Project(
-            id=1,
-            workspace_id=1,
-            name="p",
-            description=None,
-            archived=False,
-            created_at=0,
-            metadata={},
-        )
-        detail = project_to_detail(project, tasks=())
-        for f in dataclasses.fields(project):
-            assert getattr(detail, f.name) == getattr(project, f.name)
 
 
 class TestGroupToRef:
@@ -457,7 +375,6 @@ class TestGroupToDetail:
         child = Group(
             id=2,
             workspace_id=1,
-            project_id=1,
             title="child",
             description=None,
             parent_id=1,
@@ -501,9 +418,10 @@ class TestPreInsertDefaults:
         workspace = NewWorkspace(name="b")
         assert workspace.name == "b"
 
-    def test_new_project_defaults(self) -> None:
-        proj = NewProject(workspace_id=1, name="p")
-        assert proj.description is None
+    def test_new_group_defaults(self) -> None:
+        grp = NewGroup(workspace_id=1, title="g")
+        assert grp.description is None
+        assert grp.parent_id is None
 
     def test_new_status_defaults(self) -> None:
         col = NewStatus(workspace_id=1, name="c")
@@ -511,13 +429,13 @@ class TestPreInsertDefaults:
 
     def test_new_task_defaults(self) -> None:
         task = NewTask(workspace_id=1, title="t", status_id=1)
-        assert task.project_id is None
         assert task.description is None
         assert task.priority == 1
         assert task.due_date is None
         assert task.position == 0
         assert task.start_date is None
         assert task.finish_date is None
+        assert task.group_id is None
 
     def test_new_journal_entry_defaults(self) -> None:
         hist = NewJournalEntry(
@@ -556,12 +474,12 @@ class TestNewWorkspaceFieldsMatchSchema:
         assert new_workspace_fields | db_defaulted == schema_cols
 
 
-class TestNewProjectFieldsMatchSchema:
-    def test_new_project_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "projects")
+class TestNewGroupFieldsMatchSchema:
+    def test_new_group_covers_insertable_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "groups")
         db_defaulted = {"id", "created_at", "archived", "metadata"}
-        new_proj_fields = {f.name for f in dataclasses.fields(NewProject)}
-        assert new_proj_fields | db_defaulted == schema_cols
+        new_group_fields = {f.name for f in dataclasses.fields(NewGroup)}
+        assert new_group_fields | db_defaulted == schema_cols
 
 
 class TestNewStatusFieldsMatchSchema:
@@ -598,11 +516,11 @@ class TestPersistedWorkspaceFieldsMatchSchema:
         assert workspace_fields == schema_cols
 
 
-class TestPersistedProjectFieldsMatchSchema:
-    def test_project_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
-        schema_cols = _schema_columns(conn, "projects")
-        proj_fields = {f.name for f in dataclasses.fields(Project)}
-        assert proj_fields == schema_cols
+class TestPersistedGroupFieldsMatchSchema:
+    def test_group_fields_match_schema_columns(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "groups")
+        group_fields = {f.name for f in dataclasses.fields(Group)}
+        assert group_fields == schema_cols
 
 
 class TestPersistedStatusFieldsMatchSchema:
@@ -651,17 +569,6 @@ class TestMapperFieldCoverage:
         col = row_to_status(row)
         expected = {f.name for f in dataclasses.fields(Status)}
         actual = {f.name for f in dataclasses.fields(col) if getattr(col, f.name) is not None}
-        assert actual == expected
-
-    def test_row_to_project_populates_all_fields(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            workspace_id = insert_workspace(conn)
-            proj_id = insert_project(conn, workspace_id)
-        row = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,)).fetchone()
-        proj = row_to_project(row)
-        expected = {f.name for f in dataclasses.fields(Project)}
-        # description may be non-None from the helper, so all fields populated
-        actual = {f.name for f in dataclasses.fields(proj) if getattr(proj, f.name) is not None}
         assert actual == expected
 
     def test_row_to_task_populates_all_non_nullable_fields(

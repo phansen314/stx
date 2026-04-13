@@ -6,17 +6,6 @@ CREATE TABLE IF NOT EXISTS workspaces (
     metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata))
 );
 
-CREATE TABLE IF NOT EXISTS projects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-    name TEXT NOT NULL COLLATE NOCASE,
-    description TEXT,
-    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
-    UNIQUE (id, workspace_id)
-);
-
 CREATE TABLE IF NOT EXISTS statuses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
@@ -29,7 +18,6 @@ CREATE TABLE IF NOT EXISTS statuses (
 CREATE TABLE IF NOT EXISTS groups (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-    project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     parent_id    INTEGER,
     title        TEXT NOT NULL COLLATE NOCASE,
     description  TEXT,
@@ -37,15 +25,13 @@ CREATE TABLE IF NOT EXISTS groups (
     archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
-    UNIQUE (id, project_id),
     UNIQUE (id, workspace_id),
-    FOREIGN KEY (parent_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT
+    FOREIGN KEY (parent_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL,
-    project_id INTEGER,
     title TEXT NOT NULL COLLATE NOCASE,
     description TEXT,
     status_id INTEGER NOT NULL,
@@ -59,11 +45,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     group_id INTEGER,
     metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
     CHECK (start_date IS NULL OR finish_date IS NULL OR finish_date >= start_date),
-    CHECK (group_id IS NULL OR project_id IS NOT NULL),
     FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (project_id, workspace_id) REFERENCES projects(id, workspace_id) ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT,
-    FOREIGN KEY (group_id, project_id) REFERENCES groups(id, project_id) ON DELETE RESTRICT,
+    FOREIGN KEY (group_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE RESTRICT,
     UNIQUE (id, workspace_id)
 );
 
@@ -74,7 +58,7 @@ CREATE TABLE IF NOT EXISTS task_edges (
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     -- kind charset kept tight so export.py can safely interpolate it into
     -- Mermaid edge labels (|kind|) without escaping. Loosening this must
-    -- be paired with an escape pass in export._render_*_section.
+    -- be paired with an escape pass in export._render_task_edges_section
     kind TEXT NOT NULL
         CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
     metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
@@ -91,7 +75,7 @@ CREATE TABLE IF NOT EXISTS group_edges (
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     -- kind charset kept tight so export.py can safely interpolate it into
     -- Mermaid edge labels (|kind|) without escaping. Loosening this must
-    -- be paired with an escape pass in export._render_*_section.
+    -- be paired with an escape pass in export._render_group_edges_section
     kind TEXT NOT NULL
         CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
     metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
@@ -122,7 +106,7 @@ CREATE TABLE IF NOT EXISTS task_tags (
 CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL CHECK (entity_type IN (
-        'task', 'project', 'group', 'workspace', 'status',
+        'task', 'group', 'workspace', 'status',
         'task_edge', 'group_edge'
     )),
     entity_id INTEGER NOT NULL,
@@ -134,45 +118,39 @@ CREATE TABLE IF NOT EXISTS journal (
     changed_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Partial unique indexes: scoped to active (non-archived) rows only.
--- Archived rows do not block re-creation of entities with the same name/title.
+-- Partial unique indexes: scoped to active (non-archived) rows only
 CREATE UNIQUE INDEX IF NOT EXISTS uq_workspaces_name_active
     ON workspaces(name) WHERE archived = 0;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_workspace_name_active
-    ON projects(workspace_id, name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_workspace_name_active
     ON statuses(workspace_id, name) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_workspace_name_active
     ON tags(workspace_id, name) WHERE archived = 0;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_project_title_active
-    ON groups(project_id, title) WHERE archived = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_workspace_parent_title_active
+    ON groups(workspace_id, COALESCE(parent_id, -1), title) WHERE archived = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_workspace_title_active
     ON tasks(workspace_id, title) WHERE archived = 0;
 
 -- Composite covering indexes aligned to actual query patterns
--- (each covers WHERE <fk> = ? AND archived = 0 ORDER BY <sort>)
 CREATE INDEX IF NOT EXISTS idx_tasks_status_archived_position
     ON tasks(status_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_archived_position
     ON tasks(workspace_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_tasks_project_archived_position
-    ON tasks(project_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_statuses_workspace_archived_name
     ON statuses(workspace_id, archived, name, id);
 CREATE INDEX IF NOT EXISTS idx_groups_parent_archived_position
     ON groups(parent_id, archived, position, id);
-CREATE INDEX IF NOT EXISTS idx_groups_project_archived_position
-    ON groups(project_id, archived, position, id);
+CREATE INDEX IF NOT EXISTS idx_groups_workspace_archived_position
+    ON groups(workspace_id, archived, position, id);
 CREATE INDEX IF NOT EXISTS idx_tags_workspace_archived_name
     ON tags(workspace_id, archived, name);
 CREATE INDEX IF NOT EXISTS idx_journal_entity
     ON journal(entity_type, entity_id, changed_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_timeline
     ON journal(workspace_id, changed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tasks_project_archived_group
-    ON tasks(project_id, archived, group_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace_archived_group
+    ON tasks(workspace_id, archived, group_id);
 
--- FK indexes on junction/audit tables (PK covers the leading column)
+-- FK indexes on junction tables (PK covers the leading column)
 CREATE INDEX IF NOT EXISTS idx_task_edges_target_id
     ON task_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_group_edges_target_id

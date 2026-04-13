@@ -72,7 +72,6 @@ All mutation commands return a full **TaskDetail** object:
     "description": null,
     "metadata": {},
     "status": {"id": 2, "name": "In Progress", "archived": false, "workspace_id": 1},
-    "project": null,
     "group": null,
     "tags": [],
     "edge_sources": [],
@@ -82,7 +81,7 @@ All mutation commands return a full **TaskDetail** object:
 }
 ```
 
-`project` and `group` are `null` when not assigned.  
+`group` is `null` when not assigned.  
 `tags`, `edge_sources`, `edge_targets`, `history` are arrays (empty when none). Each element of `edge_sources` / `edge_targets` is a **TaskEdgeRef**: `{"task": Task, "kind": str}`.
 
 **Naming convention — read literally:**
@@ -108,8 +107,6 @@ Returns a flat array of **TaskListItem** objects (status grouping is text-only):
       "due_date": null,
       "created_at": 1712700000,
       "status_id": 2,
-      "project_id": null,
-      "project_name": null,
       "tag_names": ["bug", "auth"]
     }
   ]
@@ -156,7 +153,6 @@ Returns `{"task": TaskDetail, "source_task_id": N}`. `task` is the new TaskDetai
       "description": null,
       "metadata": {},
       "status": {"id": 5, "name": "Backlog", "archived": false, "workspace_id": 2},
-      "project": null,
       "group": null,
       "tags": [],
       "edge_sources": [],
@@ -181,7 +177,6 @@ Returns a **MoveToWorkspacePreview** object:
     "source_workspace_id": 1,
     "target_workspace_id": 2,
     "target_status_id": 5,
-    "target_project_id": null,
     "can_move": true,
     "edge_ids": [],
     "blocking_reason": null,
@@ -250,7 +245,6 @@ Full **WorkspaceContext** — grouped kanban view:
         }
       ]
     },
-    "projects": [...],
     "tags": [...],
     "groups": [...]
   }
@@ -314,45 +308,6 @@ Array of Status objects.
 
 ---
 
-## Project Commands
-
-### `project create` / `project edit` / `project rename` / `project archive`
-
-```json
-{
-  "ok": true,
-  "data": {
-    "id": 1, "name": "backend", "description": null,
-    "archived": false, "workspace_id": 1, "metadata": {}
-  }
-}
-```
-
-### `project ls`
-
-Array of Project objects.
-
-### `project show`
-
-**ProjectDetail** — includes task list:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "id": 1, "name": "backend", "description": null,
-    "archived": false, "workspace_id": 1, "metadata": {},
-    "tasks": [{"id": 1, "title": "Fix login bug"}]
-  }
-}
-```
-
-### Project Metadata
-
-Same four-verb pattern as task metadata.
-
----
-
 ## Group Commands
 
 ### `group create` / `group edit` / `group rename` / `group mv` / `group archive`
@@ -362,7 +317,7 @@ Same four-verb pattern as task metadata.
   "ok": true,
   "data": {
     "id": 1, "title": "Sprint 1", "description": null,
-    "project_id": 1, "parent_id": null,
+    "parent_id": null,
     "archived": false, "metadata": {}
   }
 }
@@ -370,7 +325,7 @@ Same four-verb pattern as task metadata.
 
 ### `group ls`
 
-Array with injected `project_name`:
+Array of GroupRef objects:
 
 ```json
 {
@@ -378,9 +333,8 @@ Array with injected `project_name`:
   "data": [
     {
       "id": 1, "title": "Sprint 1", "description": null,
-      "project_id": 1, "parent_id": null,
+      "parent_id": null,
       "archived": false, "metadata": {},
-      "project_name": "backend",
       "task_ids": [1, 2]
     }
   ]
@@ -414,8 +368,8 @@ Returns full **TaskDetail** (same as `task show`).
 `group edge ls` returns an array of the same shape (one **GroupEdgeListItem**
 per active edge). `group edge meta ls|get|set|del` follow the four-verb pattern
 documented under *Task Metadata* — same `{key, value}` shapes, with the edge
-identified via `--source`/`--target` (and optional `--source-project` /
-`--target-project` for disambiguation).
+identified via `--source`/`--target` (and optional `--source-parent` /
+`--target-parent` for disambiguation).
 
 ### Group Metadata
 

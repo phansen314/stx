@@ -11,7 +11,6 @@ class NewResourceModal(ModalScreen[str | None]):
     BINDINGS = [
         Binding("t", "select('task')", "Task", show=True),
         Binding("g", "select('group')", "Group", show=True),
-        Binding("p", "select('project')", "Project", show=True),
         Binding("s", "select('status')", "Status", show=True),
         Binding("w", "select('workspace')", "Workspace", show=True),
         Binding("escape", "dismiss", "Close", priority=True),
@@ -23,7 +22,6 @@ class NewResourceModal(ModalScreen[str | None]):
             with Horizontal(classes="modal-buttons"):
                 yield Button("(t)ask", id="new-task")
                 yield Button("(g)roup", id="new-group")
-                yield Button("(p)roject", id="new-project")
                 yield Button("(s)tatus", id="new-status")
                 yield Button("(w)orkspace", id="new-workspace")
         yield Footer()
@@ -35,7 +33,6 @@ class NewResourceModal(ModalScreen[str | None]):
         mapping = {
             "new-task": "task",
             "new-group": "group",
-            "new-project": "project",
             "new-status": "status",
             "new-workspace": "workspace",
         }

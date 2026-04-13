@@ -114,8 +114,12 @@ class TestArchiveKeyDispatch:
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            ws_node.expand()
+            await pilot.pause()
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            group_node.expand()
+            await pilot.pause()
+            task_leaf = [n for n in group_node.children if not n.allow_expand][0]
             tree.select_node(task_leaf)
             app.set_focus(tree)
             await pilot.pause()
@@ -123,13 +127,13 @@ class TestArchiveKeyDispatch:
             await pilot.pause()
             assert isinstance(app.screen, ArchiveConfirmModal)
 
-    async def test_a_on_project_opens_modal(self, app_and_ids):
+    async def test_a_on_root_group_opens_modal(self, app_and_ids):
         app, ids, db_path = app_and_ids
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            tree.select_node(proj_node)
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(group_node)
             app.set_focus(tree)
             await pilot.pause()
             await pilot.press("a")
@@ -151,7 +155,7 @@ class TestArchiveKeyDispatch:
     async def test_a_on_group_opens_modal(self, app_and_ids):
         app, ids, db_path = app_and_ids
         async with app.run_test() as pilot:
-            group = service.create_group(app.conn, ids["project_id"], "sprint-1")
+            group = service.create_group(app.conn, ids["workspace_id"], "sprint-1")
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()
@@ -283,14 +287,14 @@ class TestArchiveConfirm:
             await pilot.pause()
             assert service.get_task(app.conn, task_id).archived
 
-    async def test_confirm_archives_project_and_tasks(self, app_and_ids):
+    async def test_confirm_archives_root_group_and_tasks(self, app_and_ids):
         app, ids, db_path = app_and_ids
-        project_id = ids["project_id"]
+        group_id = ids["group_id"]
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            tree.select_node(proj_node)
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(group_node)
             app.set_focus(tree)
             await pilot.pause()
             await pilot.press("a")
@@ -299,20 +303,19 @@ class TestArchiveConfirm:
             await pilot.press("y")
             await pilot.pause()
             await pilot.pause()
-            assert service.get_project(app.conn, project_id).archived
-            # Project tasks should be archived too
+            assert service.get_group(app.conn, group_id).archived
+            # Group tasks should be archived too
             assert service.get_task(app.conn, ids["task_ids"]["design_api"]).archived
 
     async def test_confirm_archives_group_and_tasks(self, app_and_ids):
         app, ids, db_path = app_and_ids
         async with app.run_test() as pilot:
-            group = service.create_group(app.conn, ids["project_id"], "sprint-2")
+            group = service.create_group(app.conn, ids["workspace_id"], "sprint-2")
             task = service.create_task(
                 app.conn,
                 ids["workspace_id"],
                 "grouped-task",
                 ids["status_ids"]["todo"],
-                project_id=ids["project_id"],
             )
             service.assign_task_to_group(app.conn, task.id, group.id, source="test")
             app.action_refresh()
@@ -397,11 +400,14 @@ class TestArchiveConfirm:
 
 def _find_group_node(app: StxApp, group_id: int):
     tree = app.query_one("#workspaces-tree")
-    for ws_node in tree.root.children:
-        for proj_node in ws_node.children:
-            if not proj_node.allow_expand:
-                continue
-            for child in proj_node.children:
-                if isinstance(child.data, Group) and child.data.id == group_id:
-                    return child
-    return None
+
+    def _search(node):
+        if isinstance(node.data, Group) and node.data.id == group_id:
+            return node
+        for child in node.children:
+            result = _search(child)
+            if result is not None:
+                return result
+        return None
+
+    return _search(tree.root)

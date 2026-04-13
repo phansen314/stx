@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Input, Select, Static
 
 from stx.models import Status
-from stx.tui.model import ProjectNode, flatten_group_tree
 from stx.tui.screens.base_edit import BaseEditModal, ModalScroll
 from stx.tui.widgets.markdown_editor import MarkdownEditor
 
@@ -15,13 +13,10 @@ class TaskCreateModal(BaseEditModal):
     def __init__(
         self,
         statuses: tuple[Status, ...],
-        project_nodes: tuple[ProjectNode, ...],
+        group_options: list[tuple[str, int]],
     ) -> None:
         self._statuses = statuses
-        self._project_nodes = project_nodes
-        self._groups_by_project: dict[int, list[tuple[str, int]]] = {
-            node.project.id: flatten_group_tree(node.groups) for node in project_nodes
-        }
+        self._group_options = group_options
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -44,7 +39,6 @@ class TaskCreateModal(BaseEditModal):
 
             status_options = [(s.name, s.id) for s in self._statuses]
             priority_options = [(str(i), i) for i in range(1, 6)]
-            project_options = [(node.project.name, node.project.id) for node in self._project_nodes]
 
             with Horizontal(classes="form-row"):
                 with Vertical(classes="form-group"):
@@ -68,23 +62,13 @@ class TaskCreateModal(BaseEditModal):
 
             with Horizontal(classes="form-row"):
                 with Vertical(classes="form-group"):
-                    yield Static("Project", classes="form-label")
+                    yield Static("Group (optional)", classes="form-label")
                     yield Select(
-                        project_options,
-                        value=Select.NULL,
-                        id="task-create-project",
-                        allow_blank=True,
-                        classes="form-field",
-                    )
-                with Vertical(classes="form-group"):
-                    yield Static("Group", classes="form-label")
-                    yield Select(
-                        [],
+                        self._group_options,
                         value=Select.NULL,
                         id="task-create-group",
                         allow_blank=True,
                         classes="form-field",
-                        disabled=True,
                     )
 
             with Horizontal(classes="form-row"):
@@ -118,26 +102,6 @@ class TaskCreateModal(BaseEditModal):
 
     def on_mount(self) -> None:
         self.query_one("#task-create-title", Input).focus()
-        # Create modal starts with no project selected, so initial group
-        # state matches compose (empty + disabled). Track project so the
-        # mount-time Select.Changed echo is recognised as a no-op.
-        self._last_project_id: int | None = None
-
-    @on(Select.Changed, "#task-create-project")
-    def _on_project_changed(self, event: Select.Changed) -> None:
-        new_project = event.value if isinstance(event.value, int) else None
-        if not hasattr(self, "_last_project_id") or new_project == self._last_project_id:
-            self._last_project_id = new_project
-            return
-        self._last_project_id = new_project
-        group_select = self.query_one("#task-create-group", Select)
-        if new_project is not None:
-            options = self._groups_by_project.get(new_project, [])
-            group_select.set_options(options)
-            group_select.disabled = not options
-        else:
-            group_select.set_options([])
-            group_select.disabled = True
 
     def _do_save(self) -> None:
         title = self.query_one("#task-create-title", Input).value.strip()
@@ -154,9 +118,6 @@ class TaskCreateModal(BaseEditModal):
             return
 
         priority = self.query_one("#task-create-priority", Select).value
-
-        project_val = self.query_one("#task-create-project", Select).value
-        project_id = project_val if isinstance(project_val, int) else None
 
         group_val = self.query_one("#task-create-group", Select).value
         group_id = group_val if isinstance(group_val, int) else None
@@ -183,7 +144,6 @@ class TaskCreateModal(BaseEditModal):
                 "title": title,
                 "status_id": status_id,
                 "priority": priority,
-                "project_id": project_id,
                 "group_id": group_id,
                 "description": description,
                 "due_date": due_date,

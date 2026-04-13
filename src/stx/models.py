@@ -7,7 +7,6 @@ from enum import StrEnum
 @dataclass(frozen=True)
 class TaskFilter:
     status_id: int | None = None
-    project_id: int | None = None
     priority: int | None = None
     search: str | None = None
     tag_id: int | None = None
@@ -18,7 +17,6 @@ class TaskFilter:
 
 class EntityType(StrEnum):
     TASK = "task"
-    PROJECT = "project"
     GROUP = "group"
     WORKSPACE = "workspace"
     STATUS = "status"
@@ -30,7 +28,6 @@ class TaskField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"
     STATUS_ID = "status_id"
-    PROJECT_ID = "project_id"
     PRIORITY = "priority"
     DUE_DATE = "due_date"
     POSITION = "position"
@@ -38,12 +35,6 @@ class TaskField(StrEnum):
     START_DATE = "start_date"
     FINISH_DATE = "finish_date"
     GROUP_ID = "group_id"
-
-
-class ProjectField(StrEnum):
-    NAME = "name"
-    DESCRIPTION = "description"
-    ARCHIVED = "archived"
 
 
 class GroupField(StrEnum):
@@ -78,13 +69,6 @@ class NewWorkspace:
 
 
 @dataclass(frozen=True)
-class NewProject:
-    workspace_id: int
-    name: str
-    description: str | None = None
-
-
-@dataclass(frozen=True)
 class NewStatus:
     workspace_id: int
     name: str
@@ -95,7 +79,6 @@ class NewTask:
     workspace_id: int
     title: str
     status_id: int
-    project_id: int | None = None
     description: str | None = None
     priority: int = 1
     due_date: int | None = None
@@ -108,7 +91,6 @@ class NewTask:
 @dataclass(frozen=True)
 class NewGroup:
     workspace_id: int
-    project_id: int
     title: str
     description: str | None = None
     parent_id: int | None = None
@@ -154,17 +136,6 @@ class Workspace:
 
 
 @dataclass(frozen=True)
-class Project:
-    id: int
-    workspace_id: int
-    name: str
-    description: str | None
-    archived: bool
-    created_at: int
-    metadata: dict[str, str]
-
-
-@dataclass(frozen=True)
 class Status:
     id: int
     workspace_id: int
@@ -178,7 +149,6 @@ class Task:
     id: int
     workspace_id: int
     title: str
-    project_id: int | None
     description: str | None
     status_id: int
     priority: int
@@ -196,7 +166,6 @@ class Task:
 class Group:
     id: int
     workspace_id: int
-    project_id: int
     title: str
     description: str | None
     parent_id: int | None

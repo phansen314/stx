@@ -13,7 +13,6 @@ from .formatting import parse_task_num
 from .mappers import (
     group_to_detail,
     group_to_ref,
-    project_to_detail,
     task_to_detail,
     task_to_list_item,
 )
@@ -24,12 +23,10 @@ from .models import (
     JournalEntry,
     NewGroup,
     NewJournalEntry,
-    NewProject,
     NewStatus,
     NewTag,
     NewTask,
     NewWorkspace,
-    Project,
     Status,
     Tag,
     Task,
@@ -45,7 +42,6 @@ from .service_models import (
     GroupEdgeRef,
     GroupRef,
     MoveToWorkspacePreview,
-    ProjectDetail,
     TaskDetail,
     TaskEdgeListItem,
     TaskEdgeRef,
@@ -66,10 +62,8 @@ _UNSET: Any = object()
 
 _UNIQUE_MESSAGES: dict[str, str] = {
     "workspaces.name": "a workspace with this name already exists",
-    "projects.workspace_id, projects.name": "a project with this name already exists on this workspace",
     "statuses.workspace_id, statuses.name": "a status with this name already exists on this workspace",
     "tags.workspace_id, tags.name": "a tag with this name already exists on this workspace",
-    "groups.project_id, groups.title": "a group with this title already exists in this project",
     "tasks.workspace_id, tasks.title": "a task with this title already exists on this workspace",
 }
 
@@ -151,60 +145,16 @@ def _validate_task_fields(
                 )
             if col.archived:
                 raise ValueError(f"status {col.id} is archived")
-        if "project_id" in changes and changes["project_id"] is not None:
-            proj = repo.get_project(conn, changes["project_id"])
-            if proj is None:
-                raise LookupError(f"project {changes['project_id']} not found")
-            if proj.workspace_id != workspace_id:
+        if "group_id" in changes and changes["group_id"] is not None:
+            grp = repo.get_group(conn, changes["group_id"])
+            if grp is None:
+                raise LookupError(f"group {changes['group_id']} not found")
+            if grp.workspace_id != workspace_id:
                 raise ValueError(
-                    f"project {proj.id} belongs to workspace {proj.workspace_id}, not {workspace_id}"
+                    f"group {grp.id} belongs to workspace {grp.workspace_id}, not {workspace_id}"
                 )
-            if proj.archived:
-                raise ValueError(f"project {proj.id} is archived")
-
-
-def _validate_group_project_consistency(
-    conn: sqlite3.Connection,
-    old: Task,
-    changes: dict[str, Any],
-) -> None:
-    """Enforce the (project_id, group_id) invariant on update.
-
-    After applying `changes` on top of `old`, the task's group (if any) must
-    belong to the task's project. This check fires whenever either field is
-    in `changes`, so it catches both scenarios:
-
-      1. Assigning/changing a group → must match current or new project.
-      2. Changing project out from under an existing group → must clear or
-         re-point the group in the same update.
-
-    Intentional side-effect: if a task's *existing* group was archived after
-    assignment, any update that also touches `project_id` (even a no-op
-    project set) will surface the archived-group error. The task is in an
-    inconsistent state and the user must explicitly clear or reassign the
-    group before other edits in the same group/project axis. Updates that
-    don't touch group_id/project_id are unaffected.
-    """
-    effective_group_id = changes.get("group_id", old.group_id)
-    if effective_group_id is None:
-        return
-    grp = repo.get_group(conn, effective_group_id)
-    if grp is None:
-        raise LookupError(f"group {effective_group_id} not found")
-    if grp.workspace_id != old.workspace_id:
-        raise ValueError(
-            f"group {grp.id} belongs to workspace {grp.workspace_id}, not {old.workspace_id}"
-        )
-    if grp.archived:
-        raise ValueError(f"group {grp.id} is archived")
-    effective_project_id = changes.get("project_id", old.project_id)
-    if effective_project_id is None:
-        raise ValueError(f"cannot assign group {grp.id}: task has no project")
-    if effective_project_id != grp.project_id:
-        raise ValueError(
-            f"group {grp.id} belongs to project {grp.project_id}, "
-            f"not task project {effective_project_id}"
-        )
+            if grp.archived:
+                raise ValueError(f"group {grp.id} is archived")
 
 
 def _ensure_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
@@ -341,10 +291,10 @@ def update_workspace(
                     f"workspace has {len(active_cols)} active status(es); "
                     "use 'workspace archive' to cascade"
                 )
-            active_projs = repo.list_projects(conn, workspace_id)
-            if active_projs:
+            active_groups = repo.count_active_groups_in_workspace(conn, workspace_id)
+            if active_groups:
                 raise ValueError(
-                    f"workspace has {len(active_projs)} active project(s); "
+                    f"workspace has {active_groups} active group(s); "
                     "use 'workspace archive' to cascade"
                 )
             active_tasks = repo.list_tasks(conn, workspace_id)
@@ -464,97 +414,6 @@ def archive_status(
         return result
 
 
-# ---- Project ----
-
-
-def create_project(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str,
-    description: str | None = None,
-) -> Project:
-    with transaction(conn), _friendly_errors():
-        return repo.insert_project(
-            conn, NewProject(workspace_id=workspace_id, name=name, description=description)
-        )
-
-
-def get_project(conn: sqlite3.Connection, project_id: int) -> Project:
-    project = repo.get_project(conn, project_id)
-    if project is None:
-        raise LookupError(f"project {project_id} not found")
-    return project
-
-
-def get_project_by_name(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str,
-) -> Project:
-    project = repo.get_project_by_name(conn, workspace_id, name)
-    if project is None:
-        raise LookupError(f"project {name!r} not found")
-    return project
-
-
-def get_project_detail(conn: sqlite3.Connection, project_id: int) -> ProjectDetail:
-    project = get_project(conn, project_id)
-    tasks = repo.list_tasks_by_project(conn, project_id)
-    return project_to_detail(project, tasks=tasks)
-
-
-def list_projects(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    *,
-    include_archived: bool = False,
-    only_archived: bool = False,
-) -> tuple[Project, ...]:
-    return repo.list_projects(
-        conn, workspace_id, include_archived=include_archived, only_archived=only_archived
-    )
-
-
-def _validate_project_update(
-    conn: sqlite3.Connection,
-    project_id: int,
-    changes: dict[str, Any],
-) -> None:
-    """Shared validation for project updates. Currently enforces the
-    archive-cascade block: archiving a project with active tasks or
-    groups requires `project archive` instead of `project edit`.
-    """
-    if changes.get("archived") is True:
-        active_tasks = repo.list_tasks_by_project(conn, project_id)
-        if active_tasks:
-            raise ValueError(
-                f"project has {len(active_tasks)} active task(s); use 'project archive' to cascade"
-            )
-        active_groups = repo.list_groups(conn, project_id)
-        if active_groups:
-            raise ValueError(
-                f"project has {len(active_groups)} active group(s); "
-                "use 'project archive' to cascade"
-            )
-
-
-def update_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    changes: dict[str, Any],
-    source: str = "cli",
-) -> Project:
-    with transaction(conn), _friendly_errors():
-        _validate_project_update(conn, project_id, changes)
-        old = repo.get_project(conn, project_id)
-        result = repo.update_project(conn, project_id, changes)
-        if old is not None:
-            _record_entity_changes(
-                conn, EntityType.PROJECT, project_id, old.workspace_id, old, changes, source
-            )
-        return result
-
-
 # ---- Task ----
 
 
@@ -564,7 +423,6 @@ def create_task(
     title: str,
     status_id: int,
     *,
-    project_id: int | None = None,
     description: str | None = None,
     priority: int = 1,
     due_date: int | None = None,
@@ -582,25 +440,16 @@ def create_task(
         fields["start_date"] = start_date
     if finish_date is not None:
         fields["finish_date"] = finish_date
+    if group_id is not None:
+        fields["group_id"] = group_id
     _validate_task_fields(fields, workspace_id=workspace_id, conn=conn)
     with transaction(conn), _friendly_errors():
-        if group_id is not None:
-            group = get_group(conn, group_id)
-            if group.archived:
-                raise ValueError(f"group {group_id} is archived")
-            if project_id is None:
-                project_id = group.project_id
-            elif project_id != group.project_id:
-                raise ValueError(
-                    f"project {project_id} does not match group's project {group.project_id}"
-                )
         task = repo.insert_task(
             conn,
             NewTask(
                 workspace_id=workspace_id,
                 title=title,
                 status_id=status_id,
-                project_id=project_id,
                 description=description,
                 priority=priority,
                 due_date=due_date,
@@ -652,7 +501,6 @@ def resolve_task_id(
 def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     task = get_task(conn, task_id)
     status = get_status(conn, task.status_id)
-    project = repo.get_project(conn, task.project_id) if task.project_id is not None else None
     group = repo.get_group(conn, task.group_id) if task.group_id is not None else None
     # Naming convention: edge_sources = incoming (tasks that *are sources* of
     # edges touching this task); edge_targets = outgoing (tasks this task
@@ -671,7 +519,6 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     return task_to_detail(
         task,
         status=status,
-        project=project,
         group=group,
         edge_sources=edge_sources,
         edge_targets=edge_targets,
@@ -703,7 +550,6 @@ def get_workspace_list_view(
     workspace_id: int,
     *,
     status_id: int | None = None,
-    project_id: int | None = None,
     tag_id: int | None = None,
     group_id: int | None = None,
     priority: int | None = None,
@@ -711,14 +557,11 @@ def get_workspace_list_view(
     include_archived: bool = False,
     only_archived: bool = False,
 ) -> WorkspaceListView:
-    """Denormalized workspace view for list rendering. Groups task list items by
-    status (alphabetical by name) with project and tag names pre-resolved,
-    so callers don't need to re-query projects/tags for display. When
-    include_archived is True, archived statuses are included as well."""
+    """Denormalized workspace view for list rendering. Groups task list items
+    by status with tag names pre-resolved."""
     workspace = get_workspace(conn, workspace_id)
     task_filter = TaskFilter(
         status_id=status_id,
-        project_id=project_id,
         priority=priority,
         search=search,
         tag_id=tag_id,
@@ -730,8 +573,6 @@ def get_workspace_list_view(
     statuses = repo.list_statuses(
         conn, workspace_id, include_archived=include_archived or only_archived
     )
-    projects = repo.list_projects(conn, workspace_id, include_archived=True)
-    proj_name_by_id: dict[int, str] = {p.id: p.name for p in projects}
     tags = repo.list_tags(conn, workspace_id, include_archived=True)
     tag_name_by_id: dict[int, str] = {t.id: t.name for t in tags}
 
@@ -745,11 +586,10 @@ def get_workspace_list_view(
             bucket.append(task)
 
     def _to_item(task: Task) -> TaskListItem:
-        proj_name = proj_name_by_id.get(task.project_id) if task.project_id is not None else None
         tag_names = tuple(
             tag_name_by_id[tid] for tid in tag_map.get(task.id, ()) if tid in tag_name_by_id
         )
-        return task_to_list_item(task, project_name=proj_name, tag_names=tag_names)
+        return task_to_list_item(task, tag_names=tag_names)
 
     status_list = tuple(
         WorkspaceListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
@@ -759,14 +599,11 @@ def get_workspace_list_view(
 
 
 def get_workspace_context(conn: sqlite3.Connection, workspace_id: int) -> WorkspaceContext:
-    """Aggregated workspace state: view + projects + tags + all groups. Active items only."""
+    """Aggregated workspace state: view + tags + all groups. Active items only."""
     view = get_workspace_list_view(conn, workspace_id)
-    projects = list_projects(conn, workspace_id)
     tags = list_tags(conn, workspace_id)
-    groups: list[GroupRef] = []
-    for proj in projects:
-        groups.extend(list_groups(conn, proj.id))
-    return WorkspaceContext(view=view, projects=projects, tags=tags, groups=tuple(groups))
+    groups = list_all_groups(conn, workspace_id)
+    return WorkspaceContext(view=view, tags=tags, groups=groups)
 
 
 def update_task(
@@ -809,8 +646,6 @@ def _validate_task_update(
         merged["finish_date"] = changes.get("finish_date", old.finish_date)
     merged.update(changes)
     _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
-    if "group_id" in changes or "project_id" in changes:
-        _validate_group_project_consistency(conn, old, changes)
 
 
 def _update_task_body(
@@ -857,14 +692,9 @@ def move_task(
     status_id: int,
     position: int,
     source: str,
-    *,
-    project_id: Any = _UNSET,
 ) -> Task:
-    """Move a task to (status_id, position). If project_id is provided (including None),
-    also reassign the task's project in the same transaction."""
+    """Move a task to (status_id, position)."""
     changes: dict[str, Any] = {"status_id": status_id, "position": position}
-    if project_id is not _UNSET:
-        changes["project_id"] = project_id
     return update_task(conn, task_id, changes, source)
 
 
@@ -873,7 +703,6 @@ def _validate_move_to_workspace(
     task_id: int,
     target_workspace_id: int,
     target_status_id: int,
-    project_id: int | None,
 ) -> tuple[Task, bool, str | None, tuple[int, ...]]:
     """Check move-to-workspace preconditions. Non-mutating.
     Returns (task, can_move, blocking_reason, edge_ids).
@@ -905,17 +734,6 @@ def _validate_move_to_workspace(
         )
     if target_col.archived:
         return task, False, f"status {target_status_id} is archived", edge_ids
-    if project_id is not None:
-        proj = repo.get_project(conn, project_id)
-        if proj is None or proj.workspace_id != target_workspace_id:
-            return (
-                task,
-                False,
-                (f"project {project_id} does not belong to workspace {target_workspace_id}"),
-                edge_ids,
-            )
-        if proj.archived:
-            return task, False, f"project {project_id} is archived", edge_ids
     return task, True, None, edge_ids
 
 
@@ -924,8 +742,6 @@ def preview_move_to_workspace(
     task_id: int,
     target_workspace_id: int,
     target_status_id: int,
-    *,
-    project_id: int | None = None,
 ) -> MoveToWorkspacePreview:
     """Dry-run the same validation as move_task_to_workspace. Does not mutate."""
     task, can_move, reason, edge_ids = _validate_move_to_workspace(
@@ -933,7 +749,6 @@ def preview_move_to_workspace(
         task_id,
         target_workspace_id,
         target_status_id,
-        project_id,
     )
     return MoveToWorkspacePreview(
         task_id=task.id,
@@ -941,7 +756,6 @@ def preview_move_to_workspace(
         source_workspace_id=task.workspace_id,
         target_workspace_id=target_workspace_id,
         target_status_id=target_status_id,
-        target_project_id=project_id,
         can_move=can_move,
         blocking_reason=reason,
         edge_ids=edge_ids,
@@ -955,7 +769,6 @@ def move_task_to_workspace(
     target_workspace_id: int,
     target_status_id: int,
     *,
-    project_id: int | None = None,
     source: str,
 ) -> Task:
     with transaction(conn), _friendly_errors():
@@ -964,7 +777,6 @@ def move_task_to_workspace(
             task_id,
             target_workspace_id,
             target_status_id,
-            project_id,
         )
         if not can_move:
             raise ValueError(reason)
@@ -975,7 +787,6 @@ def move_task_to_workspace(
                 workspace_id=target_workspace_id,
                 title=old.title,
                 status_id=target_status_id,
-                project_id=project_id,
                 description=old.description,
                 priority=old.priority,
                 due_date=old.due_date,
@@ -1432,58 +1243,6 @@ def replace_workspace_metadata(
     )
 
 
-# ---- Project metadata ----
-
-
-def get_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str:
-    return _get_entity_meta(conn, project_id, key, fetcher=get_project, entity_name="project")
-
-
-def set_project_meta(conn: sqlite3.Connection, project_id: int, key: str, value: str) -> Project:
-    return _set_entity_meta(
-        conn,
-        project_id,
-        key,
-        value,
-        entity_type=EntityType.PROJECT,
-        setter=repo.set_project_metadata_key,
-        fetcher=get_project,
-    )
-
-
-def remove_project_meta(conn: sqlite3.Connection, project_id: int, key: str) -> str:
-    return _remove_entity_meta(
-        conn,
-        project_id,
-        key,
-        entity_type=EntityType.PROJECT,
-        remover=repo.remove_project_metadata_key,
-        fetcher=get_project,
-        entity_name="project",
-    )
-
-
-def replace_project_metadata(
-    conn: sqlite3.Connection,
-    project_id: int,
-    new_metadata: dict[str, str],
-    *,
-    source: str,
-) -> Project:
-    """Atomically replace a project's entire metadata blob. See
-    `replace_task_metadata` for the `source` parameter rationale.
-    """
-    return _replace_entity_metadata(
-        conn,
-        project_id,
-        new_metadata,
-        entity_type=EntityType.PROJECT,
-        writer=repo.replace_project_metadata,
-        fetcher=get_project,
-        source=source,
-    )
-
-
 # ---- Group metadata ----
 
 
@@ -1680,13 +1439,11 @@ def add_group_edge(
         tgt = repo.get_group(conn, target_id)
         if tgt is None:
             raise LookupError(f"group {target_id} not found")
-        grp_proj = repo.get_project(conn, grp.project_id)
-        tgt_proj = repo.get_project(conn, tgt.project_id)
-        if grp_proj is None or tgt_proj is None or grp_proj.workspace_id != tgt_proj.workspace_id:
+        if grp.workspace_id != tgt.workspace_id:
             raise ValueError(
                 f"groups must be on the same workspace: "
-                f"group {group_id} is on workspace {grp_proj.workspace_id if grp_proj else '?'}, "
-                f"group {target_id} is on workspace {tgt_proj.workspace_id if tgt_proj else '?'}"
+                f"group {group_id} is on workspace {grp.workspace_id}, "
+                f"group {target_id} is on workspace {tgt.workspace_id}"
             )
         if grp.archived:
             raise ValueError(f"group {group_id} is archived")
@@ -1988,27 +1745,28 @@ def _would_create_cycle(
 
 def create_group(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
     title: str,
     parent_id: int | None = None,
     position: int = 0,
     description: str | None = None,
 ) -> Group:
     with transaction(conn), _friendly_errors():
-        project = get_project(conn, project_id)
+        get_workspace(conn, workspace_id)
         if parent_id is not None:
             parent = repo.get_group(conn, parent_id)
             if parent is None:
                 raise LookupError(f"parent group {parent_id} not found")
-            if parent.project_id != project_id:
+            if parent.workspace_id != workspace_id:
                 raise ValueError(
-                    f"parent group belongs to project {parent.project_id}, not {project_id}"
+                    f"parent group belongs to workspace {parent.workspace_id}, not {workspace_id}"
                 )
+            if parent.archived:
+                raise ValueError(f"parent group {parent_id} is archived")
         return repo.insert_group(
             conn,
             NewGroup(
-                workspace_id=project.workspace_id,
-                project_id=project_id,
+                workspace_id=workspace_id,
                 title=title,
                 description=description,
                 parent_id=parent_id,
@@ -2026,10 +1784,11 @@ def get_group(conn: sqlite3.Connection, group_id: int) -> Group:
 
 def get_group_by_title(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
+    parent_id: int | None,
     title: str,
 ) -> Group:
-    group = repo.get_group_by_title(conn, project_id, title)
+    group = repo.get_group_by_title(conn, workspace_id, parent_id, title)
     if group is None:
         raise LookupError(f"group {title!r} not found")
     return group
@@ -2040,26 +1799,25 @@ def resolve_group_by_title(
     workspace_id: int,
     title: str,
     *,
-    project_id: int | None = None,
+    parent_id: int | None = None,
+    parent_known: bool = False,
 ) -> Group:
-    """Resolve a group by title. If project_id is given, scope the search to that project.
-    Otherwise search all projects on the workspace; raises LookupError on ambiguity.
-    Comparison is case-insensitive (matching the underlying title COLLATE NOCASE)."""
-    if project_id is not None:
-        return get_group_by_title(conn, project_id, title)
+    """Resolve a group by title on a workspace.
+
+    When `parent_known` is True, `parent_id` narrows the lookup to groups
+    with that exact parent (None = root groups). When `parent_known` is
+    False, all groups on the workspace matching the title are considered;
+    ambiguity raises LookupError.
+    """
+    if parent_known:
+        return get_group_by_title(conn, workspace_id, parent_id, title)
     candidates = repo.list_groups_by_workspace(conn, workspace_id, title=title)
     if not candidates:
         raise LookupError(f"group {title!r} not found")
     if len(candidates) > 1:
-        proj_names = []
-        for g in candidates:
-            proj = repo.get_project(conn, g.project_id)
-            if proj is not None:
-                proj_names.append(proj.name)
         raise LookupError(
-            f"group {title!r} is ambiguous — exists in projects: "
-            + ", ".join(repr(n) for n in proj_names)
-            + ". Use --project to disambiguate"
+            f"group {title!r} is ambiguous — {len(candidates)} matches. "
+            "Use --parent to disambiguate"
         )
     return candidates[0]
 
@@ -2069,13 +1827,25 @@ def resolve_group(
     workspace_id: int,
     title: str,
     *,
-    project_name: str | None = None,
+    parent_title: str | None = None,
+    parent_root: bool = False,
 ) -> Group:
-    """Resolve a group by title. If project_name is given, translates it to a
-    project_id and scopes the search; otherwise searches all projects on the
-    workspace (raising LookupError on ambiguity)."""
-    project_id = get_project_by_name(conn, workspace_id, project_name).id if project_name else None
-    return resolve_group_by_title(conn, workspace_id, title, project_id=project_id)
+    """Resolve a group by title.
+
+    If `parent_root` is True, looks up a root-level group (parent_id IS NULL).
+    If `parent_title` is given, resolves that parent first and scopes under it.
+    Otherwise searches all groups on the workspace (ambiguity is an error).
+    """
+    if parent_root:
+        return resolve_group_by_title(
+            conn, workspace_id, title, parent_id=None, parent_known=True
+        )
+    if parent_title is not None:
+        parent = resolve_group_by_title(conn, workspace_id, parent_title)
+        return resolve_group_by_title(
+            conn, workspace_id, title, parent_id=parent.id, parent_known=True
+        )
+    return resolve_group_by_title(conn, workspace_id, title)
 
 
 def get_group_ancestry(
@@ -2120,16 +1890,50 @@ def get_group_detail(conn: sqlite3.Connection, group_id: int) -> GroupDetail:
 
 def list_groups(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
     *,
+    parent_id: int | None = None,
     include_archived: bool = False,
     only_archived: bool = False,
 ) -> tuple[GroupRef, ...]:
+    """List groups on a workspace. When `parent_id` is None, returns root
+    groups (parent_id IS NULL). Pass an explicit parent_id to list its
+    children.
+    """
     groups = repo.list_groups(
         conn,
-        project_id,
+        workspace_id,
+        parent_id=parent_id,
         include_archived=include_archived,
         only_archived=only_archived,
+    )
+    if not groups:
+        return ()
+    group_ids = tuple(g.id for g in groups)
+    task_ids_map = repo.batch_task_ids_by_group(conn, group_ids)
+    child_ids_map = repo.batch_child_ids_by_group(
+        conn,
+        group_ids,
+        include_archived=include_archived,
+    )
+    return tuple(
+        group_to_ref(g, task_ids=task_ids_map.get(g.id, ()), child_ids=child_ids_map.get(g.id, ()))
+        for g in groups
+    )
+
+
+def list_all_groups(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[GroupRef, ...]:
+    """Return every group on a workspace (hydrated as GroupRef). Order is
+    by position/id but the hierarchy is flat — callers that need the tree
+    structure should walk `child_ids`.
+    """
+    groups = repo.list_groups_by_workspace(
+        conn, workspace_id, include_archived=include_archived
     )
     if not groups:
         return ()
@@ -2176,19 +1980,13 @@ def assign_task_to_group(
     *,
     source: str,
 ) -> Task:
-    """Assign a group to a task, auto-inferring project_id from the group
-    when the task has none. Preserves the CLI `group assign` convenience.
-
-    Holds a single outer transaction so the reads (task, group) stay
-    consistent with the subsequent update — closing the TOCTOU window that
-    would otherwise exist between the reads and a separate update_task call.
+    """Assign a group to a task. The group must belong to the same workspace
+    as the task; validation inside `_update_task_body` enforces this.
     """
     with transaction(conn), _friendly_errors():
-        task = get_task(conn, task_id)
-        group = get_group(conn, group_id)  # raises LookupError on miss
+        get_task(conn, task_id)
+        get_group(conn, group_id)  # raises LookupError on miss
         changes: dict[str, Any] = {"group_id": group_id}
-        if task.project_id is None:
-            changes["project_id"] = group.project_id
         return _update_task_body(conn, task_id, changes, source)
 
 
@@ -2236,9 +2034,9 @@ def list_groups_for_workspace(
 
 def list_ungrouped_task_ids(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
 ) -> tuple[int, ...]:
-    return repo.list_ungrouped_task_ids(conn, project_id)
+    return repo.list_ungrouped_task_ids(conn, workspace_id)
 
 
 # ---- Tag ----
@@ -2345,7 +2143,6 @@ def preview_archive_task(conn: sqlite3.Connection, task_id: int) -> ArchivePrevi
         already_archived=task.archived,
         task_count=0,
         group_count=0,
-        project_count=0,
         status_count=0,
     )
 
@@ -2358,20 +2155,6 @@ def preview_archive_group(conn: sqlite3.Connection, group_id: int) -> ArchivePre
         already_archived=group.archived,
         task_count=repo.count_active_tasks_in_group_subtree(conn, group_id),
         group_count=repo.count_active_descendant_groups(conn, group_id),
-        project_count=0,
-        status_count=0,
-    )
-
-
-def preview_archive_project(conn: sqlite3.Connection, project_id: int) -> ArchivePreview:
-    project = get_project(conn, project_id)
-    return ArchivePreview(
-        entity_type="project",
-        entity_name=project.name,
-        already_archived=project.archived,
-        task_count=repo.count_active_tasks_in_project(conn, project_id),
-        group_count=repo.count_active_groups_in_project(conn, project_id),
-        project_count=0,
         status_count=0,
     )
 
@@ -2384,7 +2167,6 @@ def preview_archive_workspace(conn: sqlite3.Connection, workspace_id: int) -> Ar
         already_archived=workspace.archived,
         task_count=repo.count_active_tasks_in_workspace(conn, workspace_id),
         group_count=repo.count_active_groups_in_workspace(conn, workspace_id),
-        project_count=repo.count_active_projects_in_workspace(conn, workspace_id),
         status_count=repo.count_active_statuses_in_workspace(conn, workspace_id),
     )
 
@@ -2397,7 +2179,6 @@ def preview_archive_status(conn: sqlite3.Connection, status_id: int) -> ArchiveP
         already_archived=status.archived,
         task_count=repo.count_active_tasks_by_status(conn, status_id),
         group_count=0,
-        project_count=0,
         status_count=0,
     )
 
@@ -2410,7 +2191,6 @@ def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview
         already_archived=tag.archived,
         task_count=repo.count_active_tasks_by_tag(conn, tag_id),
         group_count=0,
-        project_count=0,
         status_count=0,
     )
 
@@ -2454,31 +2234,11 @@ def preview_move_task(
     task_id: int,
     status_id: int,
     position: int,
-    *,
-    project_id: int | None = None,
-    change_project: bool = False,
 ) -> TaskMovePreview:
-    """Compute a from/to snapshot for `move_task`. No DB writes.
-
-    Pass `change_project=True` to reassign the project; `project_id` is
-    then the new value (None means unassign). When `change_project=False`
-    the preview reports no project change.
-    """
+    """Compute a from/to snapshot for `move_task`. No DB writes."""
     task = get_task(conn, task_id)
     from_status = get_status(conn, task.status_id)
     to_status = get_status(conn, status_id)
-    from_project = (
-        repo.get_project(conn, task.project_id).name if task.project_id is not None else None  # type: ignore[union-attr]
-    )
-    if change_project:
-        to_project_id = project_id
-        project_changed = to_project_id != task.project_id
-    else:
-        to_project_id = task.project_id
-        project_changed = False
-    to_project = (
-        repo.get_project(conn, to_project_id).name if to_project_id is not None else None  # type: ignore[union-attr]
-    )
     return TaskMovePreview(
         task_id=task_id,
         title=task.title,
@@ -2486,29 +2246,6 @@ def preview_move_task(
         to_status=to_status.name,
         from_position=task.position,
         to_position=position,
-        from_project=from_project,
-        to_project=to_project,
-        project_changed=project_changed,
-    )
-
-
-def preview_update_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    changes: dict[str, Any],
-) -> EntityUpdatePreview:
-    """Compute a diff for `update_project` without writing. Runs the same
-    validation as `update_project` so dry-run surfaces rejection errors.
-    """
-    old = get_project(conn, project_id)
-    _validate_project_update(conn, project_id, changes)
-    before, after = _diff_fields(old, changes)
-    return EntityUpdatePreview(
-        entity_type="project",
-        entity_id=project_id,
-        label=old.name,
-        before=before,
-        after=after,
     )
 
 
@@ -2629,21 +2366,6 @@ def cascade_archive_group(
         return repo.update_group(conn, group_id, {"archived": True})
 
 
-def cascade_archive_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    *,
-    source: str,
-) -> Project:
-    with transaction(conn), _friendly_errors():
-        project = get_project(conn, project_id)
-        task_ids = repo.list_active_task_ids_in_project(conn, project_id)
-        repo.archive_tasks_in_project(conn, project_id)
-        _record_archive_history(conn, task_ids, project.workspace_id, source)
-        repo.archive_groups_in_project(conn, project_id)
-        return repo.update_project(conn, project_id, {"archived": True})
-
-
 def cascade_archive_workspace(
     conn: sqlite3.Connection,
     workspace_id: int,
@@ -2655,6 +2377,5 @@ def cascade_archive_workspace(
         repo.archive_tasks_in_workspace(conn, workspace_id)
         _record_archive_history(conn, task_ids, workspace_id, source)
         repo.archive_groups_in_workspace(conn, workspace_id)
-        repo.archive_projects_in_workspace(conn, workspace_id)
         repo.archive_statuses_in_workspace(conn, workspace_id)
         return repo.update_workspace(conn, workspace_id, {"archived": True})

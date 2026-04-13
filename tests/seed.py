@@ -15,14 +15,20 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     in_progress = service.create_status(conn, workspace.id, "In Progress")
     done = service.create_status(conn, workspace.id, "Done")
 
-    project = service.create_project(conn, workspace.id, "apr-api", description="April API sprint")
+    # Root group replacing old "apr-api" project
+    apr_api = service.create_group(
+        conn,
+        workspace.id,
+        "apr-api",
+        description="April API sprint",
+    )
 
     t1 = service.create_task(
         conn,
         workspace.id,
         "Design API schema",
         todo.id,
-        project_id=project.id,
+        group_id=apr_api.id,
         priority=3,
         description="Define OpenAPI spec for all endpoints",
     )
@@ -31,7 +37,7 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
         workspace.id,
         "Endpoint design",
         todo.id,
-        project_id=project.id,
+        group_id=apr_api.id,
         priority=2,
     )
     t3 = service.create_task(
@@ -39,7 +45,7 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
         workspace.id,
         "Auth middleware",
         in_progress.id,
-        project_id=project.id,
+        group_id=apr_api.id,
         priority=3,
         description="JWT validation and role extraction",
     )
@@ -71,7 +77,7 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
         workspace.id,
         "Database migrations",
         todo.id,
-        project_id=project.id,
+        group_id=apr_api.id,
         priority=3,
     )
     t8 = service.create_task(
@@ -94,7 +100,7 @@ def seed_workspace(conn: sqlite3.Connection, db_path: Path | None = None) -> dic
     return {
         "workspace_id": workspace.id,
         "status_ids": {"todo": todo.id, "in_progress": in_progress.id, "done": done.id},
-        "project_id": project.id,
+        "group_id": apr_api.id,
         "task_ids": {
             "design_api": t1.id,
             "endpoint_design": t2.id,
@@ -113,15 +119,15 @@ def seed_multi_workspace(conn: sqlite3.Connection, db_path: Path | None = None) 
     ws2 = service.create_workspace(conn, "Personal")
     backlog = service.create_status(conn, ws2.id, "Backlog")
     complete = service.create_status(conn, ws2.id, "Complete")
-    home = service.create_project(conn, ws2.id, "Home")
-    t_a = service.create_task(conn, ws2.id, "Buy groceries", backlog.id, project_id=home.id)
+    home = service.create_group(conn, ws2.id, "Home")
+    t_a = service.create_task(conn, ws2.id, "Buy groceries", backlog.id, group_id=home.id)
     t_b = service.create_task(conn, ws2.id, "Fix fence", complete.id)
     return {
         "ws1": ids1,
         "ws2": {
             "workspace_id": ws2.id,
             "status_ids": {"backlog": backlog.id, "complete": complete.id},
-            "project_id": home.id,
+            "group_id": home.id,
             "task_ids": {"buy_groceries": t_a.id, "fix_fence": t_b.id},
         },
     }

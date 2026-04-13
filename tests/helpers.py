@@ -46,33 +46,19 @@ def insert_status(
     return cur.lastrowid  # type: ignore[return-value]
 
 
-def insert_project(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str = "proj1",
-    description: str | None = "desc",
-) -> int:
-    cur = conn.execute(
-        "INSERT INTO projects (workspace_id, name, description) VALUES (?, ?, ?)",
-        (workspace_id, name, description),
-    )
-    return cur.lastrowid  # type: ignore[return-value]
-
-
 def insert_task(
     conn: sqlite3.Connection,
     workspace_id: int,
     title: str,
     status_id: int,
-    project_id: int | None = None,
     priority: int = 1,
     due_date: int | None = None,
     description: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO tasks (workspace_id, title, status_id, project_id, priority, due_date, description) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (workspace_id, title, status_id, project_id, priority, due_date, description),
+        "INSERT INTO tasks (workspace_id, title, status_id, priority, due_date, description) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (workspace_id, title, status_id, priority, due_date, description),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -105,15 +91,16 @@ def insert_group_dependency(
 
 def insert_group(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
     title: str = "group1",
     parent_id: int | None = None,
     position: int = 0,
+    description: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO groups (workspace_id, project_id, title, parent_id, position) "
-        "VALUES ((SELECT workspace_id FROM projects WHERE id = ?), ?, ?, ?, ?)",
-        (project_id, project_id, title, parent_id, position),
+        "INSERT INTO groups (workspace_id, title, parent_id, position, description) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (workspace_id, title, parent_id, position, description),
     )
     return cur.lastrowid  # type: ignore[return-value]
 

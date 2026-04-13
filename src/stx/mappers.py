@@ -9,7 +9,6 @@ from .models import (
     EntityType,
     Group,
     JournalEntry,
-    Project,
     Status,
     Tag,
     Task,
@@ -20,7 +19,6 @@ from .service_models import (
     GroupEdgeListItem,
     GroupEdgeRef,
     GroupRef,
-    ProjectDetail,
     TaskDetail,
     TaskEdgeListItem,
     TaskEdgeRef,
@@ -43,18 +41,6 @@ def row_to_workspace(row: Row) -> Workspace:
     )
 
 
-def row_to_project(row: Row) -> Project:
-    return Project(
-        id=row["id"],
-        workspace_id=row["workspace_id"],
-        name=row["name"],
-        description=row["description"],
-        archived=bool(row["archived"]),
-        created_at=row["created_at"],
-        metadata=json.loads(row["metadata"]),
-    )
-
-
 def row_to_status(row: Row) -> Status:
     return Status(
         id=row["id"],
@@ -70,7 +56,6 @@ def row_to_task(row: Row) -> Task:
         id=row["id"],
         workspace_id=row["workspace_id"],
         title=row["title"],
-        project_id=row["project_id"],
         description=row["description"],
         status_id=row["status_id"],
         priority=row["priority"],
@@ -89,7 +74,6 @@ def row_to_group(row: Row) -> Group:
     return Group(
         id=row["id"],
         workspace_id=row["workspace_id"],
-        project_id=row["project_id"],
         title=row["title"],
         description=row["description"],
         parent_id=row["parent_id"],
@@ -163,12 +147,10 @@ def shallow_fields(instance: object, cls: type) -> dict[str, Any]:
 def task_to_list_item(
     task: Task,
     *,
-    project_name: str | None,
     tag_names: tuple[str, ...],
 ) -> TaskListItem:
     return TaskListItem(
         **shallow_fields(task, Task),
-        project_name=project_name,
         tag_names=tag_names,
     )
 
@@ -193,7 +175,6 @@ def task_to_detail(
     task: Task,
     *,
     status: Status,
-    project: Project | None,
     group: Group | None,
     edge_sources: tuple[TaskEdgeRef, ...],
     edge_targets: tuple[TaskEdgeRef, ...],
@@ -203,23 +184,11 @@ def task_to_detail(
     return TaskDetail(
         **shallow_fields(task, Task),
         status=status,
-        project=project,
         group=group,
         edge_sources=edge_sources,
         edge_targets=edge_targets,
         history=history,
         tags=tags,
-    )
-
-
-def project_to_detail(
-    project: Project,
-    *,
-    tasks: tuple[Task, ...],
-) -> ProjectDetail:
-    return ProjectDetail(
-        **shallow_fields(project, Project),
-        tasks=tasks,
     )
 
 

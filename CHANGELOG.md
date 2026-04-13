@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING:** `projects` are removed as a first-class entity. Old projects
+  become root groups (groups with `parent_id IS NULL`) via migration 015.
+  `stx project *` subcommands are gone. `--project/-p` flags are dropped
+  across `task create/ls/edit/mv/transfer` and `group *`. Group disambiguation
+  is now title-only within a workspace (nested groups under different parents
+  remain distinct).
+
+### Added
+- Optional `description` column on `groups`. Carried over from old project
+  descriptions during migration.
+
+### Changed
+- `WorkspaceContext` no longer has a `projects` field. The TUI tree now
+  renders `Workspace → root groups → subgroups → tasks`, with unassigned
+  tasks (no `group_id`) shown at the workspace level.
+
 ## [0.12.0] — 2026-04-12
 
 ### Added

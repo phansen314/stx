@@ -1,4 +1,4 @@
-"""Tests for project, group, and workspace edit modals."""
+"""Tests for group and workspace edit modals."""
 
 from __future__ import annotations
 
@@ -6,36 +6,19 @@ from helpers import ModalTestApp
 from textual.widgets import Input, Static, TextArea
 
 from stx.models import Workspace
-from stx.service_models import GroupDetail, ProjectDetail
+from stx.service_models import GroupDetail
+from stx.tui.screens.group_create import GroupCreateModal
 from stx.tui.screens.group_edit import GroupEditModal
-from stx.tui.screens.project_create import ProjectCreateModal
-from stx.tui.screens.project_edit import ProjectEditModal
 from stx.tui.screens.workspace_create import WorkspaceCreateModal
 from stx.tui.screens.workspace_edit import WorkspaceEditModal
 
 # ---- Factories ----
 
 
-def make_project_detail(**overrides) -> ProjectDetail:
-    defaults = dict(
-        id=1,
-        workspace_id=1,
-        name="Alpha",
-        description="A project",
-        archived=False,
-        created_at=0,
-        tasks=(),
-        metadata={},
-    )
-    defaults.update(overrides)
-    return ProjectDetail(**defaults)
-
-
 def make_group_detail(**overrides) -> GroupDetail:
     defaults = dict(
         id=1,
         workspace_id=1,
-        project_id=1,
         title="Sprint 1",
         description=None,
         parent_id=None,
@@ -63,80 +46,6 @@ def make_workspace(**overrides) -> Workspace:
     )
     defaults.update(overrides)
     return Workspace(**defaults)
-
-
-# ---- Project edit modal tests ----
-
-
-class TestProjectEditModal:
-    async def test_no_changes_dismisses_none(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            app.screen.action_save()
-            await pilot.pause()
-            assert app.result is None
-
-    async def test_cancel_dismisses_none(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            await pilot.press("escape")
-            assert app.result is None
-
-    async def test_empty_name_shows_error(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#project-edit-name", Input).value = ""
-            modal.action_save()
-            await pilot.pause()
-            error = modal.query_one("#modal-error", Static)
-            assert "Name is required" in str(error.render())
-            assert app.result == "NOT_SET"
-
-    async def test_name_change(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#project-edit-name", Input).value = "Beta"
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {"project_id": 1, "changes": {"name": "Beta"}}
-
-    async def test_description_change(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            modal = app.screen
-            textarea = modal.query_one(TextArea)
-            textarea.clear()
-            textarea.insert("new desc")
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {"project_id": 1, "changes": {"description": "new desc"}}
-
-    async def test_empty_description_becomes_none(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail(description="something")))
-        async with app.run_test() as pilot:
-            modal = app.screen
-            textarea = modal.query_one(TextArea)
-            textarea.clear()
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {"project_id": 1, "changes": {"description": None}}
-
-    async def test_multiple_changes(self):
-        app = ModalTestApp(ProjectEditModal(make_project_detail()))
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#project-edit-name", Input).value = "Beta"
-            textarea = modal.query_one(TextArea)
-            textarea.clear()
-            textarea.insert("updated")
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {
-                "project_id": 1,
-                "changes": {"name": "Beta", "description": "updated"},
-            }
 
 
 # ---- Group edit modal tests ----
@@ -263,12 +172,12 @@ class TestBaseEditKeyBindings:
 
     async def test_editor_mode_with_markdown_editor(self):
         """ctrl+e on modal with MarkdownEditor calls switch_to_editor()."""
-        app = ModalTestApp(ProjectCreateModal())
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=[]))
         async with app.run_test() as pilot:
             await pilot.press("ctrl+e")
 
     async def test_preview_mode_with_markdown_editor(self):
         """ctrl+r on modal with MarkdownEditor calls switch_to_preview()."""
-        app = ModalTestApp(ProjectCreateModal())
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=[]))
         async with app.run_test() as pilot:
             await pilot.press("ctrl+r")

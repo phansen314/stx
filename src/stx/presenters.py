@@ -7,14 +7,13 @@ from __future__ import annotations
 from dataclasses import fields
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import JournalEntry, Project, Status, Tag, Workspace
+from .models import JournalEntry, Status, Tag, Workspace
 from .service_models import (
     ArchivePreview,
     EntityUpdatePreview,
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
-    ProjectDetail,
     TaskDetail,
     TaskMovePreview,
     WorkspaceContext,
@@ -71,30 +70,6 @@ def format_status_list(statuses: tuple[Status, ...]) -> str:
     return "\n".join(lines)
 
 
-def format_project_list(projects: tuple[Project, ...]) -> str:
-    if not projects:
-        return _empty("project")
-    lines: list[str] = []
-    for p in projects:
-        archived = " (archived)" if p.archived else ""
-        desc = f"  {p.description}" if p.description else ""
-        lines.append(f"  {p.name}{archived}{desc}")
-    return "\n".join(lines)
-
-
-def format_project_detail(detail: ProjectDetail) -> str:
-    lines = [f"{detail.name}"]
-    if detail.description:
-        lines.append(f"  {detail.description}")
-    if detail.metadata:
-        lines.append("  Metadata:")
-        lines.append(format_metadata_block(detail.metadata, indent=4))
-    lines.append(f"  Tasks: {len(detail.tasks)}")
-    for t in detail.tasks:
-        lines.append(f"    {format_task_num(t.id)}  {t.title}")
-    return "\n".join(lines)
-
-
 def format_tag_list(tags: tuple[Tag, ...]) -> str:
     if not tags:
         return _empty("tag")
@@ -108,8 +83,6 @@ def format_tag_list(tags: tuple[Tag, ...]) -> str:
 def format_task_detail(detail: TaskDetail) -> str:
     lines = [f"{format_task_num(detail.id)}  {detail.title}"]
     lines.append(f"  Status:      {detail.status.name}")
-    if detail.project:
-        lines.append(f"  Project:     {detail.project.name}")
     if detail.group is not None:
         lines.append(f"  Group:       {detail.group.title} ({format_group_num(detail.group.id)})")
     if detail.tags:
@@ -152,8 +125,6 @@ def format_workspace_list_view(view: WorkspaceListView) -> str:
             continue
         for item in col.tasks:
             parts = [f"  {format_task_num(item.id)}  {format_priority(item.priority)} {item.title}"]
-            if item.project_name:
-                parts.append(f"  @{item.project_name}")
             if item.tag_names:
                 parts.append(f"  [{', '.join(item.tag_names)}]")
             lines.append("".join(parts))
@@ -168,47 +139,33 @@ def format_workspace_context(ctx: WorkspaceContext) -> str:
     view_str = format_workspace_list_view(ctx.view)
     if view_str:
         lines.append(view_str)
-    if ctx.projects:
-        lines.append(f"Projects: {', '.join(p.name for p in ctx.projects)}")
     if ctx.tags:
         lines.append(f"Tags: {', '.join(t.name for t in ctx.tags)}")
     if ctx.groups:
-        proj_name = {p.id: p.name for p in ctx.projects}
-        group_strs = [f"{g.title} ({proj_name.get(g.project_id, '?')})" for g in ctx.groups]
+        group_strs = [g.title for g in ctx.groups]
         lines.append(f"Groups: {', '.join(group_strs)}")
     return "\n".join(lines)
 
 
-def format_group_list(
-    sections: tuple[tuple[Project, tuple[GroupRef, ...]], ...],
-) -> str:
-    if not sections:
-        return _empty("project")
-    non_empty = [(p, refs) for p, refs in sections if refs]
-    if not non_empty:
-        return _empty("group") if len(sections) == 1 else ""
-    show_headers = len(sections) > 1
+def format_group_list(groups: tuple[GroupRef, ...]) -> str:
+    if not groups:
+        return _empty("group")
     lines: list[str] = []
-    for proj, refs in non_empty:
-        if show_headers:
-            lines.append(f"\n== {proj.name} ==")
-        for ref in refs:
-            archived = " (archived)" if ref.archived else ""
-            lines.append(
-                f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}"
-            )
+    for ref in groups:
+        archived = " (archived)" if ref.archived else ""
+        lines.append(
+            f"  {format_group_num(ref.id)}  {ref.title}  ({len(ref.task_ids)} tasks){archived}"
+        )
     return "\n".join(lines)
 
 
 def format_group_detail(
     detail: GroupDetail,
-    project_name: str,
     ancestry_titles: tuple[str, ...],
 ) -> str:
     lines = [f"{format_group_num(detail.id)}  {detail.title}"]
     if detail.description:
         lines.append(f"  Description: {detail.description}")
-    lines.append(f"  Project:     {project_name}")
     lines.append(f"  Path:        {' > '.join(ancestry_titles)}")
     lines.append(f"  Tasks:       {len(detail.tasks)}")
     if detail.metadata:
@@ -241,12 +198,9 @@ def format_move_preview(
     target_status_name: str,
     *,
     source_workspace_name: str,
-    target_project_name: str | None = None,
 ) -> str:
     lines = [f"dry-run: would transfer {format_task_num(preview.task_id)} ({preview.task_title})"]
     dest = f"workspace '{target_workspace_name}' / status '{target_status_name}'"
-    if target_project_name:
-        dest += f" / project '{target_project_name}'"
     lines.append(f"  from workspace '{source_workspace_name}' -> {dest}")
     if not preview.can_move:
         if preview.edge_ids:
@@ -264,12 +218,10 @@ def format_move_preview(
 def format_archive_preview(preview: ArchivePreview) -> str:
     if preview.already_archived:
         return f"{preview.entity_type} '{preview.entity_name}' is already archived; nothing to do"
-    total = preview.task_count + preview.group_count + preview.project_count + preview.status_count
+    total = preview.task_count + preview.group_count + preview.status_count
     lines = [f"would archive {preview.entity_type} '{preview.entity_name}'"]
     if total == 0:
         return lines[0]
-    if preview.project_count:
-        lines.append(f"  projects: {preview.project_count}")
     if preview.group_count:
         group_label = "descendant groups" if preview.entity_type == "group" else "groups"
         lines.append(f"  {group_label}: {preview.group_count}")
@@ -298,12 +250,8 @@ def _fmt_diff_value(value: object) -> str:
 def format_entity_update_preview(preview: EntityUpdatePreview) -> str:
     if preview.entity_type == "task":
         header = f"{format_task_num(preview.entity_id)} ({preview.label})"
-    elif preview.entity_type == "group":
-        header = f"{format_group_num(preview.entity_id)} ({preview.label})"
     else:
-        # Projects don't have a numeric handle — names are unique within
-        # a workspace, so the label alone is the canonical identifier.
-        header = f"project '{preview.label}'"
+        header = f"{format_group_num(preview.entity_id)} ({preview.label})"
     lines = [f"dry-run: would update {header}"]
     has_body = False
     for key in preview.after:
@@ -330,10 +278,6 @@ def format_task_move_preview(preview: TaskMovePreview) -> str:
     lines.append(
         f"  position: {_fmt_diff_value(preview.from_position)} -> {_fmt_diff_value(preview.to_position)}"
     )
-    if preview.project_changed:
-        lines.append(
-            f"  project: {_fmt_diff_value(preview.from_project)} -> {_fmt_diff_value(preview.to_project)}"
-        )
     return "\n".join(lines)
 
 

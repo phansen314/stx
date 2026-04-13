@@ -5,7 +5,6 @@ from stx.models import (
     EntityType,
     Group,
     JournalEntry,
-    Project,
     Status,
     Tag,
     Task,
@@ -17,7 +16,6 @@ from stx.service_models import (
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
-    ProjectDetail,
     TaskDetail,
     TaskEdgeRef,
     TaskListItem,
@@ -37,18 +35,6 @@ def _status(id: int, name: str, archived: bool = False) -> Status:
     return Status(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
 
 
-def _project(id: int, name: str, description: str | None = None) -> Project:
-    return Project(
-        id=id,
-        workspace_id=1,
-        name=name,
-        description=description,
-        archived=False,
-        created_at=0,
-        metadata={},
-    )
-
-
 def _tag(id: int, name: str, archived: bool = False) -> Tag:
     return Tag(id=id, workspace_id=1, name=name, archived=archived, created_at=0)
 
@@ -60,13 +46,11 @@ def _task(
     status_id: int = 1,
     priority: int = 1,
     due_date: int | None = None,
-    project_id: int | None = None,
 ) -> Task:
     return Task(
         id=id,
         workspace_id=1,
         title=title,
-        project_id=project_id,
         description=None,
         status_id=status_id,
         priority=priority,
@@ -87,14 +71,12 @@ def _list_item(
     *,
     status_id: int = 1,
     priority: int = 1,
-    project_name: str | None = None,
     tag_names: tuple[str, ...] = (),
 ) -> TaskListItem:
     return TaskListItem(
         id=id,
         workspace_id=1,
         title=title,
-        project_id=None,
         description=None,
         status_id=status_id,
         priority=priority,
@@ -106,7 +88,6 @@ def _list_item(
         finish_date=None,
         group_id=None,
         metadata={},
-        project_name=project_name,
         tag_names=tag_names,
     )
 
@@ -206,84 +187,6 @@ class TestFormatStatusList:
         assert "(archived)" not in out
 
 
-# ---- format_project_list ----
-
-
-def _archived_project(id: int, name: str, description: str | None = None) -> Project:
-    return Project(
-        id=id,
-        workspace_id=1,
-        name=name,
-        description=description,
-        archived=True,
-        created_at=0,
-        metadata={},
-    )
-
-
-class TestFormatProjectList:
-    def test_empty(self):
-        assert presenters.format_project_list(()) == "no projects"
-
-    def test_no_description(self):
-        projs = (_project(1, "P"),)
-        assert presenters.format_project_list(projs) == "  P"
-
-    def test_with_description(self):
-        projs = (_project(1, "P", description="a desc"),)
-        out = presenters.format_project_list(projs)
-        assert "P" in out
-        assert "a desc" in out
-
-    def test_archived_marker(self):
-        projs = (_project(1, "live"), _archived_project(2, "old"))
-        out = presenters.format_project_list(projs)
-        assert "  live" in out
-        assert "old (archived)" in out
-
-    def test_no_archived_marker_on_live(self):
-        projs = (_project(1, "live"),)
-        out = presenters.format_project_list(projs)
-        assert "(archived)" not in out
-
-
-# ---- format_project_detail ----
-
-
-class TestFormatProjectDetail:
-    def test_empty_tasks(self):
-        detail = ProjectDetail(
-            id=1,
-            workspace_id=1,
-            name="P",
-            description=None,
-            archived=False,
-            created_at=0,
-            tasks=(),
-            metadata={},
-        )
-        out = presenters.format_project_detail(detail)
-        assert "P" in out
-        assert "Tasks: 0" in out
-
-    def test_with_description_and_tasks(self):
-        detail = ProjectDetail(
-            id=1,
-            workspace_id=1,
-            name="P",
-            description="desc",
-            archived=False,
-            created_at=0,
-            tasks=(_task(5, "work"),),
-            metadata={},
-        )
-        out = presenters.format_project_detail(detail)
-        assert "desc" in out
-        assert "Tasks: 1" in out
-        assert "task-0005" in out
-        assert "work" in out
-
-
 # ---- format_tag_list ----
 
 
@@ -307,7 +210,6 @@ class TestFormatTaskDetail:
             id=7,
             workspace_id=1,
             title="T",
-            project_id=None,
             description=None,
             status_id=1,
             priority=2,
@@ -320,7 +222,6 @@ class TestFormatTaskDetail:
             group_id=None,
             metadata={},
             status=_status(1, "Todo"),
-            project=None,
             group=None,
             edge_sources=(),
             edge_targets=(),
@@ -341,12 +242,9 @@ class TestFormatTaskDetail:
 
     def test_with_all_fields(self):
         d = self._detail(
-            project=_project(5, "proj"),
-            project_id=5,
             group=Group(
                 id=3,
                 workspace_id=1,
-                project_id=5,
                 title="g",
                 description=None,
                 parent_id=None,
@@ -363,7 +261,6 @@ class TestFormatTaskDetail:
             history=(_history(1, TaskField.TITLE, "old", "T"),),
         )
         out = presenters.format_task_detail(d)
-        assert "Project:     proj" in out
         assert "Group:       g (group-0003)" in out
         assert "Tags:        bug, urgent" in out
         assert "Due:" in out
@@ -399,7 +296,7 @@ class TestFormatWorkspaceListView:
                 WorkspaceListStatus(
                     status=_status(1, "Todo"),
                     tasks=(
-                        _list_item(1, "do it", priority=3, project_name="proj", tag_names=("bug",)),
+                        _list_item(1, "do it", priority=3, tag_names=("bug",)),
                     ),
                 ),
             ),
@@ -408,10 +305,9 @@ class TestFormatWorkspaceListView:
         assert "task-0001" in out
         assert "[P3]" in out
         assert "do it" in out
-        assert "@proj" in out
         assert "[bug]" in out
 
-    def test_no_project_or_tags(self):
+    def test_no_tags(self):
         view = WorkspaceListView(
             workspace=_workspace(1),
             statuses=(
@@ -422,23 +318,22 @@ class TestFormatWorkspaceListView:
             ),
         )
         out = presenters.format_workspace_list_view(view)
-        assert out.endswith("bare")  # no trailing @proj or [tags] segment
-        assert "@" not in out
+        assert "bare" in out
+        assert "[bug]" not in out
 
 
 # ---- format_workspace_context ----
 
 
 class TestFormatWorkspaceContext:
-    def _ctx(self, *, name="dev", projects=(), tags=(), groups=()) -> WorkspaceContext:
+    def _ctx(self, *, name="dev", tags=(), groups=()) -> WorkspaceContext:
         view = WorkspaceListView(workspace=_workspace(1, name), statuses=())
-        return WorkspaceContext(view=view, projects=projects, tags=tags, groups=groups)
+        return WorkspaceContext(view=view, tags=tags, groups=groups)
 
-    def _ref(self, id: int, proj_id: int, title: str) -> GroupRef:
+    def _ref(self, id: int, title: str) -> GroupRef:
         return GroupRef(
             id=id,
             workspace_id=1,
-            project_id=proj_id,
             title=title,
             description=None,
             parent_id=None,
@@ -452,29 +347,22 @@ class TestFormatWorkspaceContext:
         out = presenters.format_workspace_context(self._ctx(name="work"))
         assert out.startswith("== work ==")
 
-    def test_no_projects_no_line(self):
-        out = presenters.format_workspace_context(self._ctx())
-        assert "Projects:" not in out
-
-    def test_projects_line(self):
-        out = presenters.format_workspace_context(
-            self._ctx(projects=(_project(1, "sprint1"), _project(2, "sprint2")))
-        )
-        assert "Projects: sprint1, sprint2" in out
-
     def test_tags_line(self):
         out = presenters.format_workspace_context(self._ctx(tags=(_tag(1, "bug"),)))
         assert "Tags: bug" in out
 
     def test_groups_line(self):
-        p = _project(1, "sprint1")
-        g = self._ref(1, 1, "G1")
-        out = presenters.format_workspace_context(self._ctx(projects=(p,), groups=(g,)))
-        assert "Groups: G1 (sprint1)" in out
+        g = self._ref(1, "G1")
+        out = presenters.format_workspace_context(self._ctx(groups=(g,)))
+        assert "Groups: G1" in out
 
     def test_no_tags_no_line(self):
         out = presenters.format_workspace_context(self._ctx())
         assert "Tags:" not in out
+
+    def test_no_groups_no_line(self):
+        out = presenters.format_workspace_context(self._ctx())
+        assert "Groups:" not in out
 
 
 # ---- format_group_list ----
@@ -485,7 +373,6 @@ class TestFormatGroupList:
         return GroupRef(
             id=id,
             workspace_id=1,
-            project_id=1,
             title=title,
             description=None,
             parent_id=None,
@@ -497,32 +384,21 @@ class TestFormatGroupList:
             child_ids=(),
         )
 
-    def test_no_sections(self):
-        assert presenters.format_group_list(()) == "no projects"
+    def test_empty(self):
+        assert presenters.format_group_list(()) == "no groups"
 
-    def test_single_project_empty(self):
-        sections = ((_project(1, "P"), ()),)
-        assert presenters.format_group_list(sections) == "no groups"
-
-    def test_single_project_no_headers(self):
-        sections = ((_project(1, "P"), (self._ref(1, "G", task_count=2),)),)
-        out = presenters.format_group_list(sections)
-        assert "== P ==" not in out
+    def test_single_group(self):
+        out = presenters.format_group_list((self._ref(1, "G", task_count=2),))
         assert "group-0001" in out
         assert "(2 tasks)" in out
 
-    def test_multi_project_headers(self):
-        sections = (
-            (_project(1, "P1"), (self._ref(1, "G1"),)),
-            (_project(2, "P2"), (self._ref(2, "G2"),)),
-        )
-        out = presenters.format_group_list(sections)
-        assert "== P1 ==" in out
-        assert "== P2 ==" in out
+    def test_multiple_groups(self):
+        out = presenters.format_group_list((self._ref(1, "G1"), self._ref(2, "G2")))
+        assert "G1" in out
+        assert "G2" in out
 
     def test_archived_marker(self):
-        sections = ((_project(1, "P"), (self._ref(1, "G", archived=True),)),)
-        out = presenters.format_group_list(sections)
+        out = presenters.format_group_list((self._ref(1, "G", archived=True),))
         assert "(archived)" in out
 
 
@@ -534,7 +410,6 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1,
             workspace_id=1,
-            project_id=1,
             title="G",
             description=None,
             parent_id=None,
@@ -548,9 +423,8 @@ class TestFormatGroupDetail:
             edge_sources=(),
             edge_targets=(),
         )
-        out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
+        out = presenters.format_group_detail(d, ancestry_titles=("G",))
         assert "group-0001  G" in out
-        assert "Project:     P" in out
         assert "Path:        G" in out
         assert "Tasks:       0" in out
 
@@ -558,7 +432,6 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1,
             workspace_id=1,
-            project_id=1,
             title="G",
             description="Important group",
             parent_id=None,
@@ -572,7 +445,7 @@ class TestFormatGroupDetail:
             edge_sources=(),
             edge_targets=(),
         )
-        out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
+        out = presenters.format_group_detail(d, ancestry_titles=("G",))
         assert "group-0001  G" in out
         assert "Description: Important group" in out
 
@@ -580,7 +453,6 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1,
             workspace_id=1,
-            project_id=1,
             title="G",
             description=None,
             parent_id=None,
@@ -594,16 +466,15 @@ class TestFormatGroupDetail:
             edge_sources=(),
             edge_targets=(),
         )
-        out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("G",))
+        out = presenters.format_group_detail(d, ancestry_titles=("G",))
         lines = out.splitlines()
         assert lines[0].startswith("group-0001  G")
-        assert lines[1].startswith("  Project:")
+        assert lines[1].startswith("  Path:")
 
     def test_with_children_and_tasks(self):
         child = Group(
             id=2,
             workspace_id=1,
-            project_id=1,
             title="ChildA",
             description=None,
             parent_id=1,
@@ -615,7 +486,6 @@ class TestFormatGroupDetail:
         d = GroupDetail(
             id=1,
             workspace_id=1,
-            project_id=1,
             title="Root",
             description=None,
             parent_id=None,
@@ -629,7 +499,7 @@ class TestFormatGroupDetail:
             edge_sources=(),
             edge_targets=(),
         )
-        out = presenters.format_group_detail(d, project_name="P", ancestry_titles=("Root",))
+        out = presenters.format_group_detail(d, ancestry_titles=("Root",))
         assert "group-0001  Root" in out
         assert "Sub-groups: ChildA" in out
         assert "task-0010" in out
@@ -649,7 +519,6 @@ class TestFormatMovePreview:
             source_workspace_id=1,
             target_workspace_id=2,
             target_status_id=3,
-            target_project_id=None,
             can_move=True,
             blocking_reason=None,
             edge_ids=(),
@@ -689,7 +558,6 @@ class TestFormatArchivePreview:
             already_archived=True,
             task_count=0,
             group_count=0,
-            project_count=0,
             status_count=0,
         )
         assert "already archived" in presenters.format_archive_preview(p)
@@ -701,7 +569,6 @@ class TestFormatArchivePreview:
             already_archived=False,
             task_count=0,
             group_count=0,
-            project_count=0,
             status_count=0,
         )
         out = presenters.format_archive_preview(p)
@@ -715,7 +582,6 @@ class TestFormatArchivePreview:
             already_archived=False,
             task_count=3,
             group_count=1,
-            project_count=0,
             status_count=0,
         )
         out = presenters.format_archive_preview(p)
@@ -729,11 +595,9 @@ class TestFormatArchivePreview:
             already_archived=False,
             task_count=5,
             group_count=2,
-            project_count=1,
             status_count=3,
         )
         out = presenters.format_archive_preview(p)
-        assert "projects: 1" in out
         assert "groups: 2" in out
         assert "statuses: 3" in out
         assert "tasks: 5" in out
@@ -745,7 +609,6 @@ class TestFormatTaskDetailMetadata:
             id=7,
             workspace_id=1,
             title="T",
-            project_id=None,
             description=None,
             status_id=1,
             priority=2,
@@ -758,7 +621,6 @@ class TestFormatTaskDetailMetadata:
             group_id=None,
             metadata={},
             status=_status(1, "Todo"),
-            project=None,
             group=None,
             edge_sources=(),
             edge_targets=(),

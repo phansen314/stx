@@ -16,41 +16,34 @@ from textual.widgets import Footer, Header
 from stx.active_workspace import clear_active_workspace_id, get_active_workspace_id
 from stx.connection import DEFAULT_DB_PATH, get_connection, init_db
 from stx.formatting import format_task_num
-from stx.models import Group, Project, Status, Task, Workspace
+from stx.models import Group, Status, Task, Workspace
 from stx.presenters import format_archive_preview
 from stx.service import (
     archive_task,
     cascade_archive_group,
-    cascade_archive_project,
     cascade_archive_workspace,
     create_group,
-    create_project,
     create_status,
     create_task,
     create_workspace,
     get_group,
     get_group_detail,
-    get_project,
-    get_project_detail,
     get_task_detail,
     get_workspace,
     list_workspaces,
     preview_archive_group,
-    preview_archive_project,
     preview_archive_task,
     preview_archive_workspace,
     replace_group_metadata,
-    replace_project_metadata,
     replace_task_metadata,
     replace_workspace_metadata,
     update_group,
-    update_project,
     update_task,
     update_workspace,
 )
 from stx.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from stx.tui.markup import escape_markup
-from stx.tui.model import WorkspaceModel, load_workspace_model
+from stx.tui.model import WorkspaceModel, flatten_group_tree, load_workspace_model
 from stx.tui.screens import (
     ArchiveConfirmModal,
     ConfigModal,
@@ -58,8 +51,6 @@ from stx.tui.screens import (
     GroupEditModal,
     MetadataModal,
     NewResourceModal,
-    ProjectCreateModal,
-    ProjectEditModal,
     StatusCreateModal,
     TaskCreateModal,
     TaskEditModal,
@@ -373,8 +364,6 @@ class StxApp(App):
             if node is not None:
                 if isinstance(node.data, Task):
                     self._edit_task(node.data)
-                elif isinstance(node.data, Project):
-                    self._edit_project(node.data)
                 elif isinstance(node.data, Group):
                     self._edit_group(node.data)
                 elif isinstance(node.data, Workspace):
@@ -395,8 +384,9 @@ class StxApp(App):
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
         model = self._models[task.workspace_id]
+        group_options = flatten_group_tree(model.root_groups)
         self.push_screen(
-            TaskEditModal(detail, model.statuses, model.projects),
+            TaskEditModal(detail, model.statuses, group_options),
             callback=self._on_task_edit_dismiss,
         )
 
@@ -420,8 +410,6 @@ class StxApp(App):
                 self._open_task_metadata(data)
             elif isinstance(data, Workspace):
                 self._open_workspace_metadata(data)
-            elif isinstance(data, Project):
-                self._open_project_metadata(data)
             elif isinstance(data, Group):
                 self._open_group_metadata(data)
         elif isinstance(self._kanban_last_focused, TaskCard):
@@ -451,19 +439,6 @@ class StxApp(App):
                 entity_id=fresh.id,
             ),
             callback=self._on_workspace_metadata_dismiss,
-        )
-
-    def _open_project_metadata(self, project: Project) -> None:
-        fresh = get_project(self.conn, project.id)
-        name = escape_markup(fresh.name)
-        self.push_screen(
-            MetadataModal(
-                display_title=f"Metadata: project \u2014 {name}",
-                metadata=fresh.metadata,
-                result_key="project_id",
-                entity_id=fresh.id,
-            ),
-            callback=self._on_project_metadata_dismiss,
         )
 
     def _open_group_metadata(self, group: Group) -> None:
@@ -507,20 +482,6 @@ class StxApp(App):
             ),
         )
 
-    def _on_project_metadata_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        r = result
-        self._dismiss_callback(
-            result,
-            lambda: replace_project_metadata(
-                self.conn,
-                r["project_id"],
-                r["metadata"],
-                source="tui",
-            ),
-        )
-
     def _on_group_metadata_dismiss(self, result: dict | None) -> None:
         if result is None:
             return
@@ -547,8 +508,6 @@ class StxApp(App):
                 self._open_archive_task(data)
             elif isinstance(data, Group):
                 self._open_archive_group(data)
-            elif isinstance(data, Project):
-                self._open_archive_project(data)
             elif isinstance(data, Workspace):
                 self._open_archive_workspace(data)
         elif isinstance(self._kanban_last_focused, TaskCard):
@@ -596,27 +555,6 @@ class StxApp(App):
             return
         self.request_refresh()
 
-    def _open_archive_project(self, project: Project) -> None:
-        preview = preview_archive_project(self.conn, project.id)
-        if preview.already_archived:
-            self.notify("project already archived", severity="warning")
-            return
-        label = escape_markup(project.name)
-        self.push_screen(
-            ArchiveConfirmModal(format_archive_preview(preview), label),
-            callback=lambda confirmed: self._on_archive_project_dismiss(project.id, confirmed),
-        )
-
-    def _on_archive_project_dismiss(self, project_id: int, confirmed: bool | None) -> None:
-        if not confirmed:
-            return
-        try:
-            cascade_archive_project(self.conn, project_id, source="tui")
-        except ValueError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.request_refresh()
-
     def _open_archive_workspace(self, workspace: Workspace) -> None:
         preview = preview_archive_workspace(self.conn, workspace.id)
         if preview.already_archived:
@@ -649,21 +587,6 @@ class StxApp(App):
             suffix = ""
         self.notify(f"archived workspace '{workspace_name}'{suffix}")
         self.request_refresh()
-
-    def _edit_project(self, project: Project) -> None:
-        detail = get_project_detail(self.conn, project.id)
-        self.push_screen(
-            ProjectEditModal(detail),
-            callback=self._on_project_edit_dismiss,
-        )
-
-    def _on_project_edit_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        r = result
-        self._dismiss_callback(
-            result, lambda: update_project(self.conn, r["project_id"], r["changes"])
-        )
 
     def _edit_group(self, group: Group) -> None:
         detail = get_group_detail(self.conn, group.id)
@@ -739,7 +662,6 @@ class StxApp(App):
         dispatch = {
             "task": self._create_task,
             "group": self._create_group,
-            "project": self._create_project,
             "status": self._create_status,
             "workspace": self._create_workspace_modal,
         }
@@ -754,8 +676,9 @@ class StxApp(App):
         if not statuses:
             self.notify("No statuses — create one first", severity="warning")
             return
+        group_options = flatten_group_tree(self._active_model.root_groups)
         self.push_screen(
-            TaskCreateModal(statuses, self._active_model.projects),
+            TaskCreateModal(statuses, group_options),
             callback=self._on_task_create_dismiss,
         )
 
@@ -767,31 +690,14 @@ class StxApp(App):
         assert ws_id is not None
         self._dismiss_callback(result, lambda: create_task(self.conn, ws_id, **r))
 
-    def _create_project(self) -> None:
-        if self._active_model is None:
-            return
-        self.push_screen(
-            ProjectCreateModal(),
-            callback=self._on_project_create_dismiss,
-        )
-
-    def _on_project_create_dismiss(self, result: dict | None) -> None:
-        if result is None:
-            return
-        r = result
-        ws_id = self._active_workspace_id
-        assert ws_id is not None
-        self._dismiss_callback(result, lambda: create_project(self.conn, ws_id, **r))
-
     def _create_group(self) -> None:
         if self._active_model is None:
             return
-        projects = tuple(p.project for p in self._active_model.projects)
-        if not projects:
-            self.notify("No projects — create one first", severity="warning")
-            return
+        ws_id = self._active_workspace_id
+        assert ws_id is not None
+        group_options = flatten_group_tree(self._active_model.root_groups)
         self.push_screen(
-            GroupCreateModal(projects),
+            GroupCreateModal(ws_id, group_options),
             callback=self._on_group_create_dismiss,
         )
 

@@ -10,7 +10,6 @@ from .mappers import (
     row_to_group,
     row_to_group_edge_list_item,
     row_to_journal_entry,
-    row_to_project,
     row_to_status,
     row_to_tag,
     row_to_task,
@@ -23,12 +22,10 @@ from .models import (
     JournalEntry,
     NewGroup,
     NewJournalEntry,
-    NewProject,
     NewStatus,
     NewTag,
     NewTask,
     NewWorkspace,
-    Project,
     Status,
     Tag,
     Task,
@@ -41,13 +38,11 @@ from .service_models import GroupEdgeListItem, TaskEdgeListItem
 
 _WORKSPACE_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _STATUS_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
-_PROJECT_UPDATABLE: frozenset[str] = frozenset({"name", "description", "archived"})
 _TASK_UPDATABLE: frozenset[str] = frozenset(
     {
         "title",
         "description",
         "status_id",
-        "project_id",
         "group_id",
         "priority",
         "due_date",
@@ -212,70 +207,6 @@ def update_status(
     return row_to_status(row)
 
 
-# ---- Project functions ----
-
-
-def insert_project(conn: sqlite3.Connection, new: NewProject) -> Project:
-    d = _asdict_for_insert(new)
-    cur = conn.execute(
-        "INSERT INTO projects (workspace_id, name, description) "
-        "VALUES (:workspace_id, :name, :description)",
-        d,
-    )
-    row = conn.execute("SELECT * FROM projects WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return row_to_project(row)
-
-
-def get_project_by_name(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str,
-) -> Project | None:
-    row = conn.execute(
-        "SELECT * FROM projects WHERE workspace_id = ? AND name = ? AND archived = 0",
-        (workspace_id, name),
-    ).fetchone()
-    return row_to_project(row) if row else None
-
-
-def get_project(conn: sqlite3.Connection, project_id: int) -> Project | None:
-    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    return row_to_project(row) if row else None
-
-
-def list_projects(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    *,
-    include_archived: bool = False,
-    only_archived: bool = False,
-) -> tuple[Project, ...]:
-    if only_archived:
-        archive_clause = " AND archived = 1"
-    elif include_archived:
-        archive_clause = ""
-    else:
-        archive_clause = " AND archived = 0"
-    rows = conn.execute(
-        f"SELECT * FROM projects WHERE workspace_id = ?{archive_clause} ORDER BY created_at",
-        (workspace_id,),
-    ).fetchall()
-    return tuple(row_to_project(r) for r in rows)
-
-
-def update_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    changes: dict[str, Any],
-) -> Project:
-    sql, params = _build_update("projects", project_id, changes, _PROJECT_UPDATABLE)
-    cur = conn.execute(sql, params)
-    if cur.rowcount == 0:
-        raise LookupError(f"project {project_id} not found")
-    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    return row_to_project(row)
-
-
 # ---- Task functions ----
 
 
@@ -283,8 +214,8 @@ def insert_task(conn: sqlite3.Connection, new: NewTask) -> Task:
     d = _asdict_for_insert(new)
     cur = conn.execute(
         "INSERT INTO tasks "
-        "(workspace_id, title, status_id, project_id, description, priority, due_date, position, start_date, finish_date, group_id) "
-        "VALUES (:workspace_id, :title, :status_id, :project_id, :description, :priority, :due_date, :position, :start_date, :finish_date, :group_id)",
+        "(workspace_id, title, status_id, description, priority, due_date, position, start_date, finish_date, group_id) "
+        "VALUES (:workspace_id, :title, :status_id, :description, :priority, :due_date, :position, :start_date, :finish_date, :group_id)",
         d,
     )
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -336,20 +267,6 @@ def list_tasks_by_status(
     return tuple(row_to_task(r) for r in rows)
 
 
-def list_tasks_by_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    *,
-    include_archived: bool = False,
-) -> tuple[Task, ...]:
-    archive_clause = "" if include_archived else " AND archived = 0"
-    rows = conn.execute(
-        f"SELECT * FROM tasks WHERE project_id = ?{archive_clause} ORDER BY position, id",
-        (project_id,),
-    ).fetchall()
-    return tuple(row_to_task(r) for r in rows)
-
-
 def list_tasks_filtered(
     conn: sqlite3.Connection,
     workspace_id: int,
@@ -366,9 +283,6 @@ def list_tasks_filtered(
     if f.status_id is not None:
         clauses.append("status_id = ?")
         params.append(f.status_id)
-    if f.project_id is not None:
-        clauses.append("project_id = ?")
-        params.append(f.project_id)
     if f.priority is not None:
         clauses.append("priority = ?")
         params.append(f.priority)
@@ -427,7 +341,6 @@ def list_tasks_by_ids(
 _METADATA_TABLES: dict[str, str] = {
     "tasks": "task",
     "workspaces": "workspace",
-    "projects": "project",
     "groups": "group",
 }
 
@@ -546,20 +459,6 @@ def replace_workspace_metadata(
     conn: sqlite3.Connection, workspace_id: int, metadata_json: str
 ) -> None:
     _replace_metadata(conn, "workspaces", workspace_id, metadata_json)
-
-
-def set_project_metadata_key(
-    conn: sqlite3.Connection, project_id: int, key: str, value: str
-) -> None:
-    _set_metadata_key(conn, "projects", project_id, key, value)
-
-
-def remove_project_metadata_key(conn: sqlite3.Connection, project_id: int, key: str) -> None:
-    _remove_metadata_key(conn, "projects", project_id, key)
-
-
-def replace_project_metadata(conn: sqlite3.Connection, project_id: int, metadata_json: str) -> None:
-    _replace_metadata(conn, "projects", project_id, metadata_json)
 
 
 def set_group_metadata_key(conn: sqlite3.Connection, group_id: int, key: str, value: str) -> None:
@@ -1140,31 +1039,14 @@ def batch_tag_ids_by_task(
     return {tid: tuple(intermediate.get(tid, ())) for tid in task_ids}
 
 
-# ---- Project helper ----
-
-
-def list_task_ids_by_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-    *,
-    include_archived: bool = False,
-) -> tuple[int, ...]:
-    archive_clause = "" if include_archived else " AND archived = 0"
-    rows = conn.execute(
-        f"SELECT id FROM tasks WHERE project_id = ?{archive_clause}",
-        (project_id,),
-    ).fetchall()
-    return tuple(r["id"] for r in rows)
-
-
 # ---- Group functions ----
 
 
 def insert_group(conn: sqlite3.Connection, new: NewGroup) -> Group:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO groups (workspace_id, project_id, title, description, parent_id, position) "
-        "VALUES (:workspace_id, :project_id, :title, :description, :parent_id, :position)",
+        "INSERT INTO groups (workspace_id, title, description, parent_id, position) "
+        "VALUES (:workspace_id, :title, :description, :parent_id, :position)",
         d,
     )
     row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -1178,20 +1060,30 @@ def get_group(conn: sqlite3.Connection, group_id: int) -> Group | None:
 
 def get_group_by_title(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
+    parent_id: int | None,
     title: str,
 ) -> Group | None:
-    row = conn.execute(
-        "SELECT * FROM groups WHERE project_id = ? AND title = ? AND archived = 0",
-        (project_id, title),
-    ).fetchone()
+    if parent_id is None:
+        row = conn.execute(
+            "SELECT * FROM groups WHERE workspace_id = ? AND parent_id IS NULL "
+            "AND title = ? AND archived = 0",
+            (workspace_id, title),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM groups WHERE workspace_id = ? AND parent_id = ? "
+            "AND title = ? AND archived = 0",
+            (workspace_id, parent_id, title),
+        ).fetchone()
     return row_to_group(row) if row else None
 
 
 def list_groups(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
     *,
+    parent_id: int | None = None,
     include_archived: bool = False,
     only_archived: bool = False,
 ) -> tuple[Group, ...]:
@@ -1201,11 +1093,30 @@ def list_groups(
         archive_clause = ""
     else:
         archive_clause = " AND archived = 0"
-    rows = conn.execute(
-        f"SELECT * FROM groups WHERE project_id = ?{archive_clause} ORDER BY position, id",
-        (project_id,),
-    ).fetchall()
+    if parent_id is None:
+        rows = conn.execute(
+            f"SELECT * FROM groups WHERE workspace_id = ? AND parent_id IS NULL"
+            f"{archive_clause} ORDER BY position, id",
+            (workspace_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"SELECT * FROM groups WHERE workspace_id = ? AND parent_id = ?"
+            f"{archive_clause} ORDER BY position, id",
+            (workspace_id, parent_id),
+        ).fetchall()
     return tuple(row_to_group(r) for r in rows)
+
+
+def list_root_groups(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    *,
+    include_archived: bool = False,
+) -> tuple[Group, ...]:
+    return list_groups(
+        conn, workspace_id, parent_id=None, include_archived=include_archived
+    )
 
 
 def update_group(
@@ -1327,11 +1238,11 @@ def list_groups_by_workspace(
 
 def list_ungrouped_task_ids(
     conn: sqlite3.Connection,
-    project_id: int,
+    workspace_id: int,
 ) -> tuple[int, ...]:
     rows = conn.execute(
-        "SELECT id FROM tasks WHERE project_id = ? AND archived = 0 AND group_id IS NULL",
-        (project_id,),
+        "SELECT id FROM tasks WHERE workspace_id = ? AND archived = 0 AND group_id IS NULL",
+        (workspace_id,),
     ).fetchall()
     return tuple(r["id"] for r in rows)
 
@@ -1376,12 +1287,12 @@ def get_group_ancestry(
     """Return groups from root to the given group, inclusive."""
     rows = conn.execute(
         "WITH RECURSIVE ancestry AS ("
-        "  SELECT id, workspace_id, project_id, title, description, metadata, parent_id, position, archived, created_at, 0 AS depth "
+        "  SELECT id, workspace_id, title, description, metadata, parent_id, position, archived, created_at, 0 AS depth "
         "  FROM groups WHERE id = ? "
         "  UNION ALL "
-        "  SELECT g.id, g.workspace_id, g.project_id, g.title, g.description, g.metadata, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
+        "  SELECT g.id, g.workspace_id, g.title, g.description, g.metadata, g.parent_id, g.position, g.archived, g.created_at, a.depth + 1 "
         "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
-        ") SELECT id, workspace_id, project_id, title, description, metadata, parent_id, position, archived, created_at "
+        ") SELECT id, workspace_id, title, description, metadata, parent_id, position, archived, created_at "
         "FROM ancestry ORDER BY depth DESC",
         (group_id,),
     ).fetchall()
@@ -1441,45 +1352,12 @@ def count_active_descendant_groups(
     return row["cnt"]
 
 
-def count_active_tasks_in_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-) -> int:
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM tasks WHERE project_id = ? AND archived = 0",
-        (project_id,),
-    ).fetchone()
-    return row["cnt"]
-
-
-def count_active_groups_in_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-) -> int:
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM groups WHERE project_id = ? AND archived = 0",
-        (project_id,),
-    ).fetchone()
-    return row["cnt"]
-
-
 def count_active_tasks_in_workspace(
     conn: sqlite3.Connection,
     workspace_id: int,
 ) -> int:
     row = conn.execute(
         "SELECT COUNT(*) AS cnt FROM tasks WHERE workspace_id = ? AND archived = 0",
-        (workspace_id,),
-    ).fetchone()
-    return row["cnt"]
-
-
-def count_active_projects_in_workspace(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-) -> int:
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM projects WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     ).fetchone()
     return row["cnt"]
@@ -1546,17 +1424,6 @@ def list_active_task_ids_in_group_subtree(
     return tuple(r["id"] for r in rows)
 
 
-def list_active_task_ids_in_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-) -> tuple[int, ...]:
-    rows = conn.execute(
-        "SELECT id FROM tasks WHERE project_id = ? AND archived = 0",
-        (project_id,),
-    ).fetchall()
-    return tuple(r["id"] for r in rows)
-
-
 def list_active_task_ids_in_workspace(
     conn: sqlite3.Connection,
     workspace_id: int,
@@ -1595,45 +1462,12 @@ def archive_descendant_groups(
     return cur.rowcount
 
 
-def archive_tasks_in_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-) -> int:
-    cur = conn.execute(
-        "UPDATE tasks SET archived = 1 WHERE project_id = ? AND archived = 0",
-        (project_id,),
-    )
-    return cur.rowcount
-
-
-def archive_groups_in_project(
-    conn: sqlite3.Connection,
-    project_id: int,
-) -> int:
-    cur = conn.execute(
-        "UPDATE groups SET archived = 1 WHERE project_id = ? AND archived = 0",
-        (project_id,),
-    )
-    return cur.rowcount
-
-
 def archive_tasks_in_workspace(
     conn: sqlite3.Connection,
     workspace_id: int,
 ) -> int:
     cur = conn.execute(
         "UPDATE tasks SET archived = 1 WHERE workspace_id = ? AND archived = 0",
-        (workspace_id,),
-    )
-    return cur.rowcount
-
-
-def archive_projects_in_workspace(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-) -> int:
-    cur = conn.execute(
-        "UPDATE projects SET archived = 1 WHERE workspace_id = ? AND archived = 0",
         (workspace_id,),
     )
     return cur.rowcount
