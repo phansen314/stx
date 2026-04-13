@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE TABLE IF NOT EXISTS edges (
-    from_type    TEXT NOT NULL CHECK (from_type IN ('workspace', 'group', 'task')),
+    from_type    TEXT NOT NULL CHECK (from_type IN ('workspace', 'group', 'task', 'status')),
     from_id      INTEGER NOT NULL,
-    to_type      TEXT NOT NULL CHECK (to_type IN ('workspace', 'group', 'task')),
+    to_type      TEXT NOT NULL CHECK (to_type IN ('workspace', 'group', 'task', 'status')),
     to_id        INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
     -- kind charset kept tight so export.py can safely interpolate it into

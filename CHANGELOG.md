@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   indexes with `*_archived` variants, and preserves all row data. Historical
   `journal` rows with `field='position'` are left intact as dead history.
   `SCHEMA_VERSION = 18`.
+- **019_status_edges.sql.** Widens the `edges.from_type`/`to_type` CHECK
+  constraints to include `'status'` so statuses can act as polymorphic
+  edge endpoints. No data migration needed — existing rows are unaffected.
+  `SCHEMA_VERSION = 19`.
 
 ### Changed
 - **BREAKING:** `stx workspace rename` removed. Use `stx workspace edit --name <new>`.
@@ -69,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   empty string (`--group ""`) to unassign. Complements the existing
   `stx group assign` / `stx group unassign` commands — both routes funnel
   through `service.update_task` / `_update_task_body`.
+- `status` is now a valid edge endpoint node type. Edges can cross between
+  statuses (e.g. `stx edge create -s status:todo -t status:doing --kind
+  transition`) alongside existing task/group/workspace endpoints. Status
+  edges are pure annotation — they carry no write-path semantics, so
+  defining a transition graph does not constrain `stx task mv`. Consumers
+  (docs, visualizations, lints) own the interpretation.
 
 ### Docs
 - README no longer claims metadata is supported on every entity kind — statuses

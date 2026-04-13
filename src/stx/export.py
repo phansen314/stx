@@ -173,6 +173,7 @@ def _render_edges_section(
     task_ids: set[int],
     group_ids: set[int],
     workspace_ids: set[int],
+    status_ids: set[int],
 ) -> list[str]:
     """Render active edges whose both endpoints belong to this workspace export."""
 
@@ -183,6 +184,8 @@ def _render_edges_section(
             return node_id in group_ids
         elif node_type == "workspace":
             return node_id in workspace_ids
+        elif node_type == "status":
+            return node_id in status_ids
         return False
 
     def _node_label(node_type: str, node_id: int) -> str:
@@ -190,6 +193,8 @@ def _render_edges_section(
             return format_task_num(node_id)
         elif node_type == "group":
             return format_group_num(node_id)
+        elif node_type == "status":
+            return f"st{node_id}"
         else:
             return f"ws{node_id}"
 
@@ -281,6 +286,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_workspace_metadata_block(workspace)
 
         statuses = service.list_statuses(conn, bid)
+        status_ids = {s.id for s in statuses}
         tasks = service.list_tasks(conn, bid)
         task_ids = {t.id for t in tasks}
         groups = service.list_groups_for_workspace(conn, bid)
@@ -296,6 +302,8 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_descriptions_section(tasks)
         lines += _render_group_metadata_section(conn, bid)
         lines += _render_task_metadata_section(tasks)
-        lines += _render_edges_section(all_edge_rows, task_ids, group_ids, {bid})
+        lines += _render_edges_section(
+            all_edge_rows, task_ids, group_ids, {bid}, status_ids
+        )
 
     return "\n".join(lines) + "\n"

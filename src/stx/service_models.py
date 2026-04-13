@@ -10,7 +10,7 @@ from .models import Group, JournalEntry, Status, Task, Workspace
 
 # Polymorphic edge endpoint discriminator. Kept in sync with the
 # `CHECK (from_type IN (...))` constraint on the edges table.
-type NodeType = Literal["task", "group", "workspace"]
+type NodeType = Literal["task", "group", "workspace", "status"]
 
 
 @dataclass(frozen=True)

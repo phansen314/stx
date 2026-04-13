@@ -571,6 +571,8 @@ WITH nodes AS (
     SELECT id, workspace_id, title, 'group' AS node_type FROM groups WHERE archived = 0
     UNION ALL
     SELECT id, id AS workspace_id, name AS title, 'workspace' AS node_type FROM workspaces WHERE archived = 0
+    UNION ALL
+    SELECT id, workspace_id, name AS title, 'status' AS node_type FROM statuses WHERE archived = 0
 )
 """
 

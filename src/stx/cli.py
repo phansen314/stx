@@ -536,10 +536,11 @@ def _resolve_edge_node(
       task-NNNN or #NNNN or a task title → ('task', id)
       group:<title>                        → ('group', id)
       workspace:<name>                     → ('workspace', id)
+      status:<name>                        → ('status', id)
 
     When no prefix is given, the ref is resolved as a task (task number or title).
     ``parent_title`` disambiguates group refs when multiple groups share a title
-    under different parents. Ignored for task and workspace refs.
+    under different parents. Ignored for task, workspace, and status refs.
     """
     if ref.startswith("group:"):
         title = ref[len("group:"):]
@@ -551,6 +552,10 @@ def _resolve_edge_node(
         name = ref[len("workspace:"):]
         ws = service.get_workspace_by_name(conn, name)
         return "workspace", ws.id
+    elif ref.startswith("status:"):
+        name = ref[len("status:"):]
+        st = service.get_status_by_name(conn, workspace_id, name)
+        return "status", st.id
     else:
         task_id = _resolve_task(conn, service.get_workspace(conn, workspace_id), ref)
         return "task", task_id
@@ -561,6 +566,8 @@ def _edge_node_label(node_type: str, node_id: int, title: str) -> str:
         return f"{format_task_num(node_id)} ({title})"
     elif node_type == "group":
         return f"{format_group_num(node_id)} ({title})"
+    elif node_type == "status":
+        return f"status:{node_id} ({title})"
     else:
         return f"workspace:{node_id} ({title})"
 
@@ -1572,13 +1579,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_edge = sub.add_parser(
         "edge",
-        help="polymorphic edge management (kinded links between tasks, groups, workspaces)",
+        help="polymorphic edge management (kinded links between tasks, groups, workspaces, statuses)",
     )
     edge_sub = p_edge.add_subparsers()
 
     _edge_ref_help = (
         "node ref: task-NNNN / #NNNN / <task title> for tasks; "
-        "group:<title> for groups; workspace:<name> for workspaces"
+        "group:<title> for groups; workspace:<name> for workspaces; "
+        "status:<name> for statuses"
     )
 
     _parent_help = (

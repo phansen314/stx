@@ -750,6 +750,83 @@ class TestEdgeService:
             service.add_edge(conn, ("group", g1), ("group", g2), kind="blocks")
 
 
+# ---- Status edges ----
+
+
+class TestStatusEdges:
+    def test_status_edge_stored(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        s_todo = insert_status(conn, bid, "todo")
+        s_doing = insert_status(conn, bid, "doing")
+        service.add_edge(
+            conn, ("status", s_todo), ("status", s_doing), kind="transition"
+        )
+        edges = service.list_edges(conn, bid)
+        assert any(
+            e.from_type == "status"
+            and e.from_id == s_todo
+            and e.to_type == "status"
+            and e.to_id == s_doing
+            and e.kind == "transition"
+            for e in edges
+        )
+
+    def test_status_edges_are_pure_annotation(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Regression guard: status edges carry no write-path semantics.
+        Defining a transition graph must not constrain task status moves."""
+        bid = insert_workspace(conn)
+        s_todo = insert_status(conn, bid, "todo")
+        s_doing = insert_status(conn, bid, "doing")
+        s_done = insert_status(conn, bid, "done")
+        service.add_edge(
+            conn, ("status", s_todo), ("status", s_doing), kind="transition"
+        )
+        t = insert_task(conn, bid, "t", s_todo)
+        # 'done' is not in the transition graph — must still be allowed.
+        service.update_task(conn, t, {"status_id": s_done}, "test")
+        assert service.get_task(conn, t).status_id == s_done
+
+    def test_cross_workspace_status_edge_rejected(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        b1 = insert_workspace(conn, "w1")
+        b2 = insert_workspace(conn, "w2")
+        s1 = insert_status(conn, b1, "todo")
+        s2 = insert_status(conn, b2, "doing")
+        with pytest.raises(ValueError, match="same workspace"):
+            service.add_edge(
+                conn, ("status", s1), ("status", s2), kind="transition"
+            )
+
+    def test_archived_status_endpoint_rejected(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        s1 = insert_status(conn, bid, "todo")
+        s2 = insert_status(conn, bid, "doing")
+        conn.execute("UPDATE statuses SET archived = 1 WHERE id = ?", (s2,))
+        conn.commit()
+        with pytest.raises(ValueError, match="archived"):
+            service.add_edge(
+                conn, ("status", s1), ("status", s2), kind="transition"
+            )
+
+    def test_status_edges_allow_cycles(self, conn: sqlite3.Connection) -> None:
+        """State machines have rollback loops; status edges default to
+        acyclic=0, so cycle detection must not fire."""
+        bid = insert_workspace(conn)
+        s_doing = insert_status(conn, bid, "doing")
+        s_done = insert_status(conn, bid, "done")
+        service.add_edge(
+            conn, ("status", s_doing), ("status", s_done), kind="transition"
+        )
+        service.add_edge(
+            conn, ("status", s_done), ("status", s_doing), kind="rollback"
+        )
+
+
 # ---- History ----
 
 

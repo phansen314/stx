@@ -1893,6 +1893,36 @@ class TestJsonDryRun:
         assert data["data"]["entity_type"] == "status"
         assert data["data"]["task_count"] == 1
 
+class TestEdgeStatusRef:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        self.cli = cli
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("status", "create", "doing")
+
+    def test_create_status_edge(self):
+        out, _ = self.cli(
+            "edge", "create",
+            "--source", "status:todo",
+            "--target", "status:doing",
+            "--kind", "transition",
+        )
+        assert "status:1" in out and "status:2" in out
+        assert "transition" in out
+
+    def test_ls_filter_by_status_source(self):
+        self.cli(
+            "edge", "create",
+            "--source", "status:todo",
+            "--target", "status:doing",
+            "--kind", "transition",
+        )
+        out, _ = self.cli("edge", "ls", "--source", "status:todo")
+        assert "transition" in out
+        assert "status:" in out
+
+
 class TestEdgeReCreation:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):

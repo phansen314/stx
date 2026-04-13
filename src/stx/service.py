@@ -1142,6 +1142,11 @@ def _resolve_edge_node(
         if ws is None:
             raise LookupError(f"workspace {node_id} not found")
         return ws.id, ws.archived
+    elif node_type == "status":
+        st = repo.get_status(conn, node_id)
+        if st is None:
+            raise LookupError(f"status {node_id} not found")
+        return st.workspace_id, st.archived
     else:
         raise ValueError(f"unknown node_type {node_type!r}")
 

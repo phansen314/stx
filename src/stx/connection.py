@@ -18,7 +18,7 @@ def _migrate_data_dir() -> None:
         print(f"stx: migrated data directory {_OLD_DB_DIR} → {_NEW_DB_DIR}", file=sys.stderr)
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 def read_schema() -> str:

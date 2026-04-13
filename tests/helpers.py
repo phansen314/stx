@@ -77,6 +77,8 @@ def insert_edge(
         ws_query = "SELECT workspace_id FROM tasks WHERE id = ?"
     elif from_type == "group":
         ws_query = "SELECT workspace_id FROM groups WHERE id = ?"
+    elif from_type == "status":
+        ws_query = "SELECT workspace_id FROM statuses WHERE id = ?"
     else:
         ws_query = "SELECT id FROM workspaces WHERE id = ?"
     conn.execute(
