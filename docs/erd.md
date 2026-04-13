@@ -34,7 +34,6 @@ erDiagram
         INTEGER parent_id FK
         TEXT title
         TEXT description
-        INTEGER position
         INTEGER archived
         INTEGER created_at
         TEXT metadata
@@ -48,7 +47,6 @@ erDiagram
         INTEGER status_id FK
         INTEGER priority
         INTEGER due_date
-        INTEGER position
         INTEGER archived
         INTEGER created_at
         INTEGER start_date

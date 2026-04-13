@@ -150,7 +150,7 @@ generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
 - **Task field changes are recorded as history entries** when a value actually
   changes (no-op updates are skipped). The set of trackable fields is fixed by
   the `TaskField` enum: title, description, status, priority, due date,
-  position, archived, start date, finish date, group.
+  archived, start date, finish date, group.
 - **Each history entry records old value, new value, and source** (e.g., "cli",
   "tui").
 
