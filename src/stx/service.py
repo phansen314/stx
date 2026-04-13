@@ -40,7 +40,6 @@ from .service_models import (
     GroupRef,
     MoveToWorkspacePreview,
     TaskDetail,
-    TaskListItem,
     TaskMovePreview,
     WorkspaceContext,
     WorkspaceListStatus,
@@ -735,8 +734,8 @@ def move_task_to_workspace(
 
 # ---- Entity metadata ----
 #
-# Tasks, workspaces, projects, and groups all carry a JSON key/value metadata
-# blob. Keys are normalized to lowercase on write/read (matching the codebase's
+# Tasks, workspaces, and groups all carry a JSON key/value metadata blob.
+# Keys are normalized to lowercase on write/read (matching the codebase's
 # COLLATE NOCASE convention, which can't be applied directly to JSON keys).
 
 
