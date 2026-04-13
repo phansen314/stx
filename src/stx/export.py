@@ -242,22 +242,48 @@ def _render_group_metadata_section(
 
 
 def _render_deps_section(
-    workspace_deps: list[tuple[int, int]],
+    workspace_deps: list[tuple[int, int, str]],
 ) -> list[str]:
     if not workspace_deps:
         return []
     lines = [
-        "### Dependencies",
+        "### Task Edges",
         "",
         "```mermaid",
         "graph LR",
     ]
-    for tid, did in workspace_deps:
-        lines.append(f"    {format_task_num(tid)} --> {format_task_num(did)}")
+    for tid, did, kind in workspace_deps:
+        lines.append(f"    {format_task_num(tid)} -->|{kind}| {format_task_num(did)}")
     lines += [
         "```",
         "",
-        '> Arrow reads "depends on"',
+    ]
+    return lines
+
+
+def _render_group_edges_section(
+    group_edge_rows: list[dict],
+    group_ids: set[int],
+) -> list[str]:
+    workspace_edges = [
+        r
+        for r in group_edge_rows
+        if r["source_id"] in group_ids and r["target_id"] in group_ids and not r["archived"]
+    ]
+    if not workspace_edges:
+        return []
+    lines = [
+        "### Group Edges",
+        "",
+        "```mermaid",
+        "graph LR",
+    ]
+    for r in workspace_edges:
+        src = format_group_num(r["source_id"])
+        tgt = format_group_num(r["target_id"])
+        lines.append(f"    {src} -->|{r['kind']}| {tgt}")
+    lines += [
+        "```",
         "",
     ]
     return lines
@@ -302,7 +328,8 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
             )
 
         task_tags = list(repo.list_all_task_tags(conn))
-        task_dependencies = list(repo.list_all_task_dependencies(conn))
+        task_edges = list(repo.list_all_task_edge_rows(conn))
+        group_edges = list(repo.list_all_group_edge_rows(conn))
         journal = [dataclasses.asdict(h) for h in repo.list_all_journal(conn)]
 
     return {
@@ -315,7 +342,8 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         "tags": tags,
         "groups": groups,
         "task_tags": task_tags,
-        "task_dependencies": task_dependencies,
+        "task_edges": task_edges,
+        "group_edges": group_edges,
         "journal": journal,
     }
 
@@ -330,7 +358,8 @@ def export_markdown(conn: sqlite3.Connection) -> str:
     ]
 
     workspaces = service.list_workspaces(conn)
-    all_deps = service.list_all_dependencies(conn)
+    all_task_edge_rows = list(repo.list_all_task_edge_rows(conn))
+    all_group_edge_rows = list(repo.list_all_group_edge_rows(conn))
 
     for workspace in workspaces:
         bid = workspace.id
@@ -346,6 +375,8 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         tags = service.list_tags(conn, bid)
         tag_map = {t.id: t.name for t in tags}
         task_tag_map = repo.batch_tag_ids_by_task(conn, tuple(task_ids))
+        groups = service.list_groups_for_workspace(conn, bid)
+        group_ids = {g.id for g in groups}
 
         tasks_by_status: dict[int, list] = {}
         for t in tasks:
@@ -362,8 +393,11 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_task_metadata_section(tasks)
 
         workspace_deps = [
-            (tid, did) for tid, did in all_deps if tid in task_ids and did in task_ids
+            (r["source_id"], r["target_id"], r["kind"])
+            for r in all_task_edge_rows
+            if r["source_id"] in task_ids and r["target_id"] in task_ids and not r["archived"]
         ]
         lines += _render_deps_section(workspace_deps)
+        lines += _render_group_edges_section(all_group_edge_rows, group_ids)
 
     return "\n".join(lines) + "\n"

@@ -99,7 +99,7 @@ stx task ls --tag backend --archived include
 
 ### `stx task show <task>`
 
-Shows full task detail: description, history, dependencies, group, tags. `<task>` accepts numeric IDs (`1`, `task-0001`, `#1`) or a title string.
+Shows full task detail: description, history, edges (`edge_sources` / `edge_targets` each carrying a `kind`), group, tags. `<task>` accepts numeric IDs (`1`, `task-0001`, `#1`) or a title string.
 
 ```sh
 stx task show task-0001
@@ -277,14 +277,14 @@ In `stx export --md` the Group Metadata section labels each block `#### <project
 **Behavior:**
 1. Creates a copy of the task on the target workspace in the specified status
 2. Archives the original task
-3. **Fails** if the task has any dependencies (incoming or outgoing) — archive them first with `stx dep archive`
+3. **Fails** if the task has any active edges (incoming or outgoing) — archive them first with `stx edge archive --source … --target …`
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
 | `--to` | — | **yes** | Target workspace name |
 | `--status` | `-S` | **yes** | Status on target workspace |
 | `--project` | `-p` | no | Project on target workspace |
-| `--dry-run` | — | no | Preview without executing; validates blocking deps |
+| `--dry-run` | — | no | Preview without executing; validates blocking edges |
 
 ```sh
 stx task transfer task-0001 --to ops --status Backlog
@@ -355,18 +355,30 @@ stx status archive "Old Status" --force
 
 ---
 
-## `stx dep` Subcommands
+## `stx edge` Subcommands
 
-Flags are explicit about direction: `--task X --blocked-by Y` means **X is blocked by Y**. No `dep ls` — use `stx task show <task>` to see `blocked_by` and `blocks` arrays.
+Edges are directional links between tasks with a free-form `kind` label and their own metadata blob. Flags are explicit: `--source X --target Y --kind blocks` means **X points to Y with kind `blocks`** (the prior-dependency convention). The PK is `(source_id, target_id)` — a second edge between the same pair is rejected regardless of kind. Self-loops are rejected by a DB CHECK. Multi-hop cycles are currently allowed (cycle detection is deferred pending blocking-kind semantics rework).
+
+**Kind constraint:** lowercase `[a-z0-9_.-]+`, 1-64 characters. Enforced by the service layer's `_normalize_edge_kind` and a DB `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `dep create` | — | `--task TASK --blocked-by TASK` (both required) | Add dependency |
-| `dep archive` | — | `--task TASK --blocked-by TASK` (both required) | Archive dependency (soft-delete) |
+| `edge create` | — | `--source TASK --target TASK --kind KIND` (all required) | Add an edge from source to target with the given kind. Re-adding an archived `(source, target)` pair clears its metadata blob and flips `archived = 0`. |
+| `edge archive` | — | `--source TASK --target TASK` (both required) | Soft-archive the active edge. There is no unarchive surface — re-create via `edge create`. |
+| `edge ls` | — | `--source TASK`, `--kind KIND` | List active edges on the active workspace, filtered by endpoint and/or kind. Both source and target must also be active (archived endpoints are hidden). |
+| `edge meta ls` | — | `--source TASK --target TASK` | List all metadata on the edge. |
+| `edge meta get` | `key` | `--source TASK --target TASK` | Read a single metadata value. |
+| `edge meta set` | `key value` | `--source TASK --target TASK` | Write or overwrite a metadata value. Same charset/length rules as task metadata (lowercase key, `[a-z0-9_.-]+`, 64-char key cap, 500-char value cap). |
+| `edge meta del` | `key` | `--source TASK --target TASK` | Remove a metadata key. |
 
 ```sh
-stx dep create --task task-0003 --blocked-by task-0001   # task-0003 is blocked by task-0001
-stx dep archive --task task-0003 --blocked-by task-0001
+stx edge create --source task-0003 --target task-0001 --kind blocks
+stx edge ls
+stx edge ls --kind blocks
+stx edge ls --source task-0003
+stx edge meta set --source task-0003 --target task-0001 rationale "depends on refactor"
+stx edge meta ls --source task-0003 --target task-0001
+stx edge archive --source task-0003 --target task-0001
 ```
 
 ---
@@ -407,8 +419,10 @@ Groups are project-scoped hierarchical collections of tasks. All group commands 
 | `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--project/-p`, `--dry-run` | Reparent under another group, or `--to-top` to promote to top-level; `--dry-run` previews the diff |
 | `group assign` | `task title` | `--project/-p` | Assign task to group |
 | `group unassign` | `task` | — | Unassign task from its group |
-| `group dep create` | — | `-g/--group TITLE --blocked-by TITLE` (both required), `--project/-p` | Add group dependency (group blocked by depends-on) |
-| `group dep archive` | — | `-g/--group TITLE --blocked-by TITLE` (both required), `--project/-p` | Archive group dependency (soft-delete) |
+| `group edge create` | — | `-s/--source TITLE --target TITLE --kind KIND` (all required), `--source-project`, `--target-project` | Add an edge between groups with the given kind. Project flags disambiguate when titles collide across projects or the edge is cross-project. |
+| `group edge archive` | — | `-s/--source TITLE --target TITLE` (both required), `--source-project`, `--target-project` | Archive an active group edge. |
+| `group edge ls` | — | `-s/--source TITLE`, `--kind KIND`, `--source-project` | List active group edges on the active workspace; optional source/kind filters. |
+| `group edge meta ls\|get\|set\|del` | `[key [value]]` | `-s/--source TITLE --target TITLE --source-project --target-project` | Metadata CRUD on a single group edge. Same rules as task-edge metadata. |
 
 ```sh
 stx group create "Backend" --project "API rewrite" --desc "Core API services"
@@ -417,7 +431,7 @@ stx group assign task-0005 "Auth" --project "API rewrite"
 stx group ls --project "API rewrite"
 stx group mv "Auth" --parent "Frontend" --project "API rewrite"
 stx group mv "Backend" --to-top --project "API rewrite"  # promote to top-level
-stx group dep create --group "Sprint 2" --blocked-by "Sprint 1"   # Sprint 2 blocked by Sprint 1
+stx group edge create --source "Sprint 2" --target "Sprint 1" --kind blocks --source-project backend --target-project backend
 ```
 
 ---
@@ -516,7 +530,7 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 
 | Command | `data` shape |
 |---|---|
-| `task create` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
+| `task create` | full TaskDetail (with `status`, `project`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`). `edge_sources`/`edge_targets` each is a list of `{task: Task, kind: str}`. |
 | `task edit`, `task archive`, `task mv` | full TaskDetail (same shape as `task show`) |
 | `task edit --dry-run`, `project edit --dry-run`, `group edit/rename/mv --dry-run` | `EntityUpdatePreview`: `{entity_type, entity_id, label, before, after, tags_added, tags_removed}` |
 | `task mv --dry-run` | `TaskMovePreview`: `{task_id, title, from_status, to_status, from_position, to_position, from_project, to_project, project_changed}` |
@@ -526,19 +540,24 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `status order` | `{"workspace_id": N, "statuses": [{"id": N, "name": str}, ...]}` |
 | `project create/archive` | full Project object |
 | `tag create/archive` | full Tag object |
-| `dep create/archive` | `{"blocked_task_id": N, "blocked_task_title": str, "blocking_task_id": N, "blocking_task_title": str}` |
-| `group-dep create/archive` | `{"blocked_group_id": N, "blocked_group_title": str, "blocking_group_id": N, "blocking_group_title": str}` |
+| `edge create/archive` | `{"source_id": N, "source_title": str, "target_id": N, "target_title": str, "kind": str}` |
+| `edge ls` | array of **TaskEdgeListItem**: `[{"source_id": N, "source_title": str, "target_id": N, "target_title": str, "workspace_id": N, "kind": str}, ...]` |
+| `edge meta ls` | `[{"key": str, "value": str}, ...]` (sorted; empty if no metadata) |
+| `edge meta get/set/del` | `{"key": str, "value": str}` |
+| `group edge create/archive` | `{"source_id": N, "source_title": str, "target_id": N, "target_title": str, "kind": str}` (group ids/titles) |
+| `group edge ls` | array of **GroupEdgeListItem**, analogous to `edge ls` shape |
+| `group edge meta ls\|get\|set\|del` | same shapes as task-edge metadata |
 | `group assign` | full TaskDetail — hydrated `group` object includes `title` |
 | `group unassign` | full TaskDetail |
 | `task transfer` (live) | `{"task": {...TaskDetail}, "source_task_id": N}` |
-| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "target_project_id": N\|null, "can_move": bool, "blocking_reason": str\|null, "dependency_ids": [...], "is_archived": bool}` |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "target_project_id": N\|null, "can_move": bool, "blocking_reason": str\|null, "edge_ids": [...], "is_archived": bool}` |
 | `task ls` | `[{"status": {...Status}, "tasks": [{...TaskListItem}]}, ...]` — grouped by status, mirrors text output. Each element has a full Status object and a `tasks` array of TaskListItem objects (with pre-resolved `project_name`, `tag_names`). |
 | `workspace ls` | array of Workspace objects with `"active": bool` field |
 | `status ls` | array of Status objects |
 | `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
 | `group ls` | array of GroupRef objects with `project_name` denormalized (avoids extra round-trip) |
-| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `blocked_by`, `blocks`, `history`, `metadata`) |
+| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`) |
 | `project show` | ProjectDetail with `tasks` array and `metadata` dict |
 | `group show` | GroupDetail with `tasks`, `children` arrays, and `metadata` dict |
 | `workspace ls` / `project ls` / `group ls` | entities include their `metadata` dicts |

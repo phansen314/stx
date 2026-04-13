@@ -5,7 +5,50 @@ from typing import Any, Literal
 
 from .models import Group, JournalEntry, Project, Status, Tag, Task, Workspace
 
+# ---- Edge ref types (hydrated edge with kind) ----
+
+
+@dataclass(frozen=True)
+class TaskEdgeRef:
+    """A task edge hydrated with the full task object and its kind."""
+
+    task: Task
+    kind: str
+
+
+@dataclass(frozen=True)
+class GroupEdgeRef:
+    """A group edge hydrated with the full group object and its kind."""
+
+    group: Group
+    kind: str
+
+
 # ---- List view types ----
+
+
+@dataclass(frozen=True)
+class TaskEdgeListItem:
+    """Denormalized task edge for list rendering — carries task titles."""
+
+    source_id: int
+    source_title: str
+    target_id: int
+    target_title: str
+    workspace_id: int
+    kind: str
+
+
+@dataclass(frozen=True)
+class GroupEdgeListItem:
+    """Denormalized group edge for list rendering — carries group titles."""
+
+    source_id: int
+    source_title: str
+    target_id: int
+    target_title: str
+    workspace_id: int
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +121,17 @@ class WorkspaceContext:
 
 @dataclass(frozen=True)
 class TaskDetail:
+    """Fully hydrated task view.
+
+    Edge naming convention — `edge_sources` holds *incoming* edges (tasks
+    that point to this one; each `ref.task` is the source end of an edge
+    whose target is this task). `edge_targets` holds *outgoing* edges (tasks
+    this one points to; each `ref.task` is the target end). Read literally:
+    "edge_sources" = "source tasks of edges touching me", "edge_targets" =
+    "target tasks of edges touching me". Archived endpoints are hidden —
+    both queries join on `tasks.archived = 0`.
+    """
+
     id: int
     workspace_id: int
     title: str
@@ -96,8 +150,8 @@ class TaskDetail:
     status: Status
     project: Project | None
     group: Group | None
-    blocked_by: tuple[Task, ...]
-    blocks: tuple[Task, ...]
+    edge_sources: tuple[TaskEdgeRef, ...]
+    edge_targets: tuple[TaskEdgeRef, ...]
     history: tuple[JournalEntry, ...]
     tags: tuple[Tag, ...]
 
@@ -116,6 +170,15 @@ class ProjectDetail:
 
 @dataclass(frozen=True)
 class GroupDetail:
+    """Fully hydrated group view.
+
+    Edge naming convention follows `TaskDetail`: `edge_sources` holds
+    *incoming* group edges (groups pointing to this one; each `ref.group` is
+    the source end). `edge_targets` holds *outgoing* edges (groups this one
+    points to; each `ref.group` is the target end). Archived endpoints are
+    hidden.
+    """
+
     id: int
     workspace_id: int
     project_id: int
@@ -129,6 +192,8 @@ class GroupDetail:
     children: tuple[Group, ...]
     parent: Group | None
     metadata: dict[str, str]
+    edge_sources: tuple[GroupEdgeRef, ...]
+    edge_targets: tuple[GroupEdgeRef, ...]
 
 
 # ---- Preview types ----
@@ -144,7 +209,7 @@ class MoveToWorkspacePreview:
     target_project_id: int | None
     can_move: bool
     blocking_reason: str | None
-    dependency_ids: tuple[int, ...]
+    edge_ids: tuple[int, ...]
     is_archived: bool
 
 

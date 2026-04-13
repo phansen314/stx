@@ -61,8 +61,8 @@ def make_detail(**overrides) -> TaskDetail:
         status=Status(id=1, workspace_id=1, name="Todo", archived=False, created_at=0),
         project=None,
         group=None,
-        blocked_by=(),
-        blocks=(),
+        edge_sources=(),
+        edge_targets=(),
         history=(),
         tags=(),
     )

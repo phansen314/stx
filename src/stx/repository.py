@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import re
 import sqlite3
 from typing import Any
 
 from .mappers import (
     row_to_group,
+    row_to_group_edge_list_item,
     row_to_journal_entry,
     row_to_project,
     row_to_status,
     row_to_tag,
     row_to_task,
+    row_to_task_edge_list_item,
     row_to_workspace,
 )
 from .models import (
@@ -32,6 +35,7 @@ from .models import (
     TaskFilter,
     Workspace,
 )
+from .service_models import GroupEdgeListItem, TaskEdgeListItem
 
 # ---- Updatable-field allowlists ----
 
@@ -570,151 +574,362 @@ def replace_group_metadata(conn: sqlite3.Connection, group_id: int, metadata_jso
     _replace_metadata(conn, "groups", group_id, metadata_json)
 
 
-# ---- Task dependency functions ----
+# ---- Edge metadata helpers (composite PK (source_id, target_id) — generic
+#      helpers below mirror the single-id _set_metadata_key pattern. Table
+#      literals are interpolated from the allowlist; callers pin the literal
+#      via per-entity wrappers so user input never reaches the f-string.) ----
 
 
-def add_dependency(
+_EDGE_METADATA_TABLES: dict[str, str] = {
+    "task_edges": "task edge",
+    "group_edges": "group edge",
+}
+
+
+def _check_edge_table(table: str) -> None:
+    if table not in _EDGE_METADATA_TABLES:
+        raise ValueError(f"invalid edge metadata table: {table!r}")
+
+
+def _get_edge_metadata(
+    conn: sqlite3.Connection, table: str, source_id: int, target_id: int
+) -> dict[str, str]:
+    _check_edge_table(table)
+    row = conn.execute(
+        f"SELECT metadata FROM {table} "
+        f"WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"{_EDGE_METADATA_TABLES[table]} ({source_id}, {target_id}) not found")
+    return json.loads(row["metadata"])
+
+
+def _get_edge_workspace_id(
+    conn: sqlite3.Connection, table: str, source_id: int, target_id: int
+) -> int:
+    _check_edge_table(table)
+    row = conn.execute(
+        f"SELECT workspace_id FROM {table} "
+        f"WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"{_EDGE_METADATA_TABLES[table]} ({source_id}, {target_id}) not found")
+    return row["workspace_id"]
+
+
+def _set_edge_metadata_key(
     conn: sqlite3.Connection,
-    task_id: int,
-    depends_on_id: int,
+    table: str,
+    source_id: int,
+    target_id: int,
+    key: str,
+    value: str,
+) -> None:
+    _check_edge_table(table)
+    path = f'$."{key}"'
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = json_set(metadata, ?, ?) "
+        f"WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (path, value, source_id, target_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_EDGE_METADATA_TABLES[table]} ({source_id}, {target_id}) not found")
+
+
+def _remove_edge_metadata_key(
+    conn: sqlite3.Connection, table: str, source_id: int, target_id: int, key: str
+) -> None:
+    _check_edge_table(table)
+    path = f'$."{key}"'
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = json_remove(metadata, ?) "
+        f"WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (path, source_id, target_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_EDGE_METADATA_TABLES[table]} ({source_id}, {target_id}) not found")
+
+
+def _replace_edge_metadata(
+    conn: sqlite3.Connection,
+    table: str,
+    source_id: int,
+    target_id: int,
+    metadata_json: str,
+) -> None:
+    _check_edge_table(table)
+    cur = conn.execute(
+        f"UPDATE {table} SET metadata = ? "
+        f"WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (metadata_json, source_id, target_id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"{_EDGE_METADATA_TABLES[table]} ({source_id}, {target_id}) not found")
+
+
+# ---- Per-edge-entity public wrappers ----
+
+
+def get_task_edge_metadata(
+    conn: sqlite3.Connection, source_id: int, target_id: int
+) -> dict[str, str]:
+    return _get_edge_metadata(conn, "task_edges", source_id, target_id)
+
+
+def get_task_edge_workspace_id(conn: sqlite3.Connection, source_id: int, target_id: int) -> int:
+    return _get_edge_workspace_id(conn, "task_edges", source_id, target_id)
+
+
+def set_task_edge_metadata_key(
+    conn: sqlite3.Connection, source_id: int, target_id: int, key: str, value: str
+) -> None:
+    _set_edge_metadata_key(conn, "task_edges", source_id, target_id, key, value)
+
+
+def remove_task_edge_metadata_key(
+    conn: sqlite3.Connection, source_id: int, target_id: int, key: str
+) -> None:
+    _remove_edge_metadata_key(conn, "task_edges", source_id, target_id, key)
+
+
+def replace_task_edge_metadata(
+    conn: sqlite3.Connection, source_id: int, target_id: int, metadata_json: str
+) -> None:
+    _replace_edge_metadata(conn, "task_edges", source_id, target_id, metadata_json)
+
+
+def get_group_edge_metadata(
+    conn: sqlite3.Connection, source_id: int, target_id: int
+) -> dict[str, str]:
+    return _get_edge_metadata(conn, "group_edges", source_id, target_id)
+
+
+def get_group_edge_workspace_id(conn: sqlite3.Connection, source_id: int, target_id: int) -> int:
+    return _get_edge_workspace_id(conn, "group_edges", source_id, target_id)
+
+
+def set_group_edge_metadata_key(
+    conn: sqlite3.Connection, source_id: int, target_id: int, key: str, value: str
+) -> None:
+    _set_edge_metadata_key(conn, "group_edges", source_id, target_id, key, value)
+
+
+def remove_group_edge_metadata_key(
+    conn: sqlite3.Connection, source_id: int, target_id: int, key: str
+) -> None:
+    _remove_edge_metadata_key(conn, "group_edges", source_id, target_id, key)
+
+
+def replace_group_edge_metadata(
+    conn: sqlite3.Connection, source_id: int, target_id: int, metadata_json: str
+) -> None:
+    _replace_edge_metadata(conn, "group_edges", source_id, target_id, metadata_json)
+
+
+# ---- Task edge functions ----
+
+
+def add_task_edge(
+    conn: sqlite3.Connection,
+    source_id: int,
+    target_id: int,
+    workspace_id: int,
+    kind: str,
 ) -> None:
     conn.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?)) "
-        "ON CONFLICT (task_id, depends_on_id) DO UPDATE SET archived = 0",
-        (task_id, depends_on_id, task_id),
+        "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (source_id, target_id) DO UPDATE SET archived = 0, kind = excluded.kind, metadata = '{}'",
+        (source_id, target_id, workspace_id, kind),
     )
 
 
-def archive_dependency(
+def archive_task_edge(
     conn: sqlite3.Connection,
-    task_id: int,
-    depends_on_id: int,
+    source_id: int,
+    target_id: int,
 ) -> None:
     conn.execute(
-        "UPDATE task_dependencies SET archived = 1 WHERE task_id = ? AND depends_on_id = ? AND archived = 0",
-        (task_id, depends_on_id),
+        "UPDATE task_edges SET archived = 1 WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
     )
 
 
-def list_blocked_by_ids(
+def list_task_edge_targets_from(
     conn: sqlite3.Connection,
-    task_id: int,
+    source_id: int,
 ) -> tuple[int, ...]:
+    """Return target IDs of all active edges originating at source_id whose
+    target task is also active. Archived endpoints are hidden to match the
+    workspace-level `list_task_edges_by_workspace` convention."""
     rows = conn.execute(
-        "SELECT depends_on_id FROM task_dependencies WHERE task_id = ? AND archived = 0",
-        (task_id,),
+        "SELECT e.target_id FROM task_edges e "
+        "JOIN tasks t ON t.id = e.target_id "
+        "WHERE e.source_id = ? AND e.archived = 0 AND t.archived = 0",
+        (source_id,),
     ).fetchall()
-    return tuple(r["depends_on_id"] for r in rows)
+    return tuple(r["target_id"] for r in rows)
 
 
-def list_blocks_ids(
+def list_task_edge_sources_into(
     conn: sqlite3.Connection,
-    task_id: int,
+    target_id: int,
 ) -> tuple[int, ...]:
+    """Return source IDs of all active edges pointing into target_id whose
+    source task is also active. Archived endpoints are hidden."""
     rows = conn.execute(
-        "SELECT task_id FROM task_dependencies WHERE depends_on_id = ? AND archived = 0",
-        (task_id,),
+        "SELECT e.source_id FROM task_edges e "
+        "JOIN tasks s ON s.id = e.source_id "
+        "WHERE e.target_id = ? AND e.archived = 0 AND s.archived = 0",
+        (target_id,),
     ).fetchall()
-    return tuple(r["task_id"] for r in rows)
+    return tuple(r["source_id"] for r in rows)
 
 
-def batch_dependency_ids(
+def get_task_edge_kind(
     conn: sqlite3.Connection,
-    task_ids: tuple[int, ...],
-) -> tuple[dict[int, tuple[int, ...]], dict[int, tuple[int, ...]]]:
-    """Return (blocked_by_map, blocks_map) for a batch of task IDs.
-
-    Each map is {task_id: tuple_of_related_ids}.
-    """
-    if not task_ids:
-        return {}, {}
-    placeholders = ",".join("?" * len(task_ids))
-    rows = conn.execute(
-        f"SELECT task_id, depends_on_id FROM task_dependencies "
-        f"WHERE (task_id IN ({placeholders}) OR depends_on_id IN ({placeholders})) AND archived = 0",
-        (*task_ids, *task_ids),
-    ).fetchall()
-    blocked_by: dict[int, list[int]] = {}
-    blocks: dict[int, list[int]] = {}
-    for r in rows:
-        tid, did = r["task_id"], r["depends_on_id"]
-        blocked_by.setdefault(tid, []).append(did)
-        blocks.setdefault(did, []).append(tid)
-    return (
-        {tid: tuple(blocked_by.get(tid, ())) for tid in task_ids},
-        {tid: tuple(blocks.get(tid, ())) for tid in task_ids},
-    )
+    source_id: int,
+    target_id: int,
+) -> str | None:
+    """Return the kind of the active edge (source_id → target_id), or None if no active edge."""
+    row = conn.execute(
+        "SELECT kind FROM task_edges WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
+    ).fetchone()
+    return row["kind"] if row is not None else None
 
 
-def list_blocked_by_tasks(
+def get_archived_task_edge_kind(
     conn: sqlite3.Connection,
-    task_id: int,
-) -> tuple[Task, ...]:
-    rows = conn.execute(
-        "SELECT t.* FROM tasks t "
-        "JOIN task_dependencies d ON t.id = d.depends_on_id "
-        "WHERE d.task_id = ? AND d.archived = 0",
-        (task_id,),
-    ).fetchall()
-    return tuple(row_to_task(r) for r in rows)
+    source_id: int,
+    target_id: int,
+) -> str | None:
+    """Return the kind of an archived edge (source_id → target_id), or None if
+    no archived row exists. Active rows are ignored."""
+    row = conn.execute(
+        "SELECT kind FROM task_edges WHERE source_id = ? AND target_id = ? AND archived = 1",
+        (source_id, target_id),
+    ).fetchone()
+    return row["kind"] if row is not None else None
 
 
-def list_blocks_tasks(
+def list_task_edge_targets_from_hydrated(
     conn: sqlite3.Connection,
-    task_id: int,
-) -> tuple[Task, ...]:
+    source_id: int,
+) -> tuple[tuple[Task, str], ...]:
+    """Return (task, kind) pairs for all active targets of edges from source_id.
+    Archived endpoints are hidden."""
     rows = conn.execute(
-        "SELECT t.* FROM tasks t "
-        "JOIN task_dependencies d ON t.id = d.task_id "
-        "WHERE d.depends_on_id = ? AND d.archived = 0",
-        (task_id,),
+        "SELECT t.*, e.kind FROM tasks t "
+        "JOIN task_edges e ON t.id = e.target_id "
+        "WHERE e.source_id = ? AND e.archived = 0 AND t.archived = 0",
+        (source_id,),
     ).fetchall()
-    return tuple(row_to_task(r) for r in rows)
+    return tuple((row_to_task(r), r["kind"]) for r in rows)
 
 
-def get_reachable_task_ids(
+def list_task_edge_sources_into_hydrated(
     conn: sqlite3.Connection,
-    task_id: int,
-) -> tuple[int, ...]:
-    """Return all task IDs reachable from *task_id* by following depends_on edges."""
+    target_id: int,
+) -> tuple[tuple[Task, str], ...]:
+    """Return (task, kind) pairs for all active sources of edges pointing into target_id.
+    Archived endpoints are hidden."""
     rows = conn.execute(
-        "WITH RECURSIVE reachable AS ("
-        "  SELECT depends_on_id AS id FROM task_dependencies WHERE task_id = ? AND archived = 0 "
-        "  UNION "
-        "  SELECT td.depends_on_id FROM task_dependencies td "
-        "  JOIN reachable r ON td.task_id = r.id WHERE td.archived = 0"
-        ") SELECT id FROM reachable",
-        (task_id,),
+        "SELECT t.*, e.kind FROM tasks t "
+        "JOIN task_edges e ON t.id = e.source_id "
+        "WHERE e.target_id = ? AND e.archived = 0 AND t.archived = 0",
+        (target_id,),
     ).fetchall()
-    return tuple(r["id"] for r in rows)
+    return tuple((row_to_task(r), r["kind"]) for r in rows)
 
 
-def list_all_dependencies(
+def list_all_task_edges(
     conn: sqlite3.Connection,
-) -> tuple[tuple[int, int], ...]:
+) -> tuple[tuple[int, int, str], ...]:
     rows = conn.execute(
-        "SELECT task_id, depends_on_id FROM task_dependencies WHERE archived = 0"
+        "SELECT source_id, target_id, kind FROM task_edges WHERE archived = 0"
     ).fetchall()
-    return tuple((r["task_id"], r["depends_on_id"]) for r in rows)
+    return tuple((r["source_id"], r["target_id"], r["kind"]) for r in rows)
 
 
-def list_all_task_dependencies(
+def list_all_task_edge_rows(
     conn: sqlite3.Connection,
 ) -> tuple[dict, ...]:
-    """Return all task_dependencies rows as plain dicts (full FK columns preserved)."""
+    """Return all task_edges rows as plain dicts (full FK columns preserved)."""
     rows = conn.execute(
-        "SELECT task_id, depends_on_id, workspace_id, archived FROM task_dependencies"
+        "SELECT source_id, target_id, workspace_id, archived, kind, metadata FROM task_edges"
     ).fetchall()
     return tuple(
         {
-            "task_id": r["task_id"],
-            "depends_on_id": r["depends_on_id"],
+            "source_id": r["source_id"],
+            "target_id": r["target_id"],
             "workspace_id": r["workspace_id"],
             "archived": bool(r["archived"]),
+            "kind": r["kind"],
+            "metadata": json.loads(r["metadata"]),
         }
         for r in rows
     )
+
+
+def list_all_group_edge_rows(
+    conn: sqlite3.Connection,
+) -> tuple[dict, ...]:
+    """Return all group_edges rows as plain dicts (full FK columns preserved)."""
+    rows = conn.execute(
+        "SELECT source_id, target_id, workspace_id, archived, kind, metadata FROM group_edges"
+    ).fetchall()
+    return tuple(
+        {
+            "source_id": r["source_id"],
+            "target_id": r["target_id"],
+            "workspace_id": r["workspace_id"],
+            "archived": bool(r["archived"]),
+            "kind": r["kind"],
+            "metadata": json.loads(r["metadata"]),
+        }
+        for r in rows
+    )
+
+
+def list_task_edges_by_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    *,
+    kind: str | None = None,
+    task_id: int | None = None,
+) -> tuple[TaskEdgeListItem, ...]:
+    """Return active task edges for a workspace, optionally filtered by kind and/or task.
+
+    Endpoint tasks are also filtered to ``archived = 0`` — archived entities
+    stay hidden by default across the codebase, and edges whose endpoints
+    have since been archived should not surface in active listings.
+    """
+    # NOTE: `clauses` must only hold statically-authored SQL fragments. All
+    # user-supplied values go through `params`; never append user input to
+    # the clauses list or the f-string interpolation below becomes unsafe.
+    clauses = ["e.workspace_id = ?", "e.archived = 0", "s.archived = 0", "t.archived = 0"]
+    params: list[Any] = [workspace_id]
+    if kind is not None:
+        clauses.append("e.kind = ?")
+        params.append(kind)
+    if task_id is not None:
+        clauses.append("(e.source_id = ? OR e.target_id = ?)")
+        params.extend([task_id, task_id])
+    where = " AND ".join(clauses)
+    rows = conn.execute(
+        f"SELECT e.source_id, e.target_id, e.workspace_id, e.kind, "
+        f"s.title AS source_title, t.title AS target_title "
+        f"FROM task_edges e "
+        f"JOIN tasks s ON s.id = e.source_id "
+        f"JOIN tasks t ON t.id = e.target_id "
+        f"WHERE {where} "
+        f"ORDER BY e.source_id, e.target_id",
+        params,
+    ).fetchall()
+    return tuple(row_to_task_edge_list_item(r) for r in rows)
 
 
 def list_all_task_tags(
@@ -1446,65 +1661,146 @@ def archive_statuses_in_workspace(
     return cur.rowcount
 
 
-# ---- Group dependency functions ----
+# ---- Group edge functions ----
 
 
-def add_group_dependency(
+def add_group_edge(
     conn: sqlite3.Connection,
-    group_id: int,
-    depends_on_id: int,
+    source_id: int,
+    target_id: int,
+    workspace_id: int,
+    kind: str,
 ) -> None:
     conn.execute(
-        "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?)) "
-        "ON CONFLICT (group_id, depends_on_id) DO UPDATE SET archived = 0",
-        (group_id, depends_on_id, group_id),
+        "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (source_id, target_id) DO UPDATE SET archived = 0, kind = excluded.kind, metadata = '{}'",
+        (source_id, target_id, workspace_id, kind),
     )
 
 
-def archive_group_dependency(
+def archive_group_edge(
     conn: sqlite3.Connection,
-    group_id: int,
-    depends_on_id: int,
+    source_id: int,
+    target_id: int,
 ) -> None:
     conn.execute(
-        "UPDATE group_dependencies SET archived = 1 WHERE group_id = ? AND depends_on_id = ? AND archived = 0",
-        (group_id, depends_on_id),
+        "UPDATE group_edges SET archived = 1 WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
     )
 
 
-def list_group_blocked_by_ids(
+def list_group_edge_targets_from(
     conn: sqlite3.Connection,
-    group_id: int,
+    source_id: int,
 ) -> tuple[int, ...]:
+    """Return target IDs of all active edges originating at source_id whose
+    target group is also active. Archived endpoints are hidden."""
     rows = conn.execute(
-        "SELECT depends_on_id FROM group_dependencies WHERE group_id = ? AND archived = 0",
-        (group_id,),
+        "SELECT e.target_id FROM group_edges e "
+        "JOIN groups g ON g.id = e.target_id "
+        "WHERE e.source_id = ? AND e.archived = 0 AND g.archived = 0",
+        (source_id,),
     ).fetchall()
-    return tuple(r["depends_on_id"] for r in rows)
+    return tuple(r["target_id"] for r in rows)
 
 
-def list_all_group_dependencies(
+def list_all_group_edges(
     conn: sqlite3.Connection,
-) -> tuple[tuple[int, int], ...]:
+) -> tuple[tuple[int, int, str], ...]:
     rows = conn.execute(
-        "SELECT group_id, depends_on_id FROM group_dependencies WHERE archived = 0"
+        "SELECT source_id, target_id, kind FROM group_edges WHERE archived = 0"
     ).fetchall()
-    return tuple((r["group_id"], r["depends_on_id"]) for r in rows)
+    return tuple((r["source_id"], r["target_id"], r["kind"]) for r in rows)
 
 
-def get_reachable_group_dep_ids(
+def get_group_edge_kind(
     conn: sqlite3.Connection,
-    group_id: int,
-) -> tuple[int, ...]:
-    """Return all group IDs reachable from *group_id* by following depends_on edges."""
+    source_id: int,
+    target_id: int,
+) -> str | None:
+    """Return the kind of the active edge (source_id → target_id), or None if no active edge."""
+    row = conn.execute(
+        "SELECT kind FROM group_edges WHERE source_id = ? AND target_id = ? AND archived = 0",
+        (source_id, target_id),
+    ).fetchone()
+    return row["kind"] if row is not None else None
+
+
+def get_archived_group_edge_kind(
+    conn: sqlite3.Connection,
+    source_id: int,
+    target_id: int,
+) -> str | None:
+    """Return the kind of an archived edge (source_id → target_id), or None if
+    no archived row exists. Active rows are ignored."""
+    row = conn.execute(
+        "SELECT kind FROM group_edges WHERE source_id = ? AND target_id = ? AND archived = 1",
+        (source_id, target_id),
+    ).fetchone()
+    return row["kind"] if row is not None else None
+
+
+def list_group_edge_targets_from_hydrated(
+    conn: sqlite3.Connection,
+    source_id: int,
+) -> tuple[tuple[Group, str], ...]:
+    """Return (group, kind) pairs for all active targets of edges from source_id.
+    Archived endpoints are hidden."""
     rows = conn.execute(
-        "WITH RECURSIVE reachable AS ("
-        "  SELECT depends_on_id AS id FROM group_dependencies WHERE group_id = ? AND archived = 0 "
-        "  UNION "
-        "  SELECT gd.depends_on_id FROM group_dependencies gd "
-        "  JOIN reachable r ON gd.group_id = r.id WHERE gd.archived = 0"
-        ") SELECT id FROM reachable",
-        (group_id,),
+        "SELECT g.*, e.kind FROM groups g "
+        "JOIN group_edges e ON g.id = e.target_id "
+        "WHERE e.source_id = ? AND e.archived = 0 AND g.archived = 0",
+        (source_id,),
     ).fetchall()
-    return tuple(r["id"] for r in rows)
+    return tuple((row_to_group(r), r["kind"]) for r in rows)
+
+
+def list_group_edge_sources_into_hydrated(
+    conn: sqlite3.Connection,
+    target_id: int,
+) -> tuple[tuple[Group, str], ...]:
+    """Return (group, kind) pairs for all active sources of edges pointing into target_id.
+    Archived endpoints are hidden."""
+    rows = conn.execute(
+        "SELECT g.*, e.kind FROM groups g "
+        "JOIN group_edges e ON g.id = e.source_id "
+        "WHERE e.target_id = ? AND e.archived = 0 AND g.archived = 0",
+        (target_id,),
+    ).fetchall()
+    return tuple((row_to_group(r), r["kind"]) for r in rows)
+
+
+def list_group_edges_by_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    *,
+    kind: str | None = None,
+    group_id: int | None = None,
+) -> tuple[GroupEdgeListItem, ...]:
+    """Return active group edges for a workspace, optionally filtered by kind and/or group.
+
+    Endpoint groups are also filtered to ``archived = 0`` — same rationale
+    as ``list_task_edges_by_workspace``.
+    """
+    # NOTE: see list_task_edges_by_workspace — `clauses` is static-only.
+    clauses = ["e.workspace_id = ?", "e.archived = 0", "s.archived = 0", "t.archived = 0"]
+    params: list[Any] = [workspace_id]
+    if kind is not None:
+        clauses.append("e.kind = ?")
+        params.append(kind)
+    if group_id is not None:
+        clauses.append("(e.source_id = ? OR e.target_id = ?)")
+        params.extend([group_id, group_id])
+    where = " AND ".join(clauses)
+    rows = conn.execute(
+        f"SELECT e.source_id, e.target_id, e.workspace_id, e.kind, "
+        f"s.title AS source_title, t.title AS target_title "
+        f"FROM group_edges e "
+        f"JOIN groups s ON s.id = e.source_id "
+        f"JOIN groups t ON t.id = e.target_id "
+        f"WHERE {where} "
+        f"ORDER BY e.source_id, e.target_id",
+        params,
+    ).fetchall()
+    return tuple(row_to_group_edge_list_item(r) for r in rows)

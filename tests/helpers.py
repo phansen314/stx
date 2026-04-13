@@ -81,11 +81,12 @@ def insert_task_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
+    kind: str = "blocks",
 ) -> None:
     conn.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
-        (task_id, depends_on_id, task_id),
+        "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?), ?)",
+        (task_id, depends_on_id, task_id, kind),
     )
 
 
@@ -93,11 +94,12 @@ def insert_group_dependency(
     conn: sqlite3.Connection,
     group_id: int,
     depends_on_id: int,
+    kind: str = "blocks",
 ) -> None:
     conn.execute(
-        "INSERT INTO group_dependencies (group_id, depends_on_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?))",
-        (group_id, depends_on_id, group_id),
+        "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) "
+        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?), ?)",
+        (group_id, depends_on_id, group_id, kind),
     )
 
 

@@ -467,8 +467,9 @@ class TestTaskService:
         insert_task_dependency(conn, t2, t1)
         service.update_task(conn, t2, {"title": "renamed"}, "tui")
         detail = service.get_task_detail(conn, t2)
-        assert len(detail.blocked_by) == 1
-        assert detail.blocked_by[0].id == t1
+        # t2 is the source of the edge (points at t1) → outgoing = edge_targets
+        assert len(detail.edge_targets) == 1
+        assert detail.edge_targets[0].task.id == t1
         assert len(detail.history) == 1
 
     def test_list(self, conn: sqlite3.Connection) -> None:
@@ -792,35 +793,36 @@ class TestTaskService:
             service.assign_task_to_group(conn, tid, gid, source="test")
 
 
-# ---- Dependency ----
+# ---- Task Edge ----
 
 
-class TestDependencyService:
+class TestEdgeService:
     def test_add(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
-        service.add_dependency(conn, t2, t1)
+        service.add_task_edge(conn, t2, t1, kind="blocks")
         detail = service.get_task_detail(conn, t2)
-        assert any(t.id == t1 for t in detail.blocked_by)
+        # t2 is the source → outgoing edge shows up in edge_targets
+        assert any(ref.task.id == t1 for ref in detail.edge_targets)
 
     def test_remove(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
-        service.add_dependency(conn, t2, t1)
-        service.archive_dependency(conn, t2, t1)
+        service.add_task_edge(conn, t2, t1, kind="blocks")
+        service.archive_task_edge(conn, t2, t1)
         detail = service.get_task_detail(conn, t2)
-        assert detail.blocked_by == ()
+        assert detail.edge_sources == ()
 
     def test_add_self_ref_raises(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         tid = insert_task(conn, bid, "a", cid)
         with pytest.raises(ValueError, match="cannot depend on itself"):
-            service.add_dependency(conn, tid, tid)
+            service.add_task_edge(conn, tid, tid, kind="blocks")
 
     def test_add_cross_workspace_raises(self, conn: sqlite3.Connection) -> None:
         b1 = insert_workspace(conn, "workspace1")
@@ -830,27 +832,29 @@ class TestDependencyService:
         t1 = insert_task(conn, b1, "a", c1)
         t2 = insert_task(conn, b2, "b", c2)
         with pytest.raises(ValueError, match="same workspace"):
-            service.add_dependency(conn, t2, t1)
+            service.add_task_edge(conn, t2, t1, kind="blocks")
 
-    def test_cycle_direct(self, conn: sqlite3.Connection) -> None:
+    def test_cycle_direct_now_allowed(self, conn: sqlite3.Connection) -> None:
+        # Cycle detection removed pending blocking-kind semantics rework (see stx task)
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
-        service.add_dependency(conn, t1, t2)  # t1 -> t2
-        with pytest.raises(ValueError, match="cycle"):
-            service.add_dependency(conn, t2, t1)  # t2 -> t1 would cycle
+        service.add_task_edge(conn, t1, t2, kind="blocks")  # t1 -> t2
+        service.add_task_edge(conn, t2, t1, kind="blocks")  # t2 -> t1 (cycle, now allowed)
+        detail = service.get_task_detail(conn, t1)
+        assert any(ref.task.id == t2 for ref in detail.edge_sources)
 
-    def test_cycle_transitive(self, conn: sqlite3.Connection) -> None:
+    def test_cycle_transitive_now_allowed(self, conn: sqlite3.Connection) -> None:
+        # Cycle detection removed pending blocking-kind semantics rework (see stx task)
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
         t3 = insert_task(conn, bid, "c", cid)
-        service.add_dependency(conn, t1, t2)  # t1 -> t2
-        service.add_dependency(conn, t2, t3)  # t2 -> t3
-        with pytest.raises(ValueError, match="cycle"):
-            service.add_dependency(conn, t3, t1)  # t3 -> t1 would cycle
+        service.add_task_edge(conn, t1, t2, kind="blocks")  # t1 -> t2
+        service.add_task_edge(conn, t2, t3, kind="blocks")  # t2 -> t3
+        service.add_task_edge(conn, t3, t1, kind="blocks")  # t3 -> t1 (cycle, now allowed)
 
     def test_non_cycle_allowed(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -858,26 +862,58 @@ class TestDependencyService:
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
         t3 = insert_task(conn, bid, "c", cid)
-        service.add_dependency(conn, t1, t2)  # t1 -> t2
-        service.add_dependency(conn, t1, t3)  # t1 -> t3 (diamond, not cycle)
-        service.add_dependency(conn, t2, t3)  # t2 -> t3 (converge, not cycle)
+        service.add_task_edge(conn, t1, t2, kind="blocks")  # t1 -> t2
+        service.add_task_edge(conn, t1, t3, kind="blocks")  # t1 -> t3 (diamond, not cycle)
+        service.add_task_edge(conn, t2, t3, kind="blocks")  # t2 -> t3 (converge, not cycle)
         detail = service.get_task_detail(conn, t1)
-        assert {t.id for t in detail.blocked_by} == {t2, t3}
+        # t1 sources two outgoing edges (→t2, →t3) → edge_targets
+        assert {ref.task.id for ref in detail.edge_targets} == {t2, t3}
 
     def test_add_duplicate_raises(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
-        service.add_dependency(conn, t1, t2)
-        with pytest.raises(ValueError, match="already depends"):
-            service.add_dependency(conn, t1, t2)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        with pytest.raises(ValueError, match="edge already exists"):
+            service.add_task_edge(conn, t1, t2, kind="blocks")
+
+    def test_add_with_kind(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        row = conn.execute(
+            "SELECT kind FROM task_edges WHERE source_id = ? AND target_id = ?", (t1, t2)
+        ).fetchone()
+        assert row is not None
+        assert row["kind"] == "blocks"
+
+    def test_kind_normalized_to_lowercase(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t1, t2, kind="Blocks")
+        row = conn.execute(
+            "SELECT kind FROM task_edges WHERE source_id = ? AND target_id = ?", (t1, t2)
+        ).fetchone()
+        assert row["kind"] == "blocks"
+
+    def test_invalid_kind_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        with pytest.raises(ValueError, match="edge kind"):
+            service.add_task_edge(conn, t1, t2, kind="invalid kind!")
 
 
-# ---- Group Dependency ----
+# ---- Group Edge ----
 
 
-class TestGroupDependencyService:
+class TestGroupEdgeService:
     def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int, int]:
         bid = insert_workspace(conn)
         pid = insert_project(conn, bid)
@@ -888,39 +924,39 @@ class TestGroupDependencyService:
 
     def test_add(self, conn: sqlite3.Connection) -> None:
         _, g1, g2, _ = self._setup(conn)
-        service.add_group_dependency(conn, g1, g2)
-        deps = service.list_all_group_dependencies(conn)
-        assert (g1, g2) in deps
+        service.add_group_edge(conn, g1, g2, kind="blocks")
+        deps = service.list_all_group_edges(conn)
+        assert (g1, g2, "blocks") in deps
 
     def test_archive(self, conn: sqlite3.Connection) -> None:
         _, g1, g2, _ = self._setup(conn)
-        service.add_group_dependency(conn, g1, g2)
-        service.archive_group_dependency(conn, g1, g2)
-        assert service.list_all_group_dependencies(conn) == ()
+        service.add_group_edge(conn, g1, g2, kind="blocks")
+        service.archive_group_edge(conn, g1, g2)
+        assert service.list_all_group_edges(conn) == ()
 
     def test_add_self_ref_raises(self, conn: sqlite3.Connection) -> None:
         _, g1, _, _ = self._setup(conn)
         with pytest.raises(ValueError, match="cannot depend on itself"):
-            service.add_group_dependency(conn, g1, g1)
+            service.add_group_edge(conn, g1, g1, kind="blocks")
 
-    def test_cycle_direct(self, conn: sqlite3.Connection) -> None:
+    def test_cycle_direct_now_allowed(self, conn: sqlite3.Connection) -> None:
+        # Cycle detection removed pending blocking-kind semantics rework (see stx task)
         _, g1, g2, _ = self._setup(conn)
-        service.add_group_dependency(conn, g1, g2)  # g1 -> g2
-        with pytest.raises(ValueError, match="cycle"):
-            service.add_group_dependency(conn, g2, g1)  # g2 -> g1 would cycle
+        service.add_group_edge(conn, g1, g2, kind="blocks")  # g1 -> g2
+        service.add_group_edge(conn, g2, g1, kind="blocks")  # g2 -> g1 (cycle, now allowed)
 
-    def test_cycle_transitive(self, conn: sqlite3.Connection) -> None:
+    def test_cycle_transitive_now_allowed(self, conn: sqlite3.Connection) -> None:
+        # Cycle detection removed pending blocking-kind semantics rework (see stx task)
         _, g1, g2, g3 = self._setup(conn)
-        service.add_group_dependency(conn, g1, g2)  # g1 -> g2
-        service.add_group_dependency(conn, g2, g3)  # g2 -> g3
-        with pytest.raises(ValueError, match="cycle"):
-            service.add_group_dependency(conn, g3, g1)  # g3 -> g1 would cycle
+        service.add_group_edge(conn, g1, g2, kind="blocks")  # g1 -> g2
+        service.add_group_edge(conn, g2, g3, kind="blocks")  # g2 -> g3
+        service.add_group_edge(conn, g3, g1, kind="blocks")  # g3 -> g1 (cycle, now allowed)
 
     def test_add_duplicate_raises(self, conn: sqlite3.Connection) -> None:
         _, g1, g2, _ = self._setup(conn)
-        service.add_group_dependency(conn, g1, g2)
-        with pytest.raises(ValueError, match="already depends"):
-            service.add_group_dependency(conn, g1, g2)
+        service.add_group_edge(conn, g1, g2, kind="blocks")
+        with pytest.raises(ValueError, match="edge already exists"):
+            service.add_group_edge(conn, g1, g2, kind="blocks")
 
 
 # ---- History ----
@@ -1039,7 +1075,7 @@ class TestMoveTaskToWorkspace:
         b2 = insert_workspace(conn, "workspace2")
         c2 = insert_status(conn, b2, "backlog")
 
-        with pytest.raises(ValueError, match="dependencies"):
+        with pytest.raises(ValueError, match="active edges"):
             service.move_task_to_workspace(conn, t2, b2, c2, source="test")
 
     def test_blocks_deps(self, conn: sqlite3.Connection) -> None:
@@ -1052,7 +1088,7 @@ class TestMoveTaskToWorkspace:
         b2 = insert_workspace(conn, "workspace2")
         c2 = insert_status(conn, b2, "backlog")
 
-        with pytest.raises(ValueError, match="dependencies"):
+        with pytest.raises(ValueError, match="active edges"):
             service.move_task_to_workspace(conn, t1, b2, c2, source="test")
 
     def test_archived_task(self, conn: sqlite3.Connection) -> None:
@@ -1122,7 +1158,7 @@ class TestMoveTaskToWorkspace:
         preview = service.preview_move_to_workspace(conn, tid, b2, c2)
         assert preview.can_move is True
         assert preview.blocking_reason is None
-        assert preview.dependency_ids == ()
+        assert preview.edge_ids == ()
         assert preview.is_archived is False
         assert preview.task_title == "t"
         assert preview.source_workspace_id == b1
@@ -1139,8 +1175,8 @@ class TestMoveTaskToWorkspace:
         c2 = insert_status(conn, b2, "backlog")
         preview = service.preview_move_to_workspace(conn, t2, b2, c2)
         assert preview.can_move is False
-        assert preview.dependency_ids == (t1,)
-        assert "dependencies" in preview.blocking_reason
+        assert preview.edge_ids == (t1,)
+        assert "active edges" in preview.blocking_reason
 
     def test_preview_archived_task(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
@@ -2317,22 +2353,206 @@ class TestArchivePreviewAndCascade:
         cid = insert_status(conn, bid)
         t1 = insert_task(conn, bid, "a", cid)
         t2 = insert_task(conn, bid, "b", cid)
-        service.add_dependency(conn, t2, t1)
-        service.archive_dependency(conn, t2, t1)
-        service.add_dependency(conn, t2, t1)  # should not crash
+        service.add_task_edge(conn, t2, t1, kind="blocks")
+        service.archive_task_edge(conn, t2, t1)
+        service.add_task_edge(conn, t2, t1, kind="blocks")  # should not crash
         detail = service.get_task_detail(conn, t2)
-        assert len(detail.blocked_by) == 1
+        # t2 is the source → outgoing = edge_targets
+        assert len(detail.edge_targets) == 1
+
+    def test_readd_task_edge_journals_archived_flip(self, conn: sqlite3.Connection) -> None:
+        """Reviving an archived edge should emit an explicit archived 1→0 entry."""
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t2, t1, kind="blocks")
+        service.archive_task_edge(conn, t2, t1)
+        service.add_task_edge(conn, t2, t1, kind="related-to")
+        entries = service.list_journal(conn, EntityType.TASK_EDGE, t2)
+        archived_flips = [e for e in entries if e.field == "archived"]
+        assert len(archived_flips) == 1
+        assert archived_flips[0].old_value == "1"
+        assert archived_flips[0].new_value == "0"
+        kind_changes = [e for e in entries if e.field == "kind"]
+        assert any(e.old_value == "blocks" and e.new_value == "related-to" for e in kind_changes)
+
+    def test_archive_already_archived_task_edge_raises_specific_error(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        service.archive_task_edge(conn, t1, t2)
+        with pytest.raises(LookupError, match="already archived"):
+            service.archive_task_edge(conn, t1, t2)
+
+    def test_archive_nonexistent_task_edge_raises_not_found(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        with pytest.raises(LookupError, match="no edge found"):
+            service.archive_task_edge(conn, t1, t2)
 
     def test_readd_group_dependency_after_archive(self, conn: sqlite3.Connection) -> None:
         bid = insert_workspace(conn)
         pid = insert_project(conn, bid, "p")
         g1 = insert_group(conn, pid, "g1")
         g2 = insert_group(conn, pid, "g2")
-        service.add_group_dependency(conn, g1, g2)
-        service.archive_group_dependency(conn, g1, g2)
-        service.add_group_dependency(conn, g1, g2)  # should not crash
-        deps = service.list_all_group_dependencies(conn)
-        assert (g1, g2) in deps
+        service.add_group_edge(conn, g1, g2, kind="blocks")
+        service.archive_group_edge(conn, g1, g2)
+        service.add_group_edge(conn, g1, g2, kind="blocks")  # should not crash
+        deps = service.list_all_group_edges(conn)
+        assert (g1, g2, "blocks") in deps
+
+    def test_archive_already_archived_group_edge_raises_specific_error(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        pid = insert_project(conn, bid, "p")
+        g1 = insert_group(conn, pid, "g1")
+        g2 = insert_group(conn, pid, "g2")
+        service.add_group_edge(conn, g1, g2, kind="blocks")
+        service.archive_group_edge(conn, g1, g2)
+        with pytest.raises(LookupError, match="already archived"):
+            service.archive_group_edge(conn, g1, g2)
+
+    def test_archive_nonexistent_group_edge_raises_not_found(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        pid = insert_project(conn, bid, "p")
+        g1 = insert_group(conn, pid, "g1")
+        g2 = insert_group(conn, pid, "g2")
+        with pytest.raises(LookupError, match="no edge found"):
+            service.archive_group_edge(conn, g1, g2)
+
+    def test_add_task_edge_source_archived_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.update_task(conn, t1, {"archived": True}, "cli")
+        with pytest.raises(ValueError, match=f"task {t1} is archived"):
+            service.add_task_edge(conn, t1, t2, kind="blocks")
+
+    def test_add_task_edge_target_archived_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.update_task(conn, t2, {"archived": True}, "cli")
+        with pytest.raises(ValueError, match=f"task {t2} is archived"):
+            service.add_task_edge(conn, t1, t2, kind="blocks")
+
+    def test_add_group_edge_source_archived_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        pid = insert_project(conn, bid, "p")
+        g1 = insert_group(conn, pid, "g1")
+        g2 = insert_group(conn, pid, "g2")
+        service.update_group(conn, g1, {"archived": True}, "cli")
+        with pytest.raises(ValueError, match=f"group {g1} is archived"):
+            service.add_group_edge(conn, g1, g2, kind="blocks")
+
+    def test_add_group_edge_target_archived_raises(self, conn: sqlite3.Connection) -> None:
+        bid = insert_workspace(conn)
+        pid = insert_project(conn, bid, "p")
+        g1 = insert_group(conn, pid, "g1")
+        g2 = insert_group(conn, pid, "g2")
+        service.update_group(conn, g2, {"archived": True}, "cli")
+        with pytest.raises(ValueError, match=f"group {g2} is archived"):
+            service.add_group_edge(conn, g1, g2, kind="blocks")
+
+    def test_add_group_edge_cross_workspace_raises(self, conn: sqlite3.Connection) -> None:
+        b1 = insert_workspace(conn, "workspace1")
+        b2 = insert_workspace(conn, "workspace2")
+        p1 = insert_project(conn, b1, "p1")
+        p2 = insert_project(conn, b2, "p2")
+        g1 = insert_group(conn, p1, "g1")
+        g2 = insert_group(conn, p2, "g2")
+        with pytest.raises(ValueError, match="same workspace"):
+            service.add_group_edge(conn, g1, g2, kind="blocks")
+
+    def test_add_group_edge_composite_fk_blocks_mismatched_workspace(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """DB-level guard: even with PRAGMAs off, the composite FK on
+        group_edges(source_id, workspace_id) rejects rows whose workspace_id
+        does not match the source group."""
+        b1 = insert_workspace(conn, "workspace1")
+        b2 = insert_workspace(conn, "workspace2")
+        p1 = insert_project(conn, b1, "p1")
+        p2 = insert_project(conn, b2, "p2")
+        g1 = insert_group(conn, p1, "g1")
+        g2 = insert_group(conn, p2, "g2")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) "
+                "VALUES (?, ?, ?, 'blocks')",
+                (g1, g2, b1),  # source belongs to b1 but target doesn't — FK fails
+            )
+
+    def test_add_task_edge_db_check_rejects_bad_kind(self, conn: sqlite3.Connection) -> None:
+        """Service normalizes kind, but a raw repo call with a bad kind must
+        be rejected by the DB CHECK constraint."""
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
+                "VALUES (?, ?, ?, ?)",
+                (t1, t2, bid, "BAD KIND!"),
+            )
+
+    def test_list_task_edges_filters_archived_endpoints(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        service.update_task(conn, t2, {"archived": True}, "cli")
+        edges = service.list_task_edges(conn, bid)
+        assert edges == ()
+
+    def test_task_detail_hides_edges_to_archived_endpoint(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """get_task_detail should omit edges whose other endpoint has been
+        archived, matching list_task_edges_by_workspace semantics."""
+        bid = insert_workspace(conn)
+        cid = insert_status(conn, bid)
+        t1 = insert_task(conn, bid, "a", cid)
+        t2 = insert_task(conn, bid, "b", cid)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        service.update_task(conn, t2, {"archived": True}, "cli")
+        detail = service.get_task_detail(conn, t1)
+        assert detail.edge_sources == ()
+        assert detail.edge_targets == ()
+
+    def test_transfer_not_blocked_by_edge_to_archived_task(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Moving task-A to another workspace should not be blocked by an
+        edge A→B if B is already archived — the edge is functionally
+        inert and hidden from active listings."""
+        b1 = insert_workspace(conn, "src")
+        c1 = insert_status(conn, b1, "todo")
+        t1 = insert_task(conn, b1, "active", c1)
+        t2 = insert_task(conn, b1, "to-be-archived", c1)
+        service.add_task_edge(conn, t1, t2, kind="blocks")
+        service.update_task(conn, t2, {"archived": True}, "cli")
+        b2 = insert_workspace(conn, "dst")
+        c2 = insert_status(conn, b2, "backlog")
+        preview = service.preview_move_to_workspace(conn, t1, b2, c2)
+        assert preview.can_move is True
+        assert preview.edge_ids == ()
 
 
 # ---- Task metadata ----
@@ -2994,7 +3214,7 @@ class TestJournalRecordingStatus:
         assert entries[0]["new_value"] == "done"
 
 
-class TestJournalRecordingDependencies:
+class TestJournalRecordingEdges:
     def _seed(self, conn):
         wid = insert_workspace(conn, "w")
         sid = insert_status(conn, wid, "todo")
@@ -3002,22 +3222,32 @@ class TestJournalRecordingDependencies:
         t2 = insert_task(conn, wid, "t2", sid)
         return wid, t1, t2
 
-    def test_add_dependency_journaled(self, conn):
+    def test_add_edge_journaled(self, conn):
         wid, t1, t2 = self._seed(conn)
-        service.add_dependency(conn, t1, t2, source="test")
-        entries = _journal_entries(conn, "task_dependency", t1)
-        assert len(entries) == 1
-        assert entries[0]["field"] == "depends_on"
-        assert entries[0]["old_value"] is None
-        assert entries[0]["new_value"] == str(t2)
+        service.add_task_edge(conn, t1, t2, source="test", kind="blocks")
+        entries = _journal_entries(conn, "task_edge", t1)
+        # Add emits two entries: target (None → t2) + kind (None → "blocks").
+        assert len(entries) == 2
+        target_entry = next(e for e in entries if e["field"] == "target")
+        assert target_entry["old_value"] is None
+        assert target_entry["new_value"] == str(t2)
+        kind_entry = next(e for e in entries if e["field"] == "kind")
+        assert kind_entry["old_value"] is None
+        assert kind_entry["new_value"] == "blocks"
 
-    def test_archive_dependency_journaled(self, conn):
+    def test_archive_edge_journaled(self, conn):
         wid, t1, t2 = self._seed(conn)
-        service.add_dependency(conn, t1, t2, source="test")
-        service.archive_dependency(conn, t1, t2, source="test")
-        entries = _journal_entries(conn, "task_dependency", t1)
-        remove_entry = next(e for e in entries if e["new_value"] is None)
-        assert remove_entry["old_value"] == str(t2)
+        service.add_task_edge(conn, t1, t2, source="test", kind="blocks")
+        service.archive_task_edge(conn, t1, t2, source="test")
+        entries = _journal_entries(conn, "task_edge", t1)
+        target_remove = next(
+            e for e in entries if e["field"] == "target" and e["new_value"] is None
+        )
+        assert target_remove["old_value"] == str(t2)
+        kind_remove = next(
+            e for e in entries if e["field"] == "kind" and e["new_value"] is None
+        )
+        assert kind_remove["old_value"] == "blocks"
 
 
 class TestJournalRecordingMetadata:

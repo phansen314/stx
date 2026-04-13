@@ -124,12 +124,18 @@ class TaskEditModal(BaseEditModal):
                         classes="form-field",
                     )
 
-            if self.detail.blocked_by:
-                names = ", ".join(f"{t.id}: {t.title}" for t in self.detail.blocked_by)
-                yield Static(f"Blocked by: {names}", classes="form-label dep-info")
-            if self.detail.blocks:
-                names = ", ".join(f"{t.id}: {t.title}" for t in self.detail.blocks)
-                yield Static(f"Blocks: {names}", classes="form-label dep-info")
+            if self.detail.edge_sources:
+                names = ", ".join(
+                    f"{ref.task.id}: {ref.task.title} ({ref.kind})"
+                    for ref in self.detail.edge_sources
+                )
+                yield Static(f"Edge sources: {names}", classes="form-label dep-info")
+            if self.detail.edge_targets:
+                names = ", ".join(
+                    f"{ref.task.id}: {ref.task.title} ({ref.kind})"
+                    for ref in self.detail.edge_targets
+                )
+                yield Static(f"Edge targets: {names}", classes="form-label dep-info")
 
             yield Static("", id="modal-error", classes="modal-error")
             with Horizontal(classes="modal-buttons"):

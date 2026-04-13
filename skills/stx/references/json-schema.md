@@ -75,15 +75,22 @@ All mutation commands return a full **TaskDetail** object:
     "project": null,
     "group": null,
     "tags": [],
-    "blocked_by": [],
-    "blocks": [],
+    "edge_sources": [],
+    "edge_targets": [],
     "history": []
   }
 }
 ```
 
 `project` and `group` are `null` when not assigned.  
-`tags`, `blocked_by`, `blocks`, `history` are arrays (empty when none).
+`tags`, `edge_sources`, `edge_targets`, `history` are arrays (empty when none). Each element of `edge_sources` / `edge_targets` is a **TaskEdgeRef**: `{"task": Task, "kind": str}`.
+
+**Naming convention — read literally:**
+
+- `edge_sources` lists the **source tasks of edges touching this one** — i.e. incoming edges. Each `ref.task` is a task that points *at* the current one.
+- `edge_targets` lists the **target tasks of edges from this one** — i.e. outgoing edges. Each `ref.task` is a task the current one points *at*.
+
+Example: after `stx edge create --source task-0002 --target task-0001 --kind blocks`, `stx task show task-0002` shows the edge under `edge_targets` (task-2 points at task-1) with `ref.task = task-0001`, while `stx task show task-0001` shows the same edge under `edge_sources` (task-2 points at task-1) with `ref.task = task-0002`. `GroupDetail.edge_sources` / `edge_targets` follow the same convention on group edges.
 
 ### `task ls`
 
@@ -152,8 +159,8 @@ Returns `{"task": TaskDetail, "source_task_id": N}`. `task` is the new TaskDetai
       "project": null,
       "group": null,
       "tags": [],
-      "blocked_by": [],
-      "blocks": [],
+      "edge_sources": [],
+      "edge_targets": [],
       "history": []
     },
     "source_task_id": 1
@@ -176,7 +183,7 @@ Returns a **MoveToWorkspacePreview** object:
     "target_status_id": 5,
     "target_project_id": null,
     "can_move": true,
-    "dependency_ids": [],
+    "edge_ids": [],
     "blocking_reason": null,
     "is_archived": false
   }
@@ -388,17 +395,27 @@ Array with injected `project_name`:
 
 Returns full **TaskDetail** (same as `task show`).
 
-### Group Dependencies (`group dep create|archive`)
+### Group Edges (`group edge create|archive|ls|meta *`)
 
 ```json
 {
   "ok": true,
   "data": {
-    "blocked_group_id": 2,
-    "blocking_group_id": 1
+    "source_id": 2,
+    "source_title": "Sprint 2",
+    "target_id": 1,
+    "target_title": "Sprint 1",
+    "workspace_id": 1,
+    "kind": "blocks"
   }
 }
 ```
+
+`group edge ls` returns an array of the same shape (one **GroupEdgeListItem**
+per active edge). `group edge meta ls|get|set|del` follow the four-verb pattern
+documented under *Task Metadata* — same `{key, value}` shapes, with the edge
+identified via `--source`/`--target` (and optional `--source-project` /
+`--target-project` for disambiguation).
 
 ### Group Metadata
 
@@ -420,17 +437,48 @@ Array of Tag objects.
 
 ---
 
-## Dependency Commands (`dep create|archive`)
+## Edge Commands (`edge create|archive|ls|meta *`)
+
+### `edge create` / `edge archive`
 
 ```json
 {
   "ok": true,
   "data": {
-    "blocked_task_id": 2,
-    "blocking_task_id": 1
+    "source_id": 2,
+    "source_title": "Task B",
+    "target_id": 1,
+    "target_title": "Task A",
+    "workspace_id": 1,
+    "kind": "blocks"
   }
 }
 ```
+
+### `edge ls`
+
+Array of **TaskEdgeListItem**:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "source_id": 2,
+      "source_title": "Task B",
+      "target_id": 1,
+      "target_title": "Task A",
+      "workspace_id": 1,
+      "kind": "blocks"
+    }
+  ]
+}
+```
+
+### `edge meta ls|get|set|del`
+
+Same four-verb shapes as `task meta` (see above). The target edge is identified
+via `--source` + `--target`; no positional task.
 
 ---
 

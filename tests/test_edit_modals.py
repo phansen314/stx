@@ -46,6 +46,8 @@ def make_group_detail(**overrides) -> GroupDetail:
         children=(),
         parent=None,
         metadata={},
+        edge_sources=(),
+        edge_targets=(),
     )
     defaults.update(overrides)
     return GroupDetail(**defaults)

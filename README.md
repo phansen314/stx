@@ -6,11 +6,11 @@ Organize context into nestable hierarchies of workspaces, projects, and groups. 
 
 - **Structured context, not just tasks** — the primary unit is the hierarchy itself: workspaces, projects, and recursively nestable groups (Group → Group → … via `parent_id`).
 - **Metadata everywhere** — every node (workspace, project, group, task) carries a JSON key/value blob (`stx {entity} meta set/get/del`) and an optional long-form description on projects, groups, and tasks (rendered as Markdown in the TUI).
-- **Task management** — tasks have statuses, priorities, dates, tags, dependencies, and positions. Statuses are user-defined per workspace — kanban columns are just one interpretation.
-- **Dependency graphs** — tasks depend on tasks; groups depend on groups. Mermaid diagrams generated on export.
+- **Task management** — tasks have statuses, priorities, dates, tags, kinded edges, and positions. Statuses are user-defined per workspace — kanban columns are just one interpretation.
+- **Kinded edge graphs** — tasks link to tasks and groups link to groups via labelled edges (`stx edge`, `stx group edge`). Each edge carries a `kind` label and its own metadata blob. Mermaid diagrams generated on export.
 - **Agent-first CLI** — output auto-switches to JSON when piped (`stx task ls | jq`). Every command is composable without screen-scraping.
 - **Human-friendly TUI** — renders the hierarchy as a kanban board. The left panel shows the full workspace tree; the right panel shows one column per status.
-- **Full audit trail** — field changes across all entities (tasks, projects, groups, workspaces, statuses), dependency link/unlink events, and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
+- **Full audit trail** — field changes across all entities (tasks, projects, groups, workspaces, statuses), edge link/unlink events (task and group), and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
 - **SQLite-backed** — WAL journal mode, XDG paths, atomic backups, numbered migrations.
 
 ## Data Model
@@ -34,9 +34,9 @@ All entities support:
 
 Projects, groups, and tasks additionally support `description` (free-text, Markdown).
 
-Tasks additionally have: priority, due/start/finish dates, position, tags, dependencies (`blocks` / `blocked_by`), and change history.
+Tasks additionally have: priority, due/start/finish dates, position, tags, kinded edges (`edge_sources` / `edge_targets`, each carrying a `kind` label and its own metadata blob), and change history.
 
-Groups additionally have: `parent_id` (recursive nesting), position, dependencies.
+Groups additionally have: `parent_id` (recursive nesting), position, and kinded edges.
 
 ## Architecture
 
@@ -66,7 +66,7 @@ stx group meta set "Postgres" estimate "3 sprints" --project infra
 # Tasks live inside the structure
 stx task create "Upgrade to PG 16" -S Backlog --project infra -g "Postgres"
 stx task create "Load test new cluster" -S Backlog --project infra -g "Postgres"
-stx dep create task-0002 task-0001
+stx edge create --source task-0002 --target task-0001 --kind blocks
 
 # View it
 stx tui
@@ -107,7 +107,7 @@ Entry point: `stx`
 |---------|-------------|
 | `stx workspace ...` | `create [--statuses a,b,c]`, `ls`, `show`, `use`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
 | `stx project ...` | `create [--desc]`, `ls`, `show`, `edit [--desc]`, `rename`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del <name>` |
-| `stx group ...` | `create [--desc]`, `ls`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `dep create\|archive`, `meta ls\|get\|set\|del <title> [--project]` |
+| `stx group ...` | `create [--desc]`, `ls`, `show`, `rename`, `edit [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `edge create\|archive\|ls\|meta *`, `meta ls\|get\|set\|del <title> [--project]` |
 
 ### Task Commands
 
@@ -115,7 +115,7 @@ Entry point: `stx`
 |---------|-------------|
 | `stx task create <title> -S <status>` | Create a task in the named status (required); accepts `--group/-g` |
 | `stx task ls` | List tasks on the active workspace |
-| `stx task show <task>` | Show task detail with history, dependencies, and metadata |
+| `stx task show <task>` | Show task detail with history, edges, and metadata |
 | `stx task edit <task>` | Edit task fields (`--title`, `--desc`, `--priority`, `--due`, `--project`) |
 | `stx task mv <task> -S <status> [pos]` | Move task to a status (within-workspace only) |
 | `stx task archive <task> [--force] [--dry-run]` | Archive a task (with confirmation) |
@@ -143,15 +143,15 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 | Command | Description |
 |---------|-------------|
 | `stx status ...` | `create`, `ls`, `rename`, `order <workspace> <statuses...>`, `archive [--reassign-to STATUS\|--force]` |
-| `stx dep ...` | `create`, `archive` |
+| `stx edge ...` | `create --source <t> --target <t> --kind <k>`, `archive --source <t> --target <t>`, `ls [--source <t>] [--kind <k>]`, `meta ls\|get\|set\|del --source <t> --target <t>` |
 | `stx tag ...` | `create`, `ls`, `rename`, `archive [--unassign\|--force\|--dry-run]` |
-| `stx export` | Export database as JSON (default) or Markdown with Mermaid dependency graphs (`--md`) |
+| `stx export` | Export database as JSON (default) or Markdown with Mermaid edge graphs labelled by `kind` (`--md`) |
 | `stx info` | Show stx file locations |
 | `stx backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |
 
 ### Cross-Workspace Transfer
 
-Tasks can be transferred between workspaces. The transfer creates a copy on the target workspace and archives the original. Dependencies must be removed first.
+Tasks can be transferred between workspaces. The transfer creates a copy on the target workspace and archives the original. Active edges must be archived first (`stx edge archive --source … --target …`).
 
 ```sh
 # Transfer task to another workspace
@@ -160,7 +160,7 @@ stx task transfer task-0001 --to ops --status Backlog
 # Transfer with project assignment on the target workspace
 stx task transfer task-0001 --to ops --status Backlog --project infra
 
-# Preview before transferring (checks for blocking dependencies)
+# Preview before transferring (checks for blocking edges)
 stx task transfer task-0001 --to ops --status Backlog --dry-run
 ```
 
@@ -254,7 +254,7 @@ All work lives on the **"claude" workspace** which has three statuses: Backlog, 
 1. Switch to the claude workspace: `stx workspace use claude`
 2. Create a project for the plan: `stx project create "<plan name>"`
 3. Create one task per plan step: `stx task create "<step>" -S Backlog --project "<plan>" -P N`
-4. Add dependencies where ordering matters: `stx dep create task-NNNN task-MMMM`
+4. Add edges where ordering matters: `stx edge create --source task-NNNN --target task-MMMM --kind blocks`
 5. Move tasks to "In Progress" when starting: `stx task mv task-NNNN "In Progress"`
 6. Mark tasks done when complete: `stx task mv task-NNNN Done`
 7. Run `stx export` at milestones for a full status snapshot
