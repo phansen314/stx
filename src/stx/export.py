@@ -196,46 +196,48 @@ def _render_group_metadata_section(
     return lines
 
 
-def _render_deps_section(
-    workspace_deps: list[tuple[int, int, str]],
-) -> list[str]:
-    if not workspace_deps:
-        return []
-    lines = [
-        "### Task Edges",
-        "",
-        "```mermaid",
-        "graph LR",
-    ]
-    for tid, did, kind in workspace_deps:
-        lines.append(f"    {format_task_num(tid)} -->|{kind}| {format_task_num(did)}")
-    lines += [
-        "```",
-        "",
-    ]
-    return lines
-
-
-def _render_group_edges_section(
-    group_edge_rows: list[dict],
+def _render_edges_section(
+    edge_rows: list[dict],
+    task_ids: set[int],
     group_ids: set[int],
+    workspace_ids: set[int],
 ) -> list[str]:
-    workspace_edges = [
-        r
-        for r in group_edge_rows
-        if r["source_id"] in group_ids and r["target_id"] in group_ids and not r["archived"]
+    """Render active edges whose both endpoints belong to this workspace export."""
+
+    def _in_scope(node_type: str, node_id: int) -> bool:
+        if node_type == "task":
+            return node_id in task_ids
+        elif node_type == "group":
+            return node_id in group_ids
+        elif node_type == "workspace":
+            return node_id in workspace_ids
+        return False
+
+    def _node_label(node_type: str, node_id: int) -> str:
+        if node_type == "task":
+            return format_task_num(node_id)
+        elif node_type == "group":
+            return format_group_num(node_id)
+        else:
+            return f"ws{node_id}"
+
+    active = [
+        r for r in edge_rows
+        if not r["archived"]
+        and _in_scope(r["from_type"], r["from_id"])
+        and _in_scope(r["to_type"], r["to_id"])
     ]
-    if not workspace_edges:
+    if not active:
         return []
     lines = [
-        "### Group Edges",
+        "### Edges",
         "",
         "```mermaid",
         "graph LR",
     ]
-    for r in workspace_edges:
-        src = format_group_num(r["source_id"])
-        tgt = format_group_num(r["target_id"])
+    for r in active:
+        src = _node_label(r["from_type"], r["from_id"])
+        tgt = _node_label(r["to_type"], r["to_id"])
         lines.append(f"    {src} -->|{r['kind']}| {tgt}")
     lines += [
         "```",
@@ -278,8 +280,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
             )
 
         task_tags = list(repo.list_all_task_tags(conn))
-        task_edges = list(repo.list_all_task_edge_rows(conn))
-        group_edges = list(repo.list_all_group_edge_rows(conn))
+        edges = list(repo.list_all_edge_rows(conn))
         journal = [dataclasses.asdict(h) for h in repo.list_all_journal(conn)]
 
     return {
@@ -291,8 +292,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         "tags": tags,
         "groups": groups,
         "task_tags": task_tags,
-        "task_edges": task_edges,
-        "group_edges": group_edges,
+        "edges": edges,
         "journal": journal,
     }
 
@@ -307,8 +307,7 @@ def export_markdown(conn: sqlite3.Connection) -> str:
     ]
 
     workspaces = service.list_workspaces(conn)
-    all_task_edge_rows = list(repo.list_all_task_edge_rows(conn))
-    all_group_edge_rows = list(repo.list_all_group_edge_rows(conn))
+    all_edge_rows = list(repo.list_all_edge_rows(conn))
 
     for workspace in workspaces:
         bid = workspace.id
@@ -336,13 +335,6 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         lines += _render_descriptions_section(tasks)
         lines += _render_group_metadata_section(conn, bid)
         lines += _render_task_metadata_section(tasks)
-
-        workspace_deps = [
-            (r["source_id"], r["target_id"], r["kind"])
-            for r in all_task_edge_rows
-            if r["source_id"] in task_ids and r["target_id"] in task_ids and not r["archived"]
-        ]
-        lines += _render_deps_section(workspace_deps)
-        lines += _render_group_edges_section(all_group_edge_rows, group_ids)
+        lines += _render_edges_section(all_edge_rows, task_ids, group_ids, {bid})
 
     return "\n".join(lines) + "\n"

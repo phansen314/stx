@@ -63,17 +63,37 @@ def insert_task(
     return cur.lastrowid  # type: ignore[return-value]
 
 
+def insert_edge(
+    conn: sqlite3.Connection,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str = "blocks",
+    acyclic: int = 1,
+) -> None:
+    """Insert a raw edge row. Uses a subquery to resolve workspace_id from the from-node."""
+    if from_type == "task":
+        ws_query = "SELECT workspace_id FROM tasks WHERE id = ?"
+    elif from_type == "group":
+        ws_query = "SELECT workspace_id FROM groups WHERE id = ?"
+    else:
+        ws_query = "SELECT id FROM workspaces WHERE id = ?"
+    conn.execute(
+        f"INSERT INTO edges (from_type, from_id, to_type, to_id, workspace_id, kind, acyclic) "
+        f"VALUES (?, ?, ?, ?, ({ws_query}), ?, ?)",
+        (from_type, from_id, to_type, to_id, from_id, kind, acyclic),
+    )
+
+
+# Legacy aliases for tests that still use the old names
 def insert_task_dependency(
     conn: sqlite3.Connection,
     task_id: int,
     depends_on_id: int,
     kind: str = "blocks",
 ) -> None:
-    conn.execute(
-        "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?), ?)",
-        (task_id, depends_on_id, task_id, kind),
-    )
+    insert_edge(conn, "task", task_id, "task", depends_on_id, kind=kind, acyclic=1)
 
 
 def insert_group_dependency(
@@ -82,11 +102,7 @@ def insert_group_dependency(
     depends_on_id: int,
     kind: str = "blocks",
 ) -> None:
-    conn.execute(
-        "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) "
-        "VALUES (?, ?, (SELECT workspace_id FROM groups WHERE id = ?), ?)",
-        (group_id, depends_on_id, group_id, kind),
-    )
+    insert_edge(conn, "group", group_id, "group", depends_on_id, kind=kind, acyclic=1)
 
 
 def insert_group(

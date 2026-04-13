@@ -22,22 +22,19 @@ from stx.models import (
     Workspace,
 )
 from stx.repository import (
-    add_group_edge,
+    add_edge,
     add_tag_to_task,
-    add_task_edge,
-    archive_group_edge,
-    archive_task_edge,
+    archive_edge,
     batch_child_ids_by_group,
     batch_tag_ids_by_task,
     batch_task_ids_by_group,
     copy_task_metadata,
-    get_archived_group_edge_kind,
-    get_archived_task_edge_kind,
+    get_active_edge,
+    get_archived_edge,
+    get_edge_metadata,
     get_group,
     get_group_ancestry,
     get_group_by_title,
-    get_group_edge_kind,
-    get_group_edge_metadata,
     get_status,
     get_status_by_name,
     get_subtree_group_ids,
@@ -45,8 +42,6 @@ from stx.repository import (
     get_tag_by_name,
     get_task,
     get_task_by_title,
-    get_task_edge_kind,
-    get_task_edge_metadata,
     get_workspace,
     get_workspace_by_name,
     insert_group,
@@ -55,14 +50,13 @@ from stx.repository import (
     insert_tag,
     insert_task,
     insert_workspace,
-    list_all_group_edge_rows,
-    list_all_group_edges,
-    list_all_task_edge_rows,
-    list_all_task_edges,
+    list_all_edge_rows,
     list_child_groups,
-    list_group_edge_sources_into_hydrated,
-    list_group_edge_targets_from,
-    list_group_edge_targets_from_hydrated,
+    list_edge_sources_into,
+    list_edge_sources_into_hydrated,
+    list_edge_targets_from,
+    list_edge_targets_from_hydrated,
+    list_edges_by_workspace,
     list_groups,
     list_groups_by_workspace,
     list_journal,
@@ -70,10 +64,6 @@ from stx.repository import (
     list_tag_ids_by_task,
     list_tags,
     list_tags_by_task,
-    list_task_edge_sources_into,
-    list_task_edge_sources_into_hydrated,
-    list_task_edge_targets_from,
-    list_task_edge_targets_from_hydrated,
     list_task_ids_by_group,
     list_task_ids_by_tag,
     list_tasks,
@@ -82,18 +72,15 @@ from stx.repository import (
     list_tasks_filtered,
     list_ungrouped_task_ids,
     list_workspaces,
-    remove_group_edge_metadata_key,
+    remove_edge_metadata_key,
     remove_group_metadata_key,
     remove_tag_from_task,
-    remove_task_edge_metadata_key,
     remove_task_metadata_key,
     remove_workspace_metadata_key,
     reparent_children,
-    replace_group_edge_metadata,
-    replace_task_edge_metadata,
-    set_group_edge_metadata_key,
+    replace_edge_metadata,
+    set_edge_metadata_key,
     set_group_metadata_key,
-    set_task_edge_metadata_key,
     set_task_group_id,
     set_task_metadata_key,
     set_workspace_metadata_key,
@@ -440,11 +427,11 @@ class TestTaskRepository:
         assert task.finish_date == 1701000000
 
 
-# ---- Task edges ----
+# ---- Edges ----
 
 
-class TestTaskEdgeRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Task, Task, Task]:
+class TestEdgeRepository:
+    def _setup_tasks(self, conn: sqlite3.Connection) -> tuple[Task, Task, Task]:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
         t1 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t1", status_id=col.id))
@@ -452,368 +439,272 @@ class TestTaskEdgeRepository:
         t3 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t3", status_id=col.id))
         return t1, t2, t3
 
-    def test_add_and_list_target_ids(self, conn: sqlite3.Connection) -> None:
-        t1, t2, t3 = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        add_task_edge(conn, t1.id, t3.id, t1.workspace_id, kind="blocks")
-        ids = list_task_edge_targets_from(conn, t1.id)
-        assert set(ids) == {t2.id, t3.id}
-
-    def test_list_source_ids(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        assert list_task_edge_sources_into(conn, t2.id) == (t1.id,)
-
-    def test_archive_edge(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        archive_task_edge(conn, t1.id, t2.id)
-        assert list_task_edge_targets_from(conn, t1.id) == ()
-        # Row still exists in DB with archived=1
-        row = conn.execute(
-            "SELECT archived FROM task_edges WHERE source_id = ? AND target_id = ?",
-            (t1.id, t2.id),
-        ).fetchone()
-        assert row is not None
-        assert row["archived"] == 1
-
-    def test_archive_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        archive_task_edge(conn, t1.id, t2.id)  # no-op, no error
-
-    def test_list_edge_targets_from_hydrated(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        results = list_task_edge_targets_from_hydrated(conn, t1.id)
-        assert len(results) == 1
-        task, kind = results[0]
-        assert task.id == t2.id
-        assert isinstance(task, Task)
-        assert kind == "blocks"
-
-    def test_list_edge_sources_into_hydrated(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        results = list_task_edge_sources_into_hydrated(conn, t2.id)
-        assert len(results) == 1
-        task, kind = results[0]
-        assert task.id == t1.id
-        assert kind == "blocks"
-
-    def test_duplicate_edge_is_idempotent(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")  # upsert — no error
-        assert list_task_edge_targets_from(conn, t1.id) == (t2.id,)
-
-    def test_self_edge_raises(self, conn: sqlite3.Connection) -> None:
-        t1, _, _ = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            add_task_edge(conn, t1.id, t1.id, t1.workspace_id, kind="blocks")
-
-    def test_list_all_task_edges(self, conn: sqlite3.Connection) -> None:
-        t1, t2, t3 = self._setup(conn)
-        add_task_edge(conn, t2.id, t1.id, t2.workspace_id, kind="blocks")
-        add_task_edge(conn, t3.id, t1.id, t3.workspace_id, kind="blocks")
-        deps = list_all_task_edges(conn)
-        assert set(deps) == {(t2.id, t1.id, "blocks"), (t3.id, t1.id, "blocks")}
-
-    def test_list_all_task_edges_empty(self, conn: sqlite3.Connection) -> None:
-        self._setup(conn)
-        assert list_all_task_edges(conn) == ()
-
-    def test_list_all_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t2.id, t1.id, t2.workspace_id, kind="blocks")
-        archive_task_edge(conn, t2.id, t1.id)
-        assert list_all_task_edges(conn) == ()
-
-    def test_readd_after_archive(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t2.id, t1.id, t2.workspace_id, kind="blocks")
-        archive_task_edge(conn, t2.id, t1.id)
-        add_task_edge(
-            conn, t2.id, t1.id, t2.workspace_id, kind="blocks"
-        )  # re-create — should not crash
-        assert list_task_edge_targets_from(conn, t2.id) == (t1.id,)
-
-    def test_get_task_edge_kind_active(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        assert get_task_edge_kind(conn, t1.id, t2.id) is None
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        assert get_task_edge_kind(conn, t1.id, t2.id) == "blocks"
-
-    def test_get_task_edge_kind_archived_returns_none(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        archive_task_edge(conn, t1.id, t2.id)
-        assert get_task_edge_kind(conn, t1.id, t2.id) is None
-
-    def test_get_archived_task_edge_kind(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        assert get_archived_task_edge_kind(conn, t1.id, t2.id) is None
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        # Active edge — archived lookup must still return None
-        assert get_archived_task_edge_kind(conn, t1.id, t2.id) is None
-        archive_task_edge(conn, t1.id, t2.id)
-        assert get_archived_task_edge_kind(conn, t1.id, t2.id) == "blocks"
-
-    def test_list_task_edge_targets_from_hydrated_returns_kind(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        results = list_task_edge_targets_from_hydrated(conn, t1.id)
-        assert len(results) == 1
-        task, kind = results[0]
-        assert task.id == t2.id
-        assert kind == "blocks"
-
-    def test_list_task_edge_sources_into_hydrated_returns_kind(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="related-to")
-        results = list_task_edge_sources_into_hydrated(conn, t2.id)
-        assert len(results) == 1
-        task, kind = results[0]
-        assert task.id == t1.id
-        assert kind == "related-to"
-
-    def test_list_all_task_edge_rows_includes_metadata(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        rows = list_all_task_edge_rows(conn)
-        assert len(rows) == 1
-        assert rows[0]["kind"] == "blocks"
-        assert rows[0]["metadata"] == {}
-
-    def test_add_edge_with_kind(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
-        row = conn.execute(
-            "SELECT kind FROM task_edges WHERE source_id = ? AND target_id = ?",
-            (t1.id, t2.id),
-        ).fetchone()
-        assert row["kind"] == "blocks"
-
-    def test_edge_missing_kind_raises(self, conn: sqlite3.Connection) -> None:
-        t1, t2, _ = self._setup(conn)
-        with pytest.raises(TypeError):
-            add_task_edge(conn, t1.id, t2.id)  # type: ignore[call-arg]
-
-
-# ---- Group edges ----
-
-
-class TestGroupEdgeRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int, int, int]:
+    def _setup_groups(self, conn: sqlite3.Connection) -> tuple[int, int, int, int]:
         workspace = insert_workspace(conn, NewWorkspace(name="b"))
         g1 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g1")).id
         g2 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g2")).id
         g3 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g3")).id
         return g1, g2, g3, workspace.id
 
-    def test_add_and_list_target_ids(self, conn: sqlite3.Connection) -> None:
-        g1, g2, g3, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        add_group_edge(conn, g1, g3, ws, kind="blocks")
-        ids = list_group_edge_targets_from(conn, g1)
-        assert set(ids) == {g2, g3}
+    # ---- Task→Task edges ----
 
-    def test_archive_group_edge(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        archive_group_edge(conn, g1, g2)
-        assert list_group_edge_targets_from(conn, g1) == ()
-        # Row still exists in DB with archived=1
+    def test_add_and_list_task_targets(self, conn: sqlite3.Connection) -> None:
+        t1, t2, t3 = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        add_edge(conn, "task", t1.id, "task", t3.id, t1.workspace_id, "blocks")
+        targets = list_edge_targets_from(conn, "task", t1.id)
+        assert {nid for _, nid in targets} == {t2.id, t3.id}
+
+    def test_list_task_sources(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        sources = list_edge_sources_into(conn, "task", t2.id)
+        assert {nid for _, nid in sources} == {t1.id}
+
+    def test_archive_task_edge(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")
+        assert list_edge_targets_from(conn, "task", t1.id) == ()
+        # Row still exists with archived=1
         row = conn.execute(
-            "SELECT archived FROM group_edges WHERE source_id = ? AND target_id = ?",
-            (g1, g2),
+            "SELECT archived FROM edges WHERE from_type='task' AND from_id=? AND to_id=?",
+            (t1.id, t2.id),
         ).fetchone()
         assert row is not None
         assert row["archived"] == 1
 
     def test_archive_nonexistent_is_silent(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, _ = self._setup(conn)
-        archive_group_edge(conn, g1, g2)  # no-op, no error
+        t1, t2, _ = self._setup_tasks(conn)
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")  # no-op
 
-    def test_duplicate_is_idempotent(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        add_group_edge(conn, g1, g2, ws, kind="blocks")  # upsert — no error
-        assert list_group_edge_targets_from(conn, g1) == (g2,)
-
-    def test_self_edge_raises(self, conn: sqlite3.Connection) -> None:
-        g1, _, _, ws = self._setup(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            add_group_edge(conn, g1, g1, ws, kind="blocks")
-
-    def test_list_all_group_edges(self, conn: sqlite3.Connection) -> None:
-        g1, g2, g3, ws = self._setup(conn)
-        add_group_edge(conn, g2, g1, ws, kind="blocks")
-        add_group_edge(conn, g3, g1, ws, kind="blocks")
-        deps = list_all_group_edges(conn)
-        assert set(deps) == {(g2, g1, "blocks"), (g3, g1, "blocks")}
-
-    def test_list_all_group_edges_empty(self, conn: sqlite3.Connection) -> None:
-        self._setup(conn)
-        assert list_all_group_edges(conn) == ()
-
-    def test_list_all_group_edges_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        archive_group_edge(conn, g1, g2)
-        assert list_all_group_edges(conn) == ()
-
-    def test_readd_group_edge_after_archive(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        archive_group_edge(conn, g1, g2)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")  # re-create — should not crash
-        assert list_group_edge_targets_from(conn, g1) == (g2,)
-
-    def test_get_group_edge_kind_active(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        assert get_group_edge_kind(conn, g1, g2) is None
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        assert get_group_edge_kind(conn, g1, g2) == "blocks"
-
-    def test_get_archived_group_edge_kind(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        assert get_archived_group_edge_kind(conn, g1, g2) is None
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        # Active edge — archived lookup must still return None
-        assert get_archived_group_edge_kind(conn, g1, g2) is None
-        archive_group_edge(conn, g1, g2)
-        assert get_archived_group_edge_kind(conn, g1, g2) == "blocks"
-
-    def test_list_group_edge_targets_from_hydrated_returns_kind(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        results = list_group_edge_targets_from_hydrated(conn, g1)
+    def test_task_edge_targets_from_hydrated(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        results = list_edge_targets_from_hydrated(conn, "task", t1.id)
         assert len(results) == 1
-        group, kind = results[0]
-        assert group.id == g2
+        to_type, to_id, title, kind = results[0]
+        assert to_type == "task"
+        assert to_id == t2.id
+        assert title == "t2"
         assert kind == "blocks"
 
-    def test_list_group_edge_sources_into_hydrated_returns_kind(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="related-to")
-        results = list_group_edge_sources_into_hydrated(conn, g2)
+    def test_task_edge_sources_into_hydrated(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        results = list_edge_sources_into_hydrated(conn, "task", t2.id)
         assert len(results) == 1
-        group, kind = results[0]
-        assert group.id == g1
-        assert kind == "related-to"
+        from_type, from_id, title, kind = results[0]
+        assert from_type == "task"
+        assert from_id == t1.id
+        assert title == "t1"
+        assert kind == "blocks"
 
-    def test_list_all_group_edge_rows(self, conn: sqlite3.Connection) -> None:
-        g1, g2, _, ws = self._setup(conn)
-        add_group_edge(conn, g1, g2, ws, kind="blocks")
-        rows = list_all_group_edge_rows(conn)
+    def test_duplicate_edge_upsert(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")  # upsert
+        targets = list_edge_targets_from(conn, "task", t1.id)
+        assert len(targets) == 1
+
+    def test_self_task_edge_raises(self, conn: sqlite3.Connection) -> None:
+        t1, _, _ = self._setup_tasks(conn)
+        with pytest.raises(sqlite3.IntegrityError):
+            add_edge(conn, "task", t1.id, "task", t1.id, t1.workspace_id, "blocks")
+
+    def test_list_all_edge_rows_includes_metadata(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        rows = list_all_edge_rows(conn)
         assert len(rows) == 1
-        assert rows[0]["source_id"] == g1
-        assert rows[0]["target_id"] == g2
         assert rows[0]["kind"] == "blocks"
         assert rows[0]["metadata"] == {}
+
+    def test_list_all_edge_rows_excludes_nothing(self, conn: sqlite3.Connection) -> None:
+        """list_all_edge_rows includes archived rows (used for export)."""
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")
+        rows = list_all_edge_rows(conn)
+        assert len(rows) == 1
+        assert rows[0]["archived"] is True
+
+    def test_edge_stored_with_correct_columns(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        row = conn.execute(
+            "SELECT kind FROM edges WHERE from_type='task' AND from_id=? AND to_id=?",
+            (t1.id, t2.id),
+        ).fetchone()
+        assert row["kind"] == "blocks"
+
+    def test_readd_after_archive(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t2.id, "task", t1.id, t2.workspace_id, "blocks")
+        archive_edge(conn, "task", t2.id, "task", t1.id, "blocks")
+        add_edge(conn, "task", t2.id, "task", t1.id, t2.workspace_id, "blocks")  # no crash
+        targets = list_edge_targets_from(conn, "task", t2.id)
+        assert ("task", t1.id) in targets
+
+    def test_get_active_edge(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        assert get_active_edge(conn, "task", t1.id, "task", t2.id, "blocks") is None
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        assert get_active_edge(conn, "task", t1.id, "task", t2.id, "blocks") is not None
+
+    def test_get_active_edge_archived_returns_none(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")
+        assert get_active_edge(conn, "task", t1.id, "task", t2.id, "blocks") is None
+
+    def test_get_archived_edge(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        assert get_archived_edge(conn, "task", t1.id, "task", t2.id, "blocks") is None
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
+        assert get_archived_edge(conn, "task", t1.id, "task", t2.id, "blocks") is None
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")
+        assert get_archived_edge(conn, "task", t1.id, "task", t2.id, "blocks") is not None
+
+    def test_list_all_active_via_workspace(self, conn: sqlite3.Connection) -> None:
+        t1, t2, t3 = self._setup_tasks(conn)
+        add_edge(conn, "task", t2.id, "task", t1.id, t2.workspace_id, "blocks")
+        add_edge(conn, "task", t3.id, "task", t1.id, t3.workspace_id, "blocks")
+        items = list_edges_by_workspace(conn, t1.workspace_id)
+        pairs = {(e.from_id, e.to_id, e.kind) for e in items}
+        assert pairs == {(t2.id, t1.id, "blocks"), (t3.id, t1.id, "blocks")}
+
+    def test_list_workspace_edges_excludes_archived(self, conn: sqlite3.Connection) -> None:
+        t1, t2, _ = self._setup_tasks(conn)
+        add_edge(conn, "task", t2.id, "task", t1.id, t2.workspace_id, "blocks")
+        archive_edge(conn, "task", t2.id, "task", t1.id, "blocks")
+        assert list_edges_by_workspace(conn, t1.workspace_id) == ()
+
+    # ---- Group→Group edges ----
+
+    def test_add_and_list_group_targets(self, conn: sqlite3.Connection) -> None:
+        g1, g2, g3, ws = self._setup_groups(conn)
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")
+        add_edge(conn, "group", g1, "group", g3, ws, "blocks")
+        targets = list_edge_targets_from(conn, "group", g1)
+        assert {nid for _, nid in targets} == {g2, g3}
+
+    def test_archive_group_edge(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _, ws = self._setup_groups(conn)
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")
+        archive_edge(conn, "group", g1, "group", g2, "blocks")
+        assert list_edge_targets_from(conn, "group", g1) == ()
+        row = conn.execute(
+            "SELECT archived FROM edges WHERE from_type='group' AND from_id=? AND to_id=?",
+            (g1, g2),
+        ).fetchone()
+        assert row is not None
+        assert row["archived"] == 1
+
+    def test_duplicate_group_edge_upsert(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _, ws = self._setup_groups(conn)
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")  # upsert
+        targets = list_edge_targets_from(conn, "group", g1)
+        assert len(targets) == 1
+
+    def test_self_group_edge_raises(self, conn: sqlite3.Connection) -> None:
+        g1, _, _, ws = self._setup_groups(conn)
+        with pytest.raises(sqlite3.IntegrityError):
+            add_edge(conn, "group", g1, "group", g1, ws, "blocks")
+
+    def test_group_edge_sources_into_hydrated(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _, ws = self._setup_groups(conn)
+        add_edge(conn, "group", g1, "group", g2, ws, "related-to")
+        results = list_edge_sources_into_hydrated(conn, "group", g2)
+        assert len(results) == 1
+        from_type, from_id, title, kind = results[0]
+        assert from_type == "group"
+        assert from_id == g1
+        assert kind == "related-to"
+
+    def test_readd_group_edge_after_archive(self, conn: sqlite3.Connection) -> None:
+        g1, g2, _, ws = self._setup_groups(conn)
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")
+        archive_edge(conn, "group", g1, "group", g2, "blocks")
+        add_edge(conn, "group", g1, "group", g2, ws, "blocks")  # no crash
+        targets = list_edge_targets_from(conn, "group", g1)
+        assert ("group", g2) in targets
+
+    # ---- Cross-type edges ----
+
+    def test_cross_type_edge_task_to_group(self, conn: sqlite3.Connection) -> None:
+        workspace = insert_workspace(conn, NewWorkspace(name="b"))
+        col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
+        task = insert_task(conn, NewTask(workspace_id=workspace.id, title="t1", status_id=col.id))
+        group = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g1"))
+        add_edge(conn, "task", task.id, "group", group.id, workspace.id, "spawns")
+        targets = list_edge_targets_from(conn, "task", task.id)
+        assert ("group", group.id) in targets
 
 
 # ---- Edge metadata ----
 
 
-class TestTaskEdgeMetadata:
+class TestEdgeMetadata:
     def _setup(self, conn: sqlite3.Connection) -> tuple[Task, Task]:
         workspace = insert_workspace(conn, NewWorkspace(name="w"))
         col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
         t1 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t1", status_id=col.id))
         t2 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t2", status_id=col.id))
-        add_task_edge(conn, t1.id, t2.id, t1.workspace_id, kind="blocks")
+        add_edge(conn, "task", t1.id, "task", t2.id, t1.workspace_id, "blocks")
         return t1, t2
 
     def test_get_empty_metadata(self, conn: sqlite3.Connection) -> None:
         t1, t2 = self._setup(conn)
-        assert get_task_edge_metadata(conn, t1.id, t2.id) == {}
+        assert get_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks") == {}
 
     def test_set_and_get_metadata(self, conn: sqlite3.Connection) -> None:
         t1, t2 = self._setup(conn)
-        set_task_edge_metadata_key(conn, t1.id, t2.id, "note", "urgent")
-        assert get_task_edge_metadata(conn, t1.id, t2.id) == {"note": "urgent"}
+        set_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "note", "urgent")
+        assert get_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks") == {"note": "urgent"}
 
     def test_remove_metadata_key(self, conn: sqlite3.Connection) -> None:
         t1, t2 = self._setup(conn)
-        set_task_edge_metadata_key(conn, t1.id, t2.id, "note", "urgent")
-        remove_task_edge_metadata_key(conn, t1.id, t2.id, "note")
-        assert get_task_edge_metadata(conn, t1.id, t2.id) == {}
+        set_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "note", "urgent")
+        remove_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "note")
+        assert get_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks") == {}
 
     def test_replace_metadata(self, conn: sqlite3.Connection) -> None:
         t1, t2 = self._setup(conn)
-        replace_task_edge_metadata(conn, t1.id, t2.id, '{"a": "1", "b": "2"}')
-        assert get_task_edge_metadata(conn, t1.id, t2.id) == {"a": "1", "b": "2"}
+        replace_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks", '{"a": "1", "b": "2"}')
+        assert get_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks") == {"a": "1", "b": "2"}
 
     def test_get_nonexistent_edge_raises(self, conn: sqlite3.Connection) -> None:
         t1, t2 = self._setup(conn)
         with pytest.raises(LookupError):
-            get_task_edge_metadata(conn, t1.id, 9999)
+            get_edge_metadata(conn, "task", t1.id, "task", 9999, "blocks")
 
     def test_archived_edge_metadata_is_invisible(self, conn: sqlite3.Connection) -> None:
-        """All metadata ops on an archived task edge must raise LookupError."""
+        """All metadata ops on an archived edge must raise LookupError."""
         t1, t2 = self._setup(conn)
-        set_task_edge_metadata_key(conn, t1.id, t2.id, "note", "v")
-        archive_task_edge(conn, t1.id, t2.id)
+        set_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "note", "v")
+        archive_edge(conn, "task", t1.id, "task", t2.id, "blocks")
         with pytest.raises(LookupError):
-            get_task_edge_metadata(conn, t1.id, t2.id)
+            get_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks")
         with pytest.raises(LookupError):
-            set_task_edge_metadata_key(conn, t1.id, t2.id, "k", "v")
+            set_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "k", "v")
         with pytest.raises(LookupError):
-            remove_task_edge_metadata_key(conn, t1.id, t2.id, "note")
+            remove_edge_metadata_key(conn, "task", t1.id, "task", t2.id, "blocks", "note")
         with pytest.raises(LookupError):
-            replace_task_edge_metadata(conn, t1.id, t2.id, "{}")
+            replace_edge_metadata(conn, "task", t1.id, "task", t2.id, "blocks", "{}")
 
-
-class TestGroupEdgeMetadata:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int]:
+    def test_group_edge_metadata(self, conn: sqlite3.Connection) -> None:
         workspace = insert_workspace(conn, NewWorkspace(name="w"))
         g1 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g1")).id
         g2 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g2")).id
-        add_group_edge(conn, g1, g2, workspace.id, kind="blocks")
-        return g1, g2
-
-    def test_get_empty_metadata(self, conn: sqlite3.Connection) -> None:
-        g1, g2 = self._setup(conn)
-        assert get_group_edge_metadata(conn, g1, g2) == {}
-
-    def test_set_and_get_metadata(self, conn: sqlite3.Connection) -> None:
-        g1, g2 = self._setup(conn)
-        set_group_edge_metadata_key(conn, g1, g2, "note", "critical")
-        assert get_group_edge_metadata(conn, g1, g2) == {"note": "critical"}
-
-    def test_remove_metadata_key(self, conn: sqlite3.Connection) -> None:
-        g1, g2 = self._setup(conn)
-        set_group_edge_metadata_key(conn, g1, g2, "note", "critical")
-        remove_group_edge_metadata_key(conn, g1, g2, "note")
-        assert get_group_edge_metadata(conn, g1, g2) == {}
-
-    def test_replace_metadata(self, conn: sqlite3.Connection) -> None:
-        g1, g2 = self._setup(conn)
-        replace_group_edge_metadata(conn, g1, g2, '{"x": "y"}')
-        assert get_group_edge_metadata(conn, g1, g2) == {"x": "y"}
-
-    def test_archived_edge_metadata_is_invisible(self, conn: sqlite3.Connection) -> None:
-        """All metadata ops on an archived group edge must raise LookupError."""
-        g1, g2 = self._setup(conn)
-        set_group_edge_metadata_key(conn, g1, g2, "note", "v")
-        archive_group_edge(conn, g1, g2)
-        with pytest.raises(LookupError):
-            get_group_edge_metadata(conn, g1, g2)
-        with pytest.raises(LookupError):
-            set_group_edge_metadata_key(conn, g1, g2, "k", "v")
-        with pytest.raises(LookupError):
-            remove_group_edge_metadata_key(conn, g1, g2, "note")
-        with pytest.raises(LookupError):
-            replace_group_edge_metadata(conn, g1, g2, "{}")
+        add_edge(conn, "group", g1, "group", g2, workspace.id, "blocks")
+        set_edge_metadata_key(conn, "group", g1, "group", g2, "blocks", "note", "critical")
+        assert get_edge_metadata(conn, "group", g1, "group", g2, "blocks") == {"note": "critical"}
+        remove_edge_metadata_key(conn, "group", g1, "group", g2, "blocks", "note")
+        assert get_edge_metadata(conn, "group", g1, "group", g2, "blocks") == {}
+        replace_edge_metadata(conn, "group", g1, "group", g2, "blocks", '{"x": "y"}')
+        assert get_edge_metadata(conn, "group", g1, "group", g2, "blocks") == {"x": "y"}
 
 
 # ---- Journal ----

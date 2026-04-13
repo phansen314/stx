@@ -15,13 +15,11 @@ from .models import (
     Workspace,
 )
 from .service_models import (
+    EdgeListItem,
+    EdgeRef,
     GroupDetail,
-    GroupEdgeListItem,
-    GroupEdgeRef,
     GroupRef,
     TaskDetail,
-    TaskEdgeListItem,
-    TaskEdgeRef,
     TaskListItem,
 )
 
@@ -108,25 +106,17 @@ def row_to_journal_entry(row: Row) -> JournalEntry:
     )
 
 
-def row_to_task_edge_list_item(row: Row) -> TaskEdgeListItem:
-    return TaskEdgeListItem(
-        source_id=row["source_id"],
-        source_title=row["source_title"],
-        target_id=row["target_id"],
-        target_title=row["target_title"],
+def row_to_edge_list_item(row: Row) -> EdgeListItem:
+    return EdgeListItem(
+        from_type=row["from_type"],
+        from_id=row["from_id"],
+        from_title=row["from_title"],
+        to_type=row["to_type"],
+        to_id=row["to_id"],
+        to_title=row["to_title"],
         workspace_id=row["workspace_id"],
         kind=row["kind"],
-    )
-
-
-def row_to_group_edge_list_item(row: Row) -> GroupEdgeListItem:
-    return GroupEdgeListItem(
-        source_id=row["source_id"],
-        source_title=row["source_title"],
-        target_id=row["target_id"],
-        target_title=row["target_title"],
-        workspace_id=row["workspace_id"],
-        kind=row["kind"],
+        acyclic=bool(row["acyclic"]),
     )
 
 
@@ -176,8 +166,8 @@ def task_to_detail(
     *,
     status: Status,
     group: Group | None,
-    edge_sources: tuple[TaskEdgeRef, ...],
-    edge_targets: tuple[TaskEdgeRef, ...],
+    edge_sources: tuple[EdgeRef, ...],
+    edge_targets: tuple[EdgeRef, ...],
     history: tuple[JournalEntry, ...],
     tags: tuple[Tag, ...] = (),
 ) -> TaskDetail:
@@ -198,8 +188,8 @@ def group_to_detail(
     tasks: tuple[Task, ...],
     children: tuple[Group, ...],
     parent: Group | None,
-    edge_sources: tuple[GroupEdgeRef, ...],
-    edge_targets: tuple[GroupEdgeRef, ...],
+    edge_sources: tuple[EdgeRef, ...],
+    edge_targets: tuple[EdgeRef, ...],
 ) -> GroupDetail:
     return GroupDetail(
         **shallow_fields(group, Group),

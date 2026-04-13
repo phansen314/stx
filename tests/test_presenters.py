@@ -13,11 +13,11 @@ from stx.models import (
 )
 from stx.service_models import (
     ArchivePreview,
+    EdgeRef,
     GroupDetail,
     GroupRef,
     MoveToWorkspacePreview,
     TaskDetail,
-    TaskEdgeRef,
     TaskListItem,
     WorkspaceContext,
     WorkspaceListStatus,
@@ -256,16 +256,16 @@ class TestFormatTaskDetail:
             tags=(_tag(1, "bug"), _tag(2, "urgent")),
             description="do the thing",
             due_date=1_000_000,
-            edge_sources=(TaskEdgeRef(task=_task(2, "blocker"), kind="blocks"),),
-            edge_targets=(TaskEdgeRef(task=_task(3, "blocked"), kind="related-to"),),
+            edge_sources=(EdgeRef(node_type="task", node_id=2, node_title="blocker", kind="blocks"),),
+            edge_targets=(EdgeRef(node_type="task", node_id=3, node_title="blocked", kind="related-to"),),
             history=(_history(1, TaskField.TITLE, "old", "T"),),
         )
         out = presenters.format_task_detail(d)
         assert "Group:       g (group-0003)" in out
         assert "Tags:        bug, urgent" in out
         assert "Due:" in out
-        assert "Edge sources: task-0002 (blocks)" in out
-        assert "Edge targets: task-0003 (related-to)" in out
+        assert "Edge sources: task:2 blocker (blocks)" in out
+        assert "Edge targets: task:3 blocked (related-to)" in out
         assert "Description:" in out
         assert "do the thing" in out
         assert "History:" in out
@@ -521,7 +521,7 @@ class TestFormatMovePreview:
             target_status_id=3,
             can_move=True,
             blocking_reason=None,
-            edge_ids=(),
+            edge_endpoints=(),
             is_archived=False,
         )
         base.update(overrides)
@@ -538,9 +538,12 @@ class TestFormatMovePreview:
         assert "transfer OK" in out
 
     def test_blocked_by_active_edges(self):
-        p = self._preview(can_move=False, edge_ids=(10, 11))
+        p = self._preview(
+            can_move=False,
+            edge_endpoints=(("task", 10), ("group", 11)),
+        )
         out = presenters.format_move_preview(p, "other", "Backlog", source_workspace_name="dev")
-        assert "has active edges: task-0010, task-0011" in out
+        assert "has active edges: task:10, group:11" in out
         assert "move would FAIL" in out
 
     def test_blocked_other_reason(self):

@@ -46,12 +46,11 @@ class TestInitDb:
             "workspaces",
             "statuses",
             "tasks",
-            "task_edges",
+            "edges",
             "journal",
             "tags",
             "task_tags",
             "groups",
-            "group_edges",
         }
 
     def test_idempotent(self, conn: sqlite3.Connection) -> None:
@@ -129,8 +128,8 @@ class TestTransaction:
         assert "disk full" in str(exc_info.value.__cause__)
 
 
-class TestSelfDependencyConstraint:
-    def test_task_cannot_depend_on_itself(self, conn: sqlite3.Connection) -> None:
+class TestSelfEdgeConstraint:
+    def test_edge_cannot_point_to_itself(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             workspace_id = insert_workspace(conn, "b")
             col_id = insert_status(conn, workspace_id, "col")
@@ -138,11 +137,13 @@ class TestSelfDependencyConstraint:
         with pytest.raises(sqlite3.IntegrityError):
             with transaction(conn):
                 conn.execute(
-                    "INSERT INTO task_edges (source_id, target_id, kind) VALUES (?, ?, 'blocks')",
-                    (task_id, task_id),
+                    "INSERT INTO edges "
+                    "(from_type, from_id, to_type, to_id, workspace_id, kind) "
+                    "VALUES ('task', ?, 'task', ?, ?, 'blocks')",
+                    (task_id, task_id, workspace_id),
                 )
 
-    def test_valid_dependency_allowed(self, conn: sqlite3.Connection) -> None:
+    def test_valid_edge_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             workspace_id = insert_workspace(conn, "b")
             col_id = insert_status(conn, workspace_id, "col")
@@ -150,13 +151,16 @@ class TestSelfDependencyConstraint:
             t2 = insert_task(conn, workspace_id, "t2", col_id)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
-                "VALUES (?, ?, ?, 'blocks')",
+                "INSERT INTO edges "
+                "(from_type, from_id, to_type, to_id, workspace_id, kind) "
+                "VALUES ('task', ?, 'task', ?, ?, 'blocks')",
                 (t1, t2, workspace_id),
             )
-        row = conn.execute("SELECT * FROM task_edges").fetchone()
-        assert row["source_id"] == t1
-        assert row["target_id"] == t2
+        row = conn.execute("SELECT * FROM edges").fetchone()
+        assert row["from_type"] == "task"
+        assert row["from_id"] == t1
+        assert row["to_type"] == "task"
+        assert row["to_id"] == t2
 
 
 class TestStatusArchived:
@@ -208,7 +212,7 @@ class TestForeignKeyEnforcement:
 
 
 class TestCrossWorkspaceConstraints:
-    def test_dependency_same_workspace_allowed(self, conn: sqlite3.Connection) -> None:
+    def test_edge_same_workspace_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "b")
             cid = insert_status(conn, bid)
@@ -216,16 +220,24 @@ class TestCrossWorkspaceConstraints:
             t2 = insert_task(conn, bid, "t2", cid)
         with transaction(conn):
             conn.execute(
-                "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
-                "VALUES (?, ?, ?, 'blocks')",
+                "INSERT INTO edges "
+                "(from_type, from_id, to_type, to_id, workspace_id, kind) "
+                "VALUES ('task', ?, 'task', ?, ?, 'blocks')",
                 (t1, t2, bid),
             )
-        row = conn.execute("SELECT * FROM task_edges").fetchone()
-        assert row["source_id"] == t1
-        assert row["target_id"] == t2
+        row = conn.execute("SELECT * FROM edges").fetchone()
+        assert row["from_id"] == t1
+        assert row["to_id"] == t2
         assert row["workspace_id"] == bid
 
-    def test_dependency_cross_workspace_rejected(self, conn: sqlite3.Connection) -> None:
+    def test_edge_cross_workspace_rejected_by_service(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Cross-workspace edges are rejected at the service layer, not the DB.
+        The unified ``edges`` table has no composite FK to endpoints (edges are
+        polymorphic), so DB-level enforcement was traded for an app-layer check
+        in ``service.add_edge``."""
+        from stx import service
         with transaction(conn):
             b1 = insert_workspace(conn, "b1")
             b2 = insert_workspace(conn, "b2")
@@ -233,13 +245,8 @@ class TestCrossWorkspaceConstraints:
             c2 = insert_status(conn, b2)
             t1 = insert_task(conn, b1, "t1", c1)
             t2 = insert_task(conn, b2, "t2", c2)
-        with pytest.raises(sqlite3.IntegrityError):
-            with transaction(conn):
-                conn.execute(
-                    "INSERT INTO task_edges (source_id, target_id, workspace_id, kind) "
-                    "VALUES (?, ?, ?, 'blocks')",
-                    (t1, t2, b1),
-                )
+        with pytest.raises(ValueError, match="same workspace"):
+            service.add_edge(conn, ("task", t1), ("task", t2), kind="blocks")
 
     def test_tag_same_workspace_allowed(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
@@ -601,14 +608,21 @@ class TestMigrations:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        assert "group_edges" in tables
-        # After all migrations: boards→workspaces (006), projects removed (015)
+        # After migration 016: task_edges + group_edges are unified into `edges`.
+        assert "edges" in tables
+        assert "task_edges" not in tables
+        assert "group_edges" not in tables
+        # After all migrations: boards→workspaces (006), projects removed (015),
+        # unified edges (016). Self-loop on the polymorphic edges table is still
+        # rejected by the CHECK constraint.
         conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'b')")
         conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (1, 1, 'g')")
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO group_edges (source_id, target_id, workspace_id, kind) VALUES (1, 1, 1, 'blocks')"
+                "INSERT INTO edges "
+                "(from_type, from_id, to_type, to_id, workspace_id, kind) "
+                "VALUES ('group', 1, 'group', 1, 1, 'blocks')"
             )
         conn.close()
 
@@ -807,9 +821,9 @@ class TestMigrations:
             with pytest.raises(sqlite3.IntegrityError, match="json_valid"):
                 conn.execute(sql)
 
-        # Dependent rows preserved (task_history migrated to journal by migration 013,
-        # task_dependencies renamed to task_edges by migration 014)
-        assert conn.execute("SELECT COUNT(*) FROM task_edges").fetchone()[0] == 1
+        # Dependent rows preserved (task_history→journal in 013,
+        # task_dependencies→task_edges in 014, task_edges+group_edges→edges in 016)
+        assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM task_tags").fetchone()[0] == 1
         assert (
             conn.execute("SELECT COUNT(*) FROM journal WHERE entity_type='task'").fetchone()[0] == 1
@@ -949,6 +963,245 @@ class TestMigrations:
         conn.commit()
         with pytest.raises(RuntimeError, match="newer than this build"):
             _run_migrations(conn)
+        conn.close()
+
+    def test_migration_016_unified_edges_roundtrip(self, tmp_path: Path) -> None:
+        """End-to-end regression for migration 016.
+
+        Bootstraps a minimal v15 schema with `task_edges` + `group_edges` +
+        `journal`, seeds representative rows (including metadata and
+        archived flags), runs migration 016 by loading the real
+        ``016_unified_edges.sql`` file, and asserts:
+
+        - both legacy tables are dropped
+        - ``edges`` row count equals the sum of the two pre-migration tables
+        - every copied row has ``acyclic = 1`` (dependency migration default)
+        - per-row metadata + archived flags are preserved
+        - journal rows with ``entity_type = 'task_edge' | 'group_edge'``
+          are rewritten to ``'edge'``
+        - the new journal ``entity_type`` CHECK accepts only the new allowlist
+        - ``PRAGMA foreign_key_check`` comes up clean post-migration
+
+        This test locks in the behavior that the ``; all existing edges``
+        comment-semicolon bug broke — without it the migration would split
+        mid-statement and the failure mode would be an opaque ``near "all":
+        syntax error`` on the next prod migration.
+        """
+        import importlib.resources
+        import json as _json
+
+        db_path = tmp_path / "v15.db"
+        conn = get_connection(db_path)
+        # Minimal v15 schema: only what migration 016 touches + the FK targets.
+        conn.executescript("""
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE statuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                parent_id INTEGER,
+                title TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                metadata TEXT NOT NULL DEFAULT '{}',
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                title TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                status_id INTEGER NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 1,
+                due_date INTEGER,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                start_date INTEGER,
+                finish_date INTEGER,
+                group_id INTEGER,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id),
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE task_edges (
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'blocks',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                archived INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (source_id, target_id),
+                CHECK (source_id != target_id),
+                FOREIGN KEY (source_id, workspace_id) REFERENCES tasks(id, workspace_id),
+                FOREIGN KEY (target_id, workspace_id) REFERENCES tasks(id, workspace_id)
+            );
+            CREATE TABLE group_edges (
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'blocks',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                archived INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (source_id, target_id),
+                CHECK (source_id != target_id),
+                FOREIGN KEY (source_id, workspace_id) REFERENCES groups(id, workspace_id),
+                FOREIGN KEY (target_id, workspace_id) REFERENCES groups(id, workspace_id)
+            );
+            CREATE TABLE journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL CHECK (entity_type IN (
+                    'task', 'group', 'workspace', 'status', 'task_edge', 'group_edge'
+                )),
+                entity_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                source TEXT NOT NULL,
+                changed_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+        """)
+        conn.execute("PRAGMA user_version = 15")
+        conn.commit()
+
+        # Seed: 1 workspace, 2 statuses, 3 tasks, 3 groups, 2 task_edges
+        # (one active with metadata, one archived), 1 group_edge, and
+        # representative journal rows with the old entity types.
+        conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'w')")
+        conn.execute(
+            "INSERT INTO statuses (id, workspace_id, name) VALUES (1, 1, 'todo')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (1, 1, 't1', 1)"
+        )
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (2, 1, 't2', 1)"
+        )
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (3, 1, 't3', 1)"
+        )
+        conn.execute(
+            "INSERT INTO groups (id, workspace_id, title) VALUES (10, 1, 'g1')"
+        )
+        conn.execute(
+            "INSERT INTO groups (id, workspace_id, title) VALUES (11, 1, 'g2')"
+        )
+        # Active task edge with metadata
+        conn.execute(
+            "INSERT INTO task_edges "
+            "(source_id, target_id, workspace_id, kind, metadata, archived) "
+            "VALUES (1, 2, 1, 'blocks', '{\"note\":\"urgent\"}', 0)"
+        )
+        # Archived task edge
+        conn.execute(
+            "INSERT INTO task_edges "
+            "(source_id, target_id, workspace_id, kind, archived) "
+            "VALUES (2, 3, 1, 'spawns', 1)"
+        )
+        # Group edge
+        conn.execute(
+            "INSERT INTO group_edges "
+            "(source_id, target_id, workspace_id, kind) VALUES (10, 11, 1, 'blocks')"
+        )
+        # Journal rows: pre-016 entity types must be rewritten to 'edge'
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, field, "
+            "new_value, source) VALUES ('task_edge', 1, 1, 'kind', 'blocks', 'test')"
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, field, "
+            "new_value, source) VALUES ('group_edge', 10, 1, 'kind', 'blocks', 'test')"
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, field, "
+            "new_value, source) VALUES ('task', 1, 1, 'title', 't1', 'test')"
+        )
+        conn.commit()
+
+        # Run migration 016 via the full migration runner.
+        _run_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+        # Legacy tables are gone.
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "edges" in tables
+        assert "task_edges" not in tables
+        assert "group_edges" not in tables
+
+        # Row count parity + type tagging.
+        edge_rows = conn.execute(
+            "SELECT from_type, from_id, to_type, to_id, kind, "
+            "acyclic, archived, metadata FROM edges ORDER BY from_type, from_id, to_id"
+        ).fetchall()
+        assert len(edge_rows) == 3  # 2 task_edges + 1 group_edge
+
+        by_key = {(r["from_type"], r["from_id"], r["to_id"]): r for r in edge_rows}
+
+        # Task→task active with metadata preserved.
+        r = by_key[("task", 1, 2)]
+        assert r["to_type"] == "task"
+        assert r["kind"] == "blocks"
+        assert r["acyclic"] == 1  # Pre-016 dependencies all get acyclic=1
+        assert r["archived"] == 0
+        assert _json.loads(r["metadata"]) == {"note": "urgent"}
+
+        # Task→task archived flag preserved.
+        r = by_key[("task", 2, 3)]
+        assert r["kind"] == "spawns"
+        assert r["archived"] == 1
+        assert r["acyclic"] == 1
+
+        # Group→group migrated with group endpoints.
+        r = by_key[("group", 10, 11)]
+        assert r["to_type"] == "group"
+        assert r["acyclic"] == 1
+
+        # Journal rewrite: old entity_type strings → 'edge'.
+        journal_types = {
+            (r["entity_type"], r["entity_id"])
+            for r in conn.execute(
+                "SELECT entity_type, entity_id FROM journal"
+            ).fetchall()
+        }
+        assert ("edge", 1) in journal_types    # rewritten from task_edge
+        assert ("edge", 10) in journal_types   # rewritten from group_edge
+        assert ("task", 1) in journal_types    # non-edge row untouched
+        assert not any(t.startswith("task_edge") or t.startswith("group_edge")
+                       for t, _ in journal_types)
+
+        # New CHECK is enforced: stale entity_type strings must be rejected.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO journal "
+                "(entity_type, entity_id, workspace_id, field, new_value, source) "
+                "VALUES ('task_edge', 1, 1, 'kind', 'blocks', 'test')"
+            )
+
+        # FK check after the cascade-recreate must be clean.
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert violations == []
         conn.close()
 
 

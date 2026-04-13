@@ -51,38 +51,22 @@ CREATE TABLE IF NOT EXISTS tasks (
     UNIQUE (id, workspace_id)
 );
 
-CREATE TABLE IF NOT EXISTS task_edges (
-    source_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    workspace_id INTEGER NOT NULL,
-    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+CREATE TABLE IF NOT EXISTS edges (
+    from_type    TEXT NOT NULL CHECK (from_type IN ('workspace', 'group', 'task')),
+    from_id      INTEGER NOT NULL,
+    to_type      TEXT NOT NULL CHECK (to_type IN ('workspace', 'group', 'task')),
+    to_id        INTEGER NOT NULL,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
     -- kind charset kept tight so export.py can safely interpolate it into
     -- Mermaid edge labels (|kind|) without escaping. Loosening this must
-    -- be paired with an escape pass in export._render_task_edges_section
-    kind TEXT NOT NULL
-        CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
-    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
-    PRIMARY KEY (source_id, target_id),
-    CHECK (source_id != target_id),
-    FOREIGN KEY (source_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY (target_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS group_edges (
-    source_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    workspace_id INTEGER NOT NULL,
-    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-    -- kind charset kept tight so export.py can safely interpolate it into
-    -- Mermaid edge labels (|kind|) without escaping. Loosening this must
-    -- be paired with an escape pass in export._render_group_edges_section
-    kind TEXT NOT NULL
-        CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
-    metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
-    PRIMARY KEY (source_id, target_id),
-    CHECK (source_id != target_id),
-    FOREIGN KEY (source_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY (target_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE CASCADE
+    -- be paired with an escape pass in export._render_edges_section
+    kind         TEXT NOT NULL DEFAULT 'blocks'
+                     CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64),
+    acyclic      INTEGER NOT NULL DEFAULT 0 CHECK (acyclic IN (0, 1)),
+    metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+    archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    PRIMARY KEY (from_type, from_id, to_type, to_id, kind),
+    CHECK (from_type != to_type OR from_id != to_id)
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -106,8 +90,7 @@ CREATE TABLE IF NOT EXISTS task_tags (
 CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL CHECK (entity_type IN (
-        'task', 'group', 'workspace', 'status',
-        'task_edge', 'group_edge'
+        'task', 'group', 'workspace', 'status', 'edge'
     )),
     entity_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
@@ -150,11 +133,17 @@ CREATE INDEX IF NOT EXISTS idx_journal_timeline
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_archived_group
     ON tasks(workspace_id, archived, group_id);
 
+-- Edges indexes: covering patterns for DAG queries and endpoint lookups
+CREATE INDEX IF NOT EXISTS idx_edges_from
+    ON edges(from_type, from_id);
+CREATE INDEX IF NOT EXISTS idx_edges_to
+    ON edges(to_type, to_id);
+CREATE INDEX IF NOT EXISTS idx_edges_workspace_archived
+    ON edges(workspace_id, archived);
+CREATE INDEX IF NOT EXISTS idx_edges_acyclic_archived
+    ON edges(acyclic, archived);
+
 -- FK indexes on junction tables (PK covers the leading column)
-CREATE INDEX IF NOT EXISTS idx_task_edges_target_id
-    ON task_edges(target_id);
-CREATE INDEX IF NOT EXISTS idx_group_edges_target_id
-    ON group_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag_id
     ON task_tags(tag_id);
 

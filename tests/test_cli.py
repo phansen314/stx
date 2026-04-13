@@ -414,9 +414,9 @@ class TestTaskCommands:
         # edge_targets ("things I point at"). The reverse shows up on task-1
         # under edge_sources ("things pointing at me").
         out, _ = cli("task", "show", "2")
-        assert "Edge targets: task-0001 (blocks)" in out
+        assert "Edge targets: task:1" in out and "(blocks)" in out
         out2, _ = cli("task", "show", "1")
-        assert "Edge sources: task-0002 (blocks)" in out2
+        assert "Edge sources: task:2" in out2 and "(blocks)" in out2
 
     def test_show_with_description(self, cli):
         cli("task", "create", "Fix bug", "-d", "Detailed description", "-S", "todo")
@@ -518,7 +518,7 @@ class TestTaskCommands:
         out, _ = cli(
             "edge", "create", "--source", "Task B", "--target", "Task A", "--kind", "blocks"
         )
-        assert "task-0002" in out and "task-0001" in out
+        assert "task:2" in out and "task:1" in out
 
 
 # ---- Project commands ----
@@ -537,7 +537,7 @@ class TestEdgeCommands:
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
         out, _ = cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
-        assert "task-0002" in out and "task-0001" in out
+        assert "task:2" in out and "task:1" in out
         assert "blocks" in out
 
     def test_add_with_kind(self, cli):
@@ -552,7 +552,7 @@ class TestEdgeCommands:
         cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
         out, _ = cli("edge", "ls")
         assert "blocks" in out
-        assert "task-0001" in out and "task-0002" in out
+        assert "task:1" in out and "task:2" in out
 
     def test_invalid_kind_rejected(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
@@ -567,7 +567,7 @@ class TestEdgeCommands:
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "todo")
         cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
-        out, _ = cli("edge", "archive", "--source", "2", "--target", "1")
+        out, _ = cli("edge", "archive", "--source", "2", "--target", "1", "--kind", "blocks")
         assert "archived edge" in out
 
 
@@ -1164,10 +1164,11 @@ class TestJsonOutput:
             cli, "edge", "create", "--source", "1", "--target", "2", "--kind", "blocks"
         )
         assert data["ok"] is True
-        assert data["data"]["source_id"] == 1
-        assert data["data"]["source_title"] == "T1"
-        assert data["data"]["target_id"] == 2
-        assert data["data"]["target_title"] == "T2"
+        assert data["data"]["from_type"] == "task"
+        assert data["data"]["from_id"] == 1
+        assert data["data"]["to_type"] == "task"
+        assert data["data"]["to_id"] == 2
+        assert data["data"]["kind"] == "blocks"
 
     def test_tag_create(self, cli):
         cli("workspace", "create", "B")
@@ -1306,7 +1307,7 @@ class TestJsonOutput:
         assert data["ok"] is True
         payload = data["data"]
         assert payload["can_move"] is True
-        assert payload["edge_ids"] == []
+        assert payload["edge_endpoints"] == []
         assert payload["blocking_reason"] is None
         assert payload["is_archived"] is False
 
@@ -2005,9 +2006,9 @@ class TestEdgeReCreation:
 
     def test_readd_task_edge_after_archive(self):
         self.cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
-        self.cli("edge", "archive", "--source", "2", "--target", "1")
+        self.cli("edge", "archive", "--source", "2", "--target", "1", "--kind", "blocks")
         out, _ = self.cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
-        assert "task-0002" in out
+        assert "task:2" in out
 
 
 # ---- End-to-end smoke test ----
@@ -2051,8 +2052,7 @@ class TestEndToEndSmoke:
         # Task edges
         cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
         cli("edge", "create", "--source", "3", "--target", "1", "--kind", "blocks")
-        # Group edges
-        cli("group", "edge", "create", "--source", "endpoints", "--target", "db", "--kind", "blocks")
+
 
     def test_listing_commands(self):
         out, _ = self.cli("task", "ls")
@@ -2082,9 +2082,9 @@ class TestEndToEndSmoke:
         assert "tech-debt" in out
 
     def test_show_and_detail(self):
-        # t2 is blocked by t1
+        # t2 has outgoing edge to t1 (blocks)
         out, _ = self.cli("task", "show", "2")
-        assert "task-0001" in out  # blocked-by reference
+        assert "task:1" in out  # edge target reference
 
         out, _ = self.cli("group", "show", "api")
         assert "api" in out
@@ -2111,7 +2111,7 @@ class TestEndToEndSmoke:
         assert "in-progress" in out
 
     def test_dep_archive_and_recreate(self):
-        self.cli("edge", "archive", "--source", "2", "--target", "1")
+        self.cli("edge", "archive", "--source", "2", "--target", "1", "--kind", "blocks")
         out, _ = self.cli("task", "show", "2")
         # task-2 had an outgoing edge to task-1 → that lives under edge_targets.
         # After archive, the line is gone.
@@ -2119,7 +2119,7 @@ class TestEndToEndSmoke:
 
         self.cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
         out, _ = self.cli("task", "show", "2")
-        assert "task-0001" in out  # blocked again
+        assert "Edge targets: task:1" in out  # blocked again
 
     def test_dry_run_workspace(self):
         out, _ = self.cli("workspace", "archive", "--dry-run")

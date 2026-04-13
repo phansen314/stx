@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Polymorphic edges.** `task_edges` + `group_edges` collapse into one
+  `edges` table keyed on `(from_type, from_id, to_type, to_id, kind)`.
+  Cross-type edges are now possible: task→group, group→workspace, etc.
+  Multiple edge kinds between the same node pair are allowed (distinguished
+  by `kind` in the PK).
+- **Cycle detection (first implementation).** Reintroduced via recursive
+  CTE `get_reachable_nodes` over `acyclic=1 AND archived=0` edges.
+  `service.add_edge` runs the check when the new edge is acyclic. Design:
+  all acyclic edges share one DAG regardless of kind — `blocks` + `spawns`
+  cross-kind cycles are rejected. Non-acyclic edges (`informs`,
+  `references`, `related-to`) can form cycles freely and don't participate
+  in reachability.
+- **Per-edge `acyclic` flag** with per-kind defaults: `blocks` / `spawns`
+  default to `acyclic=1`, everything else defaults to `0`. CLI override
+  via `stx edge create --acyclic` / `--no-acyclic`.
+- **Typed node refs on the edge CLI.** `stx edge create --source task-0001
+  --target group:foo --kind blocks` resolves mixed-type endpoints.
+  `workspace:<name>` is also supported. `--source-parent` / `--target-parent`
+  flags disambiguate groups with colliding titles under different parents.
+
+### Changed
+- **BREAKING:** `stx group edge …` removed. All edge commands unify under
+  `stx edge create|archive|ls` and `stx edge meta ls|get|set|del`.
+- **BREAKING:** Export JSON shape — `"task_edges"` + `"group_edges"` keys
+  replaced by a single `"edges"` key whose rows carry `from_type`/`from_id`/
+  `to_type`/`to_id` instead of `source_id`/`target_id`.
+- **BREAKING:** Markdown export section heading: `### Task Edges` →
+  `### Edges`. Mermaid block now mixes node shapes by type.
+- **BREAKING:** `journal.entity_type` CHECK tightened to the new allowlist —
+  rows with `'task_edge'` / `'group_edge'` are rewritten to `'edge'` by
+  migration 016. `EntityType.TASK_EDGE` / `GROUP_EDGE` → `EntityType.EDGE`.
+- **BREAKING:** `EdgeField.TARGET` → `EdgeField.ENDPOINT`. Edge endpoint
+  identity in the journal is encoded as `"<from_type>:<from_id>→<to_type>:<to_id>"`
+  on the `endpoint` field; `kind` is journaled on its own row.
+- **BREAKING:** `TaskEdgeRef` / `GroupEdgeRef` / `TaskEdgeListItem` /
+  `GroupEdgeListItem` → `EdgeRef` / `EdgeListItem`. Both carry a
+  `NodeType = Literal["task","group","workspace"]` tagged union for
+  endpoints. `TaskDetail.edge_sources` / `edge_targets` now yield
+  `tuple[EdgeRef, ...]` that can point at any node type.
+- **BREAKING:** `service.add_edge` / `archive_edge` take endpoint pairs as
+  `(node_type, node_id)` tuples: `service.add_edge(conn, src, dst, *,
+  kind, ...)`. Typo prevention — the old 4-arg signature made `from_id`/
+  `to_id` swap-typos invisible.
+- **BREAKING:** `MoveToWorkspacePreview.edge_ids: tuple[int, ...]` →
+  `edge_endpoints: tuple[tuple[NodeType, int], ...]`. Task transfer dry-run
+  JSON now reports typed endpoints so cross-type edges don't collide on ID.
+- Cross-workspace edges are now rejected at the service layer (not via a
+  DB FK). The unified edges table has no composite FK to endpoints because
+  they are polymorphic; workspace alignment is checked in `service.add_edge`
+  before insert.
+- `stx edge create --kind BLOCKS` normalizes the kind to lowercase in the
+  JSON output — previously CLI echoed the raw input while the DB stored
+  the normalized form.
+
+### Fixed
+- `_validate_move_to_workspace` no longer blocks a task transfer when the
+  only active edges point at archived endpoints. The unhydrated edge list
+  functions join on the nodes CTE to match the hydrated + workspace-list
+  behavior. Regression caught post-task-18, re-fixed.
+
+### Migrations
+- **016_unified_edges.sql.** Creates the new `edges` table, copies
+  `task_edges` and `group_edges` into it with `acyclic=1` (all pre-016
+  edges were dependency edges, which imply DAG semantics), drops the
+  legacy tables, cascade-recreates `journal` to update its `entity_type`
+  CHECK and rewrite old `task_edge` / `group_edge` rows to `edge`.
+  `SCHEMA_VERSION = 16`.
+
+## [0.13.0] — 2026-04-13
+
 ### Removed
 - **BREAKING:** `projects` are removed as a first-class entity. Old projects
   become root groups (groups with `parent_id IS NULL`) via migration 015.

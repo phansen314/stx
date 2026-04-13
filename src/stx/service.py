@@ -36,15 +36,13 @@ from .models import (
 )
 from .service_models import (
     ArchivePreview,
+    EdgeListItem,
+    EdgeRef,
     EntityUpdatePreview,
     GroupDetail,
-    GroupEdgeListItem,
-    GroupEdgeRef,
     GroupRef,
     MoveToWorkspacePreview,
     TaskDetail,
-    TaskEdgeListItem,
-    TaskEdgeRef,
     TaskListItem,
     TaskMovePreview,
     WorkspaceContext,
@@ -81,8 +79,8 @@ def _translate_integrity_error(
         for pattern, human_msg in _UNIQUE_MESSAGES.items():
             if pattern in constraint:
                 return ValueError(human_msg)
-        if "task_edges" in constraint or "group_edges" in constraint:
-            return ValueError("an edge already exists between these entities")
+        if "edges" in constraint:
+            return ValueError("an edge already exists between these entities with this kind")
         if "task_tags" in constraint:
             return ValueError("task already has this tag")
         return ValueError("a unique constraint was violated")
@@ -91,7 +89,7 @@ def _translate_integrity_error(
             return ValueError(context)
         return ValueError("referenced entity does not exist or belongs to a different workspace")
     if "CHECK constraint failed" in msg:
-        if "task_edges" in msg or "group_edges" in msg:
+        if "edges" in msg:
             return ValueError(
                 "edge kind must match [a-z0-9_.-]+ and be 1-64 characters"
             )
@@ -194,45 +192,47 @@ def _record_entity_changes(
 
 def _record_edge_change(
     conn: sqlite3.Connection,
-    entity_type: EntityType,
-    entity_id: int,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
     workspace_id: int,
-    target_id: int,
     *,
     added: bool,
     kind: str,
+    acyclic: int,
     source: str,
 ) -> None:
     """Record edge add/archive in the journal.
 
-    Emits TWO entries per mutation so both the edge structure (target) and
-    its kind label are captured:
+    Emits TWO entries per mutation so both the endpoint and kind are captured:
 
-      - ``field = EdgeField.TARGET`` carries the target_id as old/new (for
-        add: ``None → target_id``; for archive: ``target_id → None``).
+      - ``field = EdgeField.ENDPOINT`` encodes the full edge identity as
+        ``"<from_type>:<from_id>→<to_type>:<to_id>"`` (add: ``None → value``;
+        archive: ``value → None``).
       - ``field = EdgeField.KIND`` carries the kind label symmetrically.
 
-    This keeps the audit trail round-trippable — a reader can reconstruct
-    both the endpoint and the kind of every edge mutation without joining
-    against the current state of ``task_edges`` / ``group_edges``.
+    ``entity_id = from_id`` so journal queries for "edges from node X"
+    remain possible. ``entity_type = "edge"`` for all edge mutations.
     """
+    endpoint = f"{from_type}:{from_id}\u2192{to_type}:{to_id}"
     repo.insert_journal_entry(
         conn,
         NewJournalEntry(
-            entity_type=entity_type,
-            entity_id=entity_id,
+            entity_type=EntityType.EDGE,
+            entity_id=from_id,
             workspace_id=workspace_id,
-            field=EdgeField.TARGET,
-            old_value=None if added else str(target_id),
-            new_value=str(target_id) if added else None,
+            field=EdgeField.ENDPOINT,
+            old_value=None if added else endpoint,
+            new_value=endpoint if added else None,
             source=source,
         ),
     )
     repo.insert_journal_entry(
         conn,
         NewJournalEntry(
-            entity_type=entity_type,
-            entity_id=entity_id,
+            entity_type=EntityType.EDGE,
+            entity_id=from_id,
             workspace_id=workspace_id,
             field=EdgeField.KIND,
             old_value=None if added else kind,
@@ -502,17 +502,15 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
     task = get_task(conn, task_id)
     status = get_status(conn, task.status_id)
     group = repo.get_group(conn, task.group_id) if task.group_id is not None else None
-    # Naming convention: edge_sources = incoming (tasks that *are sources* of
-    # edges touching this task); edge_targets = outgoing (tasks this task
-    # points at — i.e. *are targets* of its edges). Each ref.task is the
-    # OTHER end of the edge and matches the field name literally.
+    # Naming convention: edge_sources = incoming edges (other nodes that point
+    # at this task); edge_targets = outgoing edges (nodes this task points at).
     edge_sources = tuple(
-        TaskEdgeRef(task=t, kind=k)
-        for t, k in repo.list_task_edge_sources_into_hydrated(conn, task_id)
+        EdgeRef(node_type=nt, node_id=nid, node_title=title, kind=k)
+        for nt, nid, title, k in repo.list_edge_sources_into_hydrated(conn, "task", task_id)
     )
     edge_targets = tuple(
-        TaskEdgeRef(task=t, kind=k)
-        for t, k in repo.list_task_edge_targets_from_hydrated(conn, task_id)
+        EdgeRef(node_type=nt, node_id=nid, node_title=title, kind=k)
+        for nt, nid, title, k in repo.list_edge_targets_from_hydrated(conn, "task", task_id)
     )
     history = repo.list_journal(conn, EntityType.TASK, task_id)
     tags = repo.list_tags_by_task(conn, task_id)
@@ -703,26 +701,30 @@ def _validate_move_to_workspace(
     task_id: int,
     target_workspace_id: int,
     target_status_id: int,
-) -> tuple[Task, bool, str | None, tuple[int, ...]]:
+) -> tuple[Task, bool, str | None, tuple[tuple[str, int], ...]]:
     """Check move-to-workspace preconditions. Non-mutating.
-    Returns (task, can_move, blocking_reason, edge_ids).
+    Returns (task, can_move, blocking_reason, edge_endpoints).
+    edge_endpoints is a deduped, sorted tuple of (node_type, node_id) pairs
+    for every active edge touching this task (in or out). Type is preserved
+    so tasks and groups with the same numeric ID don't collapse.
     Raises LookupError only if task_id does not exist."""
     task = get_task(conn, task_id)
-    edge_ids: tuple[int, ...] = ()
+    edge_endpoints: tuple[tuple[str, int], ...] = ()
     if task.archived:
-        return task, False, f"task {task_id} is archived", edge_ids
-    sources = repo.list_task_edge_sources_into(conn, task_id)
-    targets = repo.list_task_edge_targets_from(conn, task_id)
+        return task, False, f"task {task_id} is archived", edge_endpoints
+    sources = repo.list_edge_sources_into(conn, "task", task_id)
+    targets = repo.list_edge_targets_from(conn, "task", task_id)
     if sources or targets:
-        edge_ids = tuple(sorted({*sources, *targets}))
+        edge_endpoints = tuple(sorted(set((*sources, *targets))))
+        label = ", ".join(f"{nt}:{nid}" for nt, nid in edge_endpoints)
         return (
             task,
             False,
             (
-                f"task {task_id} has active edges ({', '.join(str(d) for d in edge_ids)}); "
+                f"task {task_id} has active edges ({label}); "
                 "archive them before moving to another workspace"
             ),
-            edge_ids,
+            edge_endpoints,
         )
     target_col = repo.get_status(conn, target_status_id)
     if target_col is None or target_col.workspace_id != target_workspace_id:
@@ -730,11 +732,11 @@ def _validate_move_to_workspace(
             task,
             False,
             (f"status {target_status_id} does not belong to workspace {target_workspace_id}"),
-            edge_ids,
+            edge_endpoints,
         )
     if target_col.archived:
-        return task, False, f"status {target_status_id} is archived", edge_ids
-    return task, True, None, edge_ids
+        return task, False, f"status {target_status_id} is archived", edge_endpoints
+    return task, True, None, edge_endpoints
 
 
 def preview_move_to_workspace(
@@ -744,7 +746,7 @@ def preview_move_to_workspace(
     target_status_id: int,
 ) -> MoveToWorkspacePreview:
     """Dry-run the same validation as move_task_to_workspace. Does not mutate."""
-    task, can_move, reason, edge_ids = _validate_move_to_workspace(
+    task, can_move, reason, edge_endpoints = _validate_move_to_workspace(
         conn,
         task_id,
         target_workspace_id,
@@ -758,7 +760,7 @@ def preview_move_to_workspace(
         target_status_id=target_status_id,
         can_move=can_move,
         blocking_reason=reason,
-        edge_ids=edge_ids,
+        edge_endpoints=edge_endpoints,
         is_archived=task.archived,
     )
 
@@ -1000,142 +1002,6 @@ def _replace_entity_metadata(
         return result
 
 
-# ---- Generic edge metadata helpers (composite PK: source_id + target_id) ----
-
-
-def _get_edge_meta(
-    conn: sqlite3.Connection,
-    source_id: int,
-    target_id: int,
-    key: str,
-    *,
-    fetcher: Callable[[sqlite3.Connection, int, int], dict[str, str]],
-    edge_label: str,
-) -> str:
-    normalized = _normalize_meta_key(key)
-    meta = fetcher(conn, source_id, target_id)
-    if normalized not in meta:
-        raise LookupError(
-            f"metadata key {key!r} not found on {edge_label} ({source_id}, {target_id})"
-        )
-    return meta[normalized]
-
-
-def _set_edge_meta(
-    conn: sqlite3.Connection,
-    source_id: int,
-    target_id: int,
-    workspace_id: int,
-    key: str,
-    value: str,
-    *,
-    entity_type: EntityType,
-    fetcher: Callable[[sqlite3.Connection, int, int], dict[str, str]],
-    setter: Callable[[sqlite3.Connection, int, int, str, str], None],
-    source: str = "cli",
-) -> None:
-    normalized = _normalize_meta_key(key)
-    if len(value) > _META_VALUE_MAX:
-        raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
-    with transaction(conn), _friendly_errors():
-        old_meta = fetcher(conn, source_id, target_id)
-        old_value = old_meta.get(normalized)
-        setter(conn, source_id, target_id, normalized, value)
-        if old_value != value:
-            repo.insert_journal_entry(
-                conn,
-                NewJournalEntry(
-                    entity_type=entity_type,
-                    entity_id=source_id,
-                    workspace_id=workspace_id,
-                    field=f"meta.{normalized}",
-                    old_value=old_value,
-                    new_value=value,
-                    source=source,
-                ),
-            )
-
-
-def _remove_edge_meta(
-    conn: sqlite3.Connection,
-    source_id: int,
-    target_id: int,
-    workspace_id: int,
-    key: str,
-    *,
-    entity_type: EntityType,
-    fetcher: Callable[[sqlite3.Connection, int, int], dict[str, str]],
-    remover: Callable[[sqlite3.Connection, int, int, str], None],
-    edge_label: str,
-    source: str = "cli",
-) -> str:
-    normalized = _normalize_meta_key(key)
-    with transaction(conn), _friendly_errors():
-        old_meta = fetcher(conn, source_id, target_id)
-        if normalized not in old_meta:
-            raise LookupError(
-                f"metadata key {key!r} not found on {edge_label} ({source_id}, {target_id})"
-            )
-        old_value = old_meta[normalized]
-        remover(conn, source_id, target_id, normalized)
-        repo.insert_journal_entry(
-            conn,
-            NewJournalEntry(
-                entity_type=entity_type,
-                entity_id=source_id,
-                workspace_id=workspace_id,
-                field=f"meta.{normalized}",
-                old_value=old_value,
-                new_value=None,
-                source=source,
-            ),
-        )
-        return old_value
-
-
-def _replace_edge_metadata(
-    conn: sqlite3.Connection,
-    source_id: int,
-    target_id: int,
-    workspace_id: int,
-    new_metadata: dict[str, str],
-    *,
-    entity_type: EntityType,
-    fetcher: Callable[[sqlite3.Connection, int, int], dict[str, str]],
-    replacer: Callable[[sqlite3.Connection, int, int, str], None],
-    source: str = "cli",
-) -> None:
-    normalized: dict[str, str] = {}
-    for raw_key, value in new_metadata.items():
-        key = _normalize_meta_key(raw_key)
-        if key in normalized:
-            raise ValueError(f"duplicate metadata key after normalization: {key!r}")
-        if len(value) > _META_VALUE_MAX:
-            raise ValueError(
-                f"metadata value for key {key!r} must be \u2264 {_META_VALUE_MAX} characters"
-            )
-        normalized[key] = value
-    with transaction(conn), _friendly_errors():
-        old_meta = fetcher(conn, source_id, target_id)
-        replacer(conn, source_id, target_id, json.dumps(normalized))
-        for k in set(old_meta) | set(normalized):
-            old_val = old_meta.get(k)
-            new_val = normalized.get(k)
-            if old_val != new_val:
-                repo.insert_journal_entry(
-                    conn,
-                    NewJournalEntry(
-                        entity_type=entity_type,
-                        entity_id=source_id,
-                        workspace_id=workspace_id,
-                        field=f"meta.{k}",
-                        old_value=old_val,
-                        new_value=new_val,
-                        source=source,
-                    ),
-                )
-
-
 # ---- Task metadata ----
 
 
@@ -1295,429 +1161,379 @@ def replace_group_metadata(
     )
 
 
-# ---- Task Edge ----
+# ---- Edge ----
+
+# Default acyclic flag per edge kind. Kinds not listed default to False.
+_ACYCLIC_DEFAULTS: dict[str, bool] = {
+    "blocks": True,
+    "spawns": True,
+}
 
 
-def add_task_edge(
+def _default_acyclic(kind: str) -> bool:
+    return _ACYCLIC_DEFAULTS.get(kind, False)
+
+
+def _resolve_edge_node(
     conn: sqlite3.Connection,
-    task_id: int,
-    target_id: int,
-    kind: str,
-    source: str = "cli",
-) -> None:
-    kind = _normalize_edge_kind(kind)
-    with transaction(conn), _friendly_errors():
-        if task_id == target_id:
-            raise ValueError("a task cannot depend on itself")
-        task = get_task(conn, task_id)
-        tgt = get_task(conn, target_id)
-        if task.workspace_id != tgt.workspace_id:
-            raise ValueError(
-                f"tasks must be on the same workspace: "
-                f"task {task_id} is on workspace {task.workspace_id}, "
-                f"task {target_id} is on workspace {tgt.workspace_id}"
-            )
-        if task.archived:
-            raise ValueError(f"task {task_id} is archived")
-        if tgt.archived:
-            raise ValueError(f"task {target_id} is archived")
-        existing_kind = repo.get_task_edge_kind(conn, task_id, target_id)
-        if existing_kind is not None:
-            raise ValueError(
-                f"edge already exists between task {task_id} and task {target_id} "
-                f"(kind: {existing_kind})"
-            )
-        # TODO: re-add cycle detection once blocking-kind semantics defined (see stx task-17)
-        archived_kind = repo.get_archived_task_edge_kind(conn, task_id, target_id)
-        repo.add_task_edge(conn, task_id, target_id, task.workspace_id, kind)
-        if archived_kind is not None:
-            # Reviving an archived edge: journal the archived flip and any
-            # kind change. The edge row already existed, so emitting a
-            # "target added" entry would be misleading — skip _record_edge_change.
-            repo.insert_journal_entry(
-                conn,
-                NewJournalEntry(
-                    entity_type=EntityType.TASK_EDGE,
-                    entity_id=task_id,
-                    workspace_id=task.workspace_id,
-                    field="archived",
-                    old_value="1",
-                    new_value="0",
-                    source=source,
-                ),
-            )
-            if archived_kind != kind:
-                repo.insert_journal_entry(
-                    conn,
-                    NewJournalEntry(
-                        entity_type=EntityType.TASK_EDGE,
-                        entity_id=task_id,
-                        workspace_id=task.workspace_id,
-                        field=EdgeField.KIND,
-                        old_value=archived_kind,
-                        new_value=kind,
-                        source=source,
-                    ),
-                )
-        else:
-            _record_edge_change(
-                conn,
-                EntityType.TASK_EDGE,
-                task_id,
-                task.workspace_id,
-                target_id,
-                added=True,
-                kind=kind,
-                source=source,
-            )
+    node_type: str,
+    node_id: int,
+) -> tuple[int, bool]:
+    """Return (workspace_id, archived) for a node. Raises LookupError if not found."""
+    if node_type == "task":
+        task = get_task(conn, node_id)
+        if task is None:
+            raise LookupError(f"task {node_id} not found")
+        return task.workspace_id, task.archived
+    elif node_type == "group":
+        grp = repo.get_group(conn, node_id)
+        if grp is None:
+            raise LookupError(f"group {node_id} not found")
+        return grp.workspace_id, grp.archived
+    elif node_type == "workspace":
+        ws = repo.get_workspace(conn, node_id)
+        if ws is None:
+            raise LookupError(f"workspace {node_id} not found")
+        return ws.id, ws.archived
+    else:
+        raise ValueError(f"unknown node_type {node_type!r}")
 
 
-def archive_task_edge(
+def _check_no_cycle(
     conn: sqlite3.Connection,
-    task_id: int,
-    target_id: int,
-    source: str = "cli",
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
 ) -> None:
-    with transaction(conn), _friendly_errors():
-        active_kind = repo.get_task_edge_kind(conn, task_id, target_id)
-        if active_kind is None:
-            archived_kind = repo.get_archived_task_edge_kind(conn, task_id, target_id)
-            if archived_kind is not None:
-                raise LookupError(
-                    f"edge between task {task_id} and task {target_id} is already archived"
-                )
-            raise LookupError(f"no edge found between task {task_id} and task {target_id}")
-        task = get_task(conn, task_id)
-        repo.archive_task_edge(conn, task_id, target_id)
-        _record_edge_change(
-            conn,
-            EntityType.TASK_EDGE,
-            task_id,
-            task.workspace_id,
-            target_id,
-            added=False,
-            kind=active_kind,
-            source=source,
+    """Raise ValueError if adding the edge (from→to) would create a cycle in
+    the acyclic subgraph. Checks both directions: if the source is already
+    reachable from the target, adding this edge closes a cycle."""
+    reachable_from_to = repo.get_reachable_nodes(conn, to_type, to_id)
+    if (from_type, from_id) in reachable_from_to:
+        raise ValueError(
+            f"adding edge {from_type}:{from_id} → {to_type}:{to_id} would create a cycle"
         )
 
 
-def list_all_task_edges(
+def add_edge(
     conn: sqlite3.Connection,
-) -> tuple[tuple[int, int, str], ...]:
-    return repo.list_all_task_edges(conn)
-
-
-def list_task_edges(
-    conn: sqlite3.Connection,
-    workspace_id: int,
+    src: tuple[str, int],
+    dst: tuple[str, int],
     *,
-    kind: str | None = None,
-    task_id: int | None = None,
-) -> tuple[TaskEdgeListItem, ...]:
-    if kind is not None:
-        kind = _normalize_edge_kind(kind)
-    return repo.list_task_edges_by_workspace(conn, workspace_id, kind=kind, task_id=task_id)
-
-
-# ---- Group Edge ----
-
-
-def add_group_edge(
-    conn: sqlite3.Connection,
-    group_id: int,
-    target_id: int,
     kind: str,
+    acyclic: bool | None = None,
     source: str = "cli",
-) -> None:
+) -> str:
+    """Create an edge from ``src`` to ``dst``.
+
+    ``src`` and ``dst`` are ``(node_type, node_id)`` tuples. The tuple shape
+    is intentional: it prevents callers from silently swapping ``from_id``
+    with ``to_id`` (both plain ints) — a real risk with the unified
+    polymorphic edge table.
+
+    Both endpoints must exist on the same workspace and not be archived.
+    If ``acyclic`` is None the default for the given kind is used.
+    Cycle detection runs only when the edge is acyclic.
+
+    Returns the normalized (lowercased, validated) kind — callers that need
+    to surface the kind back to the user should prefer the returned value
+    over the input so CLI/JSON output matches what actually hit the DB.
+
+    **Revival semantics.** When this call reactivates a previously archived
+    edge (same PK — from_type/from_id/to_type/to_id/kind), the existing row's
+    metadata is wiped back to ``{}`` and ``acyclic`` is overwritten with the
+    new value. The revival journals only ``archived: 1→0`` (plus an
+    ``acyclic`` entry if it changed) — it does NOT re-emit ``endpoint`` /
+    ``kind`` journal rows, since the edge identity is unchanged. Treat
+    archive+revive as "fresh start": don't archive an edge if you want its
+    metadata preserved.
+    """
+    from_type, from_id = src
+    to_type, to_id = dst
     kind = _normalize_edge_kind(kind)
+    if acyclic is None:
+        acyclic = _default_acyclic(kind)
+    acyclic_int = 1 if acyclic else 0
     with transaction(conn), _friendly_errors():
-        if group_id == target_id:
-            raise ValueError("a group cannot depend on itself")
-        grp = repo.get_group(conn, group_id)
-        if grp is None:
-            raise LookupError(f"group {group_id} not found")
-        tgt = repo.get_group(conn, target_id)
-        if tgt is None:
-            raise LookupError(f"group {target_id} not found")
-        if grp.workspace_id != tgt.workspace_id:
+        from_ws, from_archived = _resolve_edge_node(conn, from_type, from_id)
+        to_ws, to_archived = _resolve_edge_node(conn, to_type, to_id)
+        if from_type == to_type and from_id == to_id:
+            raise ValueError("an edge cannot point to itself")
+        if from_ws != to_ws:
             raise ValueError(
-                f"groups must be on the same workspace: "
-                f"group {group_id} is on workspace {grp.workspace_id}, "
-                f"group {target_id} is on workspace {tgt.workspace_id}"
+                f"both endpoints must be on the same workspace: "
+                f"{from_type} {from_id} is on workspace {from_ws}, "
+                f"{to_type} {to_id} is on workspace {to_ws}"
             )
-        if grp.archived:
-            raise ValueError(f"group {group_id} is archived")
-        if tgt.archived:
-            raise ValueError(f"group {target_id} is archived")
-        existing_kind = repo.get_group_edge_kind(conn, group_id, target_id)
-        if existing_kind is not None:
+        if from_archived:
+            raise ValueError(f"{from_type} {from_id} is archived")
+        if to_archived:
+            raise ValueError(f"{to_type} {to_id} is archived")
+        existing = repo.get_active_edge(conn, from_type, from_id, to_type, to_id, kind)
+        if existing is not None:
             raise ValueError(
-                f"edge already exists between group {group_id} and group {target_id} "
-                f"(kind: {existing_kind})"
+                f"edge already exists: {from_type}:{from_id} → {to_type}:{to_id} [{kind}]"
             )
-        # TODO: re-add cycle detection once blocking-kind semantics defined (see stx task-17)
-        archived_kind = repo.get_archived_group_edge_kind(conn, group_id, target_id)
-        repo.add_group_edge(conn, group_id, target_id, grp.workspace_id, kind)
-        if archived_kind is not None:
-            # Reviving an archived edge: journal archived flip + any kind
-            # change. Skip _record_edge_change so we don't emit a misleading
-            # "target added" entry for a row that already existed.
+        if acyclic:
+            _check_no_cycle(conn, from_type, from_id, to_type, to_id)
+        archived_row = repo.get_archived_edge(conn, from_type, from_id, to_type, to_id, kind)
+        repo.add_edge(conn, from_type, from_id, to_type, to_id, from_ws, kind, acyclic_int)
+        if archived_row is not None:
+            # Reviving an archived edge — emit unarchive journal entry
             repo.insert_journal_entry(
                 conn,
                 NewJournalEntry(
-                    entity_type=EntityType.GROUP_EDGE,
-                    entity_id=group_id,
-                    workspace_id=grp.workspace_id,
+                    entity_type=EntityType.EDGE,
+                    entity_id=from_id,
+                    workspace_id=from_ws,
                     field="archived",
                     old_value="1",
                     new_value="0",
                     source=source,
                 ),
             )
-            if archived_kind != kind:
+            old_acyclic = archived_row[1]
+            if old_acyclic != acyclic_int:
                 repo.insert_journal_entry(
                     conn,
                     NewJournalEntry(
-                        entity_type=EntityType.GROUP_EDGE,
-                        entity_id=group_id,
-                        workspace_id=grp.workspace_id,
-                        field=EdgeField.KIND,
-                        old_value=archived_kind,
-                        new_value=kind,
+                        entity_type=EntityType.EDGE,
+                        entity_id=from_id,
+                        workspace_id=from_ws,
+                        field=EdgeField.ACYCLIC,
+                        old_value=str(old_acyclic),
+                        new_value=str(acyclic_int),
                         source=source,
                     ),
                 )
         else:
             _record_edge_change(
                 conn,
-                EntityType.GROUP_EDGE,
-                group_id,
-                grp.workspace_id,
-                target_id,
+                from_type,
+                from_id,
+                to_type,
+                to_id,
+                from_ws,
                 added=True,
                 kind=kind,
+                acyclic=acyclic_int,
                 source=source,
             )
+    return kind
 
 
-def archive_group_edge(
+def archive_edge(
     conn: sqlite3.Connection,
-    group_id: int,
-    target_id: int,
+    src: tuple[str, int],
+    dst: tuple[str, int],
+    *,
+    kind: str,
     source: str = "cli",
-) -> None:
+) -> str:
+    """Archive an active edge identified by ``src`` → ``dst`` + kind.
+
+    ``src`` and ``dst`` are ``(node_type, node_id)`` tuples — see
+    :func:`add_edge` for the rationale behind the tuple shape.
+
+    Returns the normalized kind so CLI/JSON output reflects the value that
+    actually hit the DB, not the raw user input.
+    """
+    from_type, from_id = src
+    to_type, to_id = dst
+    kind = _normalize_edge_kind(kind)
     with transaction(conn), _friendly_errors():
-        active_kind = repo.get_group_edge_kind(conn, group_id, target_id)
-        if active_kind is None:
-            archived_kind = repo.get_archived_group_edge_kind(conn, group_id, target_id)
-            if archived_kind is not None:
+        active = repo.get_active_edge(conn, from_type, from_id, to_type, to_id, kind)
+        if active is None:
+            archived = repo.get_archived_edge(conn, from_type, from_id, to_type, to_id, kind)
+            if archived is not None:
                 raise LookupError(
-                    f"edge between group {group_id} and group {target_id} is already archived"
+                    f"edge {from_type}:{from_id} → {to_type}:{to_id} [{kind}] is already archived"
                 )
-            raise LookupError(f"no edge found between group {group_id} and group {target_id}")
-        grp = repo.get_group(conn, group_id)
-        repo.archive_group_edge(conn, group_id, target_id)
-        if grp is not None:
-            _record_edge_change(
-                conn,
-                EntityType.GROUP_EDGE,
-                group_id,
-                grp.workspace_id,
-                target_id,
-                added=False,
-                kind=active_kind,
-                source=source,
+            raise LookupError(
+                f"no edge found: {from_type}:{from_id} → {to_type}:{to_id} [{kind}]"
             )
+        from_ws, _ = _resolve_edge_node(conn, from_type, from_id)
+        repo.archive_edge(conn, from_type, from_id, to_type, to_id, kind)
+        _record_edge_change(
+            conn,
+            from_type,
+            from_id,
+            to_type,
+            to_id,
+            from_ws,
+            added=False,
+            kind=kind,
+            acyclic=active[1],
+            source=source,
+        )
+    return kind
 
 
-def list_all_group_edges(
-    conn: sqlite3.Connection,
-) -> tuple[tuple[int, int, str], ...]:
-    return repo.list_all_group_edges(conn)
-
-
-def list_group_edges(
+def list_edges(
     conn: sqlite3.Connection,
     workspace_id: int,
     *,
     kind: str | None = None,
-    group_id: int | None = None,
-) -> tuple[GroupEdgeListItem, ...]:
+    from_type: str | None = None,
+    from_id: int | None = None,
+    to_type: str | None = None,
+    to_id: int | None = None,
+) -> tuple[EdgeListItem, ...]:
     if kind is not None:
         kind = _normalize_edge_kind(kind)
-    return repo.list_group_edges_by_workspace(conn, workspace_id, kind=kind, group_id=group_id)
-
-
-# ---- Task Edge metadata ----
-
-
-def list_task_edge_metadata(
-    conn: sqlite3.Connection, task_id: int, target_id: int
-) -> dict[str, str]:
-    return repo.get_task_edge_metadata(conn, task_id, target_id)
-
-
-def get_task_edge_meta(conn: sqlite3.Connection, task_id: int, target_id: int, key: str) -> str:
-    return _get_edge_meta(
+    return repo.list_edges_by_workspace(
         conn,
-        task_id,
-        target_id,
-        key,
-        fetcher=repo.get_task_edge_metadata,
-        edge_label="task edge",
+        workspace_id,
+        kind=kind,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
     )
 
 
-def set_task_edge_meta(
+# ---- Edge metadata ----
+
+
+def list_edge_metadata(
     conn: sqlite3.Connection,
-    task_id: int,
-    target_id: int,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str,
+) -> dict[str, str]:
+    return repo.get_edge_metadata(conn, from_type, from_id, to_type, to_id, kind)
+
+
+def get_edge_meta(
+    conn: sqlite3.Connection,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str,
+    key: str,
+) -> str:
+    normalized = _normalize_meta_key(key)
+    meta = repo.get_edge_metadata(conn, from_type, from_id, to_type, to_id, kind)
+    if normalized not in meta:
+        raise LookupError(
+            f"metadata key {key!r} not found on edge "
+            f"({from_type}:{from_id} → {to_type}:{to_id} [{kind}])"
+        )
+    return meta[normalized]
+
+
+def set_edge_meta(
+    conn: sqlite3.Connection,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str,
     key: str,
     value: str,
     source: str = "cli",
 ) -> None:
-    workspace_id = repo.get_task_edge_workspace_id(conn, task_id, target_id)
-    _set_edge_meta(
-        conn,
-        task_id,
-        target_id,
-        workspace_id,
-        key,
-        value,
-        entity_type=EntityType.TASK_EDGE,
-        fetcher=repo.get_task_edge_metadata,
-        setter=repo.set_task_edge_metadata_key,
-        source=source,
-    )
+    normalized = _normalize_meta_key(key)
+    if len(value) > _META_VALUE_MAX:
+        raise ValueError(f"metadata value must be \u2264 {_META_VALUE_MAX} characters")
+    workspace_id = repo.get_edge_workspace_id(conn, from_type, from_id, to_type, to_id, kind)
+    with transaction(conn), _friendly_errors():
+        old_meta = repo.get_edge_metadata(conn, from_type, from_id, to_type, to_id, kind)
+        old_value = old_meta.get(normalized)
+        repo.set_edge_metadata_key(conn, from_type, from_id, to_type, to_id, kind, normalized, value)
+        if old_value != value:
+            repo.insert_journal_entry(
+                conn,
+                NewJournalEntry(
+                    entity_type=EntityType.EDGE,
+                    entity_id=from_id,
+                    workspace_id=workspace_id,
+                    field=f"meta.{normalized}",
+                    old_value=old_value,
+                    new_value=value,
+                    source=source,
+                ),
+            )
 
 
-def remove_task_edge_meta(
+def remove_edge_meta(
     conn: sqlite3.Connection,
-    task_id: int,
-    target_id: int,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str,
     key: str,
     source: str = "cli",
 ) -> str:
-    workspace_id = repo.get_task_edge_workspace_id(conn, task_id, target_id)
-    return _remove_edge_meta(
-        conn,
-        task_id,
-        target_id,
-        workspace_id,
-        key,
-        entity_type=EntityType.TASK_EDGE,
-        fetcher=repo.get_task_edge_metadata,
-        remover=repo.remove_task_edge_metadata_key,
-        edge_label="task edge",
-        source=source,
-    )
+    normalized = _normalize_meta_key(key)
+    workspace_id = repo.get_edge_workspace_id(conn, from_type, from_id, to_type, to_id, kind)
+    with transaction(conn), _friendly_errors():
+        old_meta = repo.get_edge_metadata(conn, from_type, from_id, to_type, to_id, kind)
+        if normalized not in old_meta:
+            raise LookupError(
+                f"metadata key {key!r} not found on edge "
+                f"({from_type}:{from_id} → {to_type}:{to_id} [{kind}])"
+            )
+        old_value = old_meta[normalized]
+        repo.remove_edge_metadata_key(conn, from_type, from_id, to_type, to_id, kind, normalized)
+        repo.insert_journal_entry(
+            conn,
+            NewJournalEntry(
+                entity_type=EntityType.EDGE,
+                entity_id=from_id,
+                workspace_id=workspace_id,
+                field=f"meta.{normalized}",
+                old_value=old_value,
+                new_value=None,
+                source=source,
+            ),
+        )
+        return old_value
 
 
-def replace_task_edge_metadata(
+def replace_edge_metadata(
     conn: sqlite3.Connection,
-    task_id: int,
-    target_id: int,
+    from_type: str,
+    from_id: int,
+    to_type: str,
+    to_id: int,
+    kind: str,
     new_metadata: dict[str, str],
     source: str = "cli",
 ) -> None:
-    workspace_id = repo.get_task_edge_workspace_id(conn, task_id, target_id)
-    _replace_edge_metadata(
-        conn,
-        task_id,
-        target_id,
-        workspace_id,
-        new_metadata,
-        entity_type=EntityType.TASK_EDGE,
-        fetcher=repo.get_task_edge_metadata,
-        replacer=repo.replace_task_edge_metadata,
-        source=source,
-    )
-
-
-# ---- Group Edge metadata ----
-
-
-def list_group_edge_metadata(
-    conn: sqlite3.Connection, group_id: int, target_id: int
-) -> dict[str, str]:
-    return repo.get_group_edge_metadata(conn, group_id, target_id)
-
-
-def get_group_edge_meta(conn: sqlite3.Connection, group_id: int, target_id: int, key: str) -> str:
-    return _get_edge_meta(
-        conn,
-        group_id,
-        target_id,
-        key,
-        fetcher=repo.get_group_edge_metadata,
-        edge_label="group edge",
-    )
-
-
-def set_group_edge_meta(
-    conn: sqlite3.Connection,
-    group_id: int,
-    target_id: int,
-    key: str,
-    value: str,
-    source: str = "cli",
-) -> None:
-    workspace_id = repo.get_group_edge_workspace_id(conn, group_id, target_id)
-    _set_edge_meta(
-        conn,
-        group_id,
-        target_id,
-        workspace_id,
-        key,
-        value,
-        entity_type=EntityType.GROUP_EDGE,
-        fetcher=repo.get_group_edge_metadata,
-        setter=repo.set_group_edge_metadata_key,
-        source=source,
-    )
-
-
-def remove_group_edge_meta(
-    conn: sqlite3.Connection,
-    group_id: int,
-    target_id: int,
-    key: str,
-    source: str = "cli",
-) -> str:
-    workspace_id = repo.get_group_edge_workspace_id(conn, group_id, target_id)
-    return _remove_edge_meta(
-        conn,
-        group_id,
-        target_id,
-        workspace_id,
-        key,
-        entity_type=EntityType.GROUP_EDGE,
-        fetcher=repo.get_group_edge_metadata,
-        remover=repo.remove_group_edge_metadata_key,
-        edge_label="group edge",
-        source=source,
-    )
-
-
-def replace_group_edge_metadata(
-    conn: sqlite3.Connection,
-    group_id: int,
-    target_id: int,
-    new_metadata: dict[str, str],
-    source: str = "cli",
-) -> None:
-    workspace_id = repo.get_group_edge_workspace_id(conn, group_id, target_id)
-    _replace_edge_metadata(
-        conn,
-        group_id,
-        target_id,
-        workspace_id,
-        new_metadata,
-        entity_type=EntityType.GROUP_EDGE,
-        fetcher=repo.get_group_edge_metadata,
-        replacer=repo.replace_group_edge_metadata,
-        source=source,
-    )
+    normalized: dict[str, str] = {}
+    for raw_key, value in new_metadata.items():
+        k = _normalize_meta_key(raw_key)
+        if k in normalized:
+            raise ValueError(f"duplicate metadata key after normalization: {k!r}")
+        if len(value) > _META_VALUE_MAX:
+            raise ValueError(f"metadata value for key {k!r} must be \u2264 {_META_VALUE_MAX} characters")
+        normalized[k] = value
+    workspace_id = repo.get_edge_workspace_id(conn, from_type, from_id, to_type, to_id, kind)
+    with transaction(conn), _friendly_errors():
+        old_meta = repo.get_edge_metadata(conn, from_type, from_id, to_type, to_id, kind)
+        repo.replace_edge_metadata(conn, from_type, from_id, to_type, to_id, kind, json.dumps(normalized))
+        for k in set(old_meta) | set(normalized):
+            old_val = old_meta.get(k)
+            new_val = normalized.get(k)
+            if old_val != new_val:
+                repo.insert_journal_entry(
+                    conn,
+                    NewJournalEntry(
+                        entity_type=EntityType.EDGE,
+                        entity_id=from_id,
+                        workspace_id=workspace_id,
+                        field=f"meta.{k}",
+                        old_value=old_val,
+                        new_value=new_val,
+                        source=source,
+                    ),
+                )
 
 
 # ---- History ----
@@ -1869,14 +1685,14 @@ def get_group_detail(conn: sqlite3.Connection, group_id: int) -> GroupDetail:
     # point lookup that only fires when parent_id is set.
     parent = repo.get_group(conn, group.parent_id) if group.parent_id is not None else None
     # See TaskDetail naming convention: edge_sources = incoming,
-    # edge_targets = outgoing. Each ref.group is the OTHER end.
+    # edge_targets = outgoing.
     edge_sources = tuple(
-        GroupEdgeRef(group=g, kind=k)
-        for g, k in repo.list_group_edge_sources_into_hydrated(conn, group_id)
+        EdgeRef(node_type=nt, node_id=nid, node_title=title, kind=k)
+        for nt, nid, title, k in repo.list_edge_sources_into_hydrated(conn, "group", group_id)
     )
     edge_targets = tuple(
-        GroupEdgeRef(group=g, kind=k)
-        for g, k in repo.list_group_edge_targets_from_hydrated(conn, group_id)
+        EdgeRef(node_type=nt, node_id=nid, node_title=title, kind=k)
+        for nt, nid, title, k in repo.list_edge_targets_from_hydrated(conn, "group", group_id)
     )
     return group_to_detail(
         group,

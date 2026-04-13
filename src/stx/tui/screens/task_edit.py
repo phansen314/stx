@@ -117,13 +117,13 @@ class TaskEditModal(BaseEditModal):
 
             if self.detail.edge_sources:
                 names = ", ".join(
-                    f"{ref.task.id}: {ref.task.title} ({ref.kind})"
+                    f"{ref.node_type}:{ref.node_id} {ref.node_title} ({ref.kind})"
                     for ref in self.detail.edge_sources
                 )
                 yield Static(f"Edge sources: {names}", classes="form-label dep-info")
             if self.detail.edge_targets:
                 names = ", ".join(
-                    f"{ref.task.id}: {ref.task.title} ({ref.kind})"
+                    f"{ref.node_type}:{ref.node_id} {ref.node_title} ({ref.kind})"
                     for ref in self.detail.edge_targets
                 )
                 yield Static(f"Edge targets: {names}", classes="form-label dep-info")

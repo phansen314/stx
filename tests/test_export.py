@@ -85,7 +85,7 @@ class TestExportFull:
 
     def test_dependency_mermaid(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
-        assert "### Task Edges" in md
+        assert "### Edges" in md
         assert "```mermaid" in md
         assert "    task-0002 -->|blocks| task-0001" in md
         # Caption removed — edges carry arbitrary kinds, not just "depends on".
@@ -107,7 +107,7 @@ class TestExportEdgeCases:
             col = insert_status(conn, bid, "Col")
             insert_task(conn, bid, "Solo", col)
         md = export_markdown(conn)
-        assert "### Task Edges" not in md
+        assert "### Edges" not in md
         assert "mermaid" not in md
 
     def test_archived_tasks_excluded(self, conn: sqlite3.Connection) -> None:
@@ -129,8 +129,11 @@ class TestExportEdgeCases:
         assert "## Workspace: Alpha" in md
         assert "## Workspace: Beta" in md
 
-    def test_cross_workspace_deps_prevented(self, conn: sqlite3.Connection) -> None:
-        """Composite FK prevents dependencies between tasks on different workspaces."""
+    def test_cross_workspace_edges_prevented(self, conn: sqlite3.Connection) -> None:
+        """Service-layer rejects cross-workspace edges. Post-task-18 the
+        unified ``edges`` table has no composite FK to endpoints — enforcement
+        moved to ``service.add_edge``."""
+        from stx import service
         with transaction(conn):
             b1 = insert_workspace(conn, "B1")
             b2 = insert_workspace(conn, "B2")
@@ -138,9 +141,8 @@ class TestExportEdgeCases:
             c2 = insert_status(conn, b2, "C")
             t1 = insert_task(conn, b1, "T1", c1)
             t2 = insert_task(conn, b2, "T2", c2)
-        with pytest.raises(sqlite3.IntegrityError):
-            with transaction(conn):
-                insert_task_dependency(conn, t2, t1)
+        with pytest.raises(ValueError, match="same workspace"):
+            service.add_edge(conn, ("task", t2), ("task", t1), kind="blocks")
 
 
 class TestExportTags:
@@ -310,8 +312,7 @@ class TestExportFullJson:
             "tags",
             "groups",
             "task_tags",
-            "task_edges",
-            "group_edges",
+            "edges",
             "journal",
         }
 
@@ -324,7 +325,7 @@ class TestExportFullJson:
             "tags",
             "groups",
             "task_tags",
-            "task_edges",
+            "edges",
             "journal",
         ):
             assert result[key] == [], f"expected {key} to be empty"
@@ -368,8 +369,8 @@ class TestExportFullJson:
         task_ids = {t["id"] for t in result["tasks"]}
         assert {t1, t2} <= task_ids
         edge_row = next(
-            d for d in result["task_edges"]
-            if d["source_id"] == t2 and d["target_id"] == t1
+            d for d in result["edges"]
+            if d["from_id"] == t2 and d["to_id"] == t1
         )
         assert edge_row["kind"] == "blocks"
         assert edge_row["metadata"] == {}
@@ -399,7 +400,7 @@ class TestExportFullJson:
             t2 = insert_task(conn, bid, "T2", col)
             insert_task_dependency(conn, t2, t1)
         result = export_full_json(conn)
-        dep = result["task_edges"][0]
+        dep = next(d for d in result["edges"] if d["from_id"] == t2 and d["to_id"] == t1)
         assert dep["workspace_id"] == bid
 
 

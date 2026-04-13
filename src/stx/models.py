@@ -20,8 +20,7 @@ class EntityType(StrEnum):
     GROUP = "group"
     WORKSPACE = "workspace"
     STATUS = "status"
-    TASK_EDGE = "task_edge"
-    GROUP_EDGE = "group_edge"
+    EDGE = "edge"
 
 
 class TaskField(StrEnum):
@@ -56,8 +55,9 @@ class StatusField(StrEnum):
 
 
 class EdgeField(StrEnum):
-    TARGET = "target"
+    ENDPOINT = "endpoint"
     KIND = "kind"
+    ACYCLIC = "acyclic"
 
 
 # ---- Pre-insert types (no id, no created_at) ----
