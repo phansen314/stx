@@ -6,18 +6,17 @@ from textual.widgets import Input
 from stx import service
 from stx.active_workspace import set_active_workspace_id
 from stx.connection import get_connection, init_db
-from stx.models import Group, Project, Task, Workspace
+from stx.models import Group, Task, Workspace
 from stx.tui.app import StxApp
 from stx.tui.config import TuiConfig
 from stx.tui.screens import (
     MetadataModal,
     NewResourceModal,
-    ProjectCreateModal,
     StatusCreateModal,
     TaskCreateModal,
     WorkspaceCreateModal,
 )
-from stx.tui.screens.project_edit import ProjectEditModal
+from stx.tui.screens.group_edit import GroupEditModal
 from stx.tui.screens.task_edit import TaskEditModal
 from stx.tui.screens.workspace_edit import WorkspaceEditModal
 from stx.tui.widgets import KanbanColumn, TaskCard
@@ -41,20 +40,20 @@ class TestTreePopulation:
             assert len(ws_nodes) == 1
             assert str(ws_nodes[0].label) == "\U0001f4e6 (8) Coding"
 
-    async def test_project_node_exists(self, app):
+    async def test_group_node_exists(self, app):
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            project_nodes = [n for n in ws_node.children if n.allow_expand]
-            assert len(project_nodes) == 1
-            assert str(project_nodes[0].label) == "\U0001f5c2\ufe0f (4) apr-api"
+            group_nodes = [n for n in ws_node.children if n.allow_expand]
+            assert len(group_nodes) == 1
+            assert str(group_nodes[0].label) == "\U0001f4c1 (4) apr-api"
 
-    async def test_ungrouped_tasks_under_project(self, app):
+    async def test_tasks_in_root_group(self, app):
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            task_leaves = [n for n in proj_node.children if not n.allow_expand]
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            task_leaves = [n for n in group_node.children if not n.allow_expand]
             assert len(task_leaves) == 4
             titles = {str(n.label) for n in task_leaves}
             assert "\U0001f4dd 1: Design API schema" in titles
@@ -74,9 +73,9 @@ class TestTreePopulation:
         async with app.run_test():
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            assert isinstance(proj_node.data, Project)
-            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            assert isinstance(group_node.data, Group)
+            task_leaf = [n for n in group_node.children if not n.allow_expand][0]
             assert isinstance(task_leaf.data, Task)
 
 
@@ -152,14 +151,15 @@ class TestTreeWithGroups:
         init_db(conn)
         ws = service.create_workspace(conn, "Grouped")
         status = service.create_status(conn, ws.id, "Todo")
-        proj = service.create_project(conn, ws.id, "myproj")
-        parent_grp = service.create_group(conn, proj.id, "parent-group")
-        child_grp = service.create_group(conn, proj.id, "child-group", parent_id=parent_grp.id)
+        root_grp = service.create_group(conn, ws.id, "myproj")
+        parent_grp = service.create_group(conn, ws.id, "parent-group", parent_id=root_grp.id)
+        child_grp = service.create_group(conn, ws.id, "child-group", parent_id=parent_grp.id)
         # Task in child group
-        t1 = service.create_task(conn, ws.id, "grouped-task", status.id, project_id=proj.id)
+        t1 = service.create_task(conn, ws.id, "grouped-task", status.id)
         service.assign_task_to_group(conn, t1.id, child_grp.id, source="test")
-        # Ungrouped task in project
-        service.create_task(conn, ws.id, "ungrouped-task", status.id, project_id=proj.id)
+        # Task in root group (ungrouped within myproj)
+        t2 = service.create_task(conn, ws.id, "ungrouped-task", status.id)
+        service.assign_task_to_group(conn, t2.id, root_grp.id, source="test")
         set_active_workspace_id(db_path.parent / "tui.toml", ws.id)
         conn.close()
         return db_path
@@ -219,16 +219,13 @@ class TestTreeWithGroups:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
             proj_node = ws_node.children[0]
-            # Project starts expanded on first load
-            assert proj_node.is_expanded
-            # Collapse it
-            proj_node.collapse()
+            # Root groups start collapsed — ensure refresh preserves that
             assert not proj_node.is_expanded
             # Trigger refresh
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()
-            # Project should still be collapsed
+            # Group should still be collapsed
             ws_node = tree.root.children[0]
             proj_node = ws_node.children[0]
             assert not proj_node.is_expanded
@@ -521,9 +518,11 @@ class TestMultiWorkspaceTree:
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws1_node = tree.root.children[0]
-            # ws1 project should be expanded on first load
-            proj_node = ws1_node.children[0]
-            assert proj_node.is_expanded
+            # Expand ws1 root group explicitly
+            group_node = ws1_node.children[0]
+            group_node.expand()
+            await pilot.pause()
+            assert group_node.is_expanded
             # Navigate to ws2
             ws2_node = tree.root.children[1]
             tree.select_node(ws2_node)
@@ -534,10 +533,10 @@ class TestMultiWorkspaceTree:
             tree.select_node(ws1_node)
             await pilot.pause()
             await pilot.pause()
-            # ws1 project should still be expanded
+            # ws1 group should still be expanded
             ws1_node = tree.root.children[0]
-            proj_node = ws1_node.children[0]
-            assert proj_node.is_expanded
+            group_node = ws1_node.children[0]
+            assert group_node.is_expanded
 
 
 class TestRefreshWorkspaceReconciliation:
@@ -620,8 +619,10 @@ class TestMetadataKeybinding:
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            group_node.expand()
+            await pilot.pause()
+            task_leaf = [n for n in group_node.children if not n.allow_expand][0]
             tree.select_node(task_leaf)
             app.set_focus(tree)
             await pilot.pause()
@@ -641,13 +642,13 @@ class TestMetadataKeybinding:
             await pilot.pause()
             assert isinstance(app.screen, MetadataModal)
 
-    async def test_m_on_project_tree_node_opens_modal(self, app):
+    async def test_m_on_root_group_tree_node_opens_modal(self, app):
         app, ids = app
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            tree.select_node(proj_node)
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(group_node)
             app.set_focus(tree)
             await pilot.pause()
             await pilot.press("m")
@@ -657,8 +658,8 @@ class TestMetadataKeybinding:
     async def test_m_on_group_tree_node_opens_modal(self, app):
         app, ids = app
         async with app.run_test() as pilot:
-            # Seeded fixture has no groups — create one inline.
-            group = service.create_group(app.conn, ids["project_id"], "beta")
+            # Seeded fixture already has a root group — create a subgroup inline.
+            group = service.create_group(app.conn, ids["workspace_id"], "beta")
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()
@@ -674,14 +675,17 @@ class TestMetadataKeybinding:
 
     def _find_group_node(self, app, group_id: int):
         tree = app.query_one("#workspaces-tree")
-        for ws_node in tree.root.children:
-            for proj_node in ws_node.children:
-                if not proj_node.allow_expand:
-                    continue
-                for child in proj_node.children:
-                    if isinstance(child.data, Group) and child.data.id == group_id:
-                        return child
-        return None
+
+        def _search(node):
+            if isinstance(node.data, Group) and node.data.id == group_id:
+                return node
+            for child in node.children:
+                result = _search(child)
+                if result is not None:
+                    return result
+            return None
+
+        return _search(tree.root)
 
     async def test_m_on_root_tree_node_noop(self, app):
         app, ids = app
@@ -736,14 +740,14 @@ class TestMetadataKeybinding:
             await pilot.pause()
             assert service.get_workspace(app.conn, ws_id).metadata == {"env": "prod"}
 
-    async def test_project_metadata_save_persists_via_service(self, app):
+    async def test_root_group_metadata_save_persists_via_service(self, app):
         app, ids = app
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            project_id = proj_node.data.id
-            tree.select_node(proj_node)
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            group_id = group_node.data.id
+            tree.select_node(group_node)
             app.set_focus(tree)
             await pilot.pause()
             await pilot.press("m")
@@ -756,14 +760,14 @@ class TestMetadataKeybinding:
             modal.action_save()
             await pilot.pause()
             await pilot.pause()
-            assert service.get_project(app.conn, project_id).metadata == {
+            assert service.get_group(app.conn, group_id).metadata == {
                 "repo": "https://example.com",
             }
 
     async def test_group_metadata_save_persists_via_service(self, app):
         app, ids = app
         async with app.run_test() as pilot:
-            group = service.create_group(app.conn, ids["project_id"], "beta")
+            group = service.create_group(app.conn, ids["workspace_id"], "beta")
             app.action_refresh()
             await pilot.pause()
             await pilot.pause()
@@ -1499,8 +1503,10 @@ class TestAppActionEdit:
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            task_leaf = [n for n in proj_node.children if not n.allow_expand][0]
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            group_node.expand()
+            await pilot.pause()
+            task_leaf = [n for n in group_node.children if not n.allow_expand][0]
             tree.select_node(task_leaf)
             app.set_focus(tree)
             await pilot.pause()
@@ -1508,19 +1514,19 @@ class TestAppActionEdit:
             await pilot.pause()
             assert isinstance(app.screen, TaskEditModal)
 
-    async def test_e_on_project_tree_node_opens_project_edit(self, seeded_tui_db):
+    async def test_e_on_group_tree_node_opens_group_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
         app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             tree = app.query_one("#workspaces-tree")
             ws_node = tree.root.children[0]
-            proj_node = [n for n in ws_node.children if n.allow_expand][0]
-            tree.select_node(proj_node)
+            group_node = [n for n in ws_node.children if n.allow_expand][0]
+            tree.select_node(group_node)
             app.set_focus(tree)
             await pilot.pause()
             await pilot.press("e")
             await pilot.pause()
-            assert isinstance(app.screen, ProjectEditModal)
+            assert isinstance(app.screen, GroupEditModal)
 
     async def test_e_on_workspace_tree_node_opens_workspace_edit(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
@@ -1591,17 +1597,6 @@ class TestAppActionNew:
             await pilot.pause()
             assert isinstance(app.screen, TaskCreateModal)
 
-    async def test_n_then_p_opens_project_create(self, seeded_tui_db):
-        db_path, _ = seeded_tui_db
-        app = StxApp(db_path=db_path, config=TuiConfig())
-        async with app.run_test() as pilot:
-            await pilot.press("n")
-            await pilot.pause()
-            await pilot.press("p")
-            await pilot.pause()
-            await pilot.pause()
-            assert isinstance(app.screen, ProjectCreateModal)
-
 
 class TestAppDismissCallbackError:
     """_dismiss_callback catches ValueError and notifies without crashing."""
@@ -1643,12 +1638,6 @@ class TestDismissNullPaths:
         async with app.run_test():
             app._on_task_edit_dismiss(None)  # no-op
 
-    async def test_project_edit_dismiss_none(self, seeded_tui_db):
-        db_path, _ = seeded_tui_db
-        app = StxApp(db_path=db_path, config=TuiConfig())
-        async with app.run_test():
-            app._on_project_edit_dismiss(None)
-
     async def test_group_edit_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
         app = StxApp(db_path=db_path, config=TuiConfig())
@@ -1666,12 +1655,6 @@ class TestDismissNullPaths:
         app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test():
             app._on_task_create_dismiss(None)
-
-    async def test_project_create_dismiss_none(self, seeded_tui_db):
-        db_path, _ = seeded_tui_db
-        app = StxApp(db_path=db_path, config=TuiConfig())
-        async with app.run_test():
-            app._on_project_create_dismiss(None)
 
     async def test_group_create_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
@@ -1703,12 +1686,6 @@ class TestDismissNullPaths:
         async with app.run_test():
             app._on_workspace_metadata_dismiss(None)
 
-    async def test_project_metadata_dismiss_none(self, seeded_tui_db):
-        db_path, _ = seeded_tui_db
-        app = StxApp(db_path=db_path, config=TuiConfig())
-        async with app.run_test():
-            app._on_project_metadata_dismiss(None)
-
     async def test_group_metadata_dismiss_none(self, seeded_tui_db):
         db_path, _ = seeded_tui_db
         app = StxApp(db_path=db_path, config=TuiConfig())
@@ -1727,12 +1704,6 @@ class TestDismissNullPaths:
         async with app.run_test():
             app._on_archive_group_dismiss(1, None)
 
-    async def test_archive_project_dismiss_not_confirmed(self, seeded_tui_db):
-        db_path, ids = seeded_tui_db
-        app = StxApp(db_path=db_path, config=TuiConfig())
-        async with app.run_test():
-            app._on_archive_project_dismiss(ids["project_id"], None)
-
     async def test_archive_workspace_dismiss_not_confirmed(self, seeded_tui_db):
         db_path, ids = seeded_tui_db
         app = StxApp(db_path=db_path, config=TuiConfig())
@@ -1743,8 +1714,10 @@ class TestDismissNullPaths:
 class TestMiscActionPaths:
     """Cover remaining edge-case paths in app actions."""
 
-    async def test_create_group_notifies_when_no_projects(self, tmp_path):
-        """_create_group shows warning when workspace has no projects."""
+    async def test_create_group_opens_modal(self, tmp_path):
+        """_create_group opens GroupCreateModal directly."""
+        from stx.tui.screens.group_create import GroupCreateModal
+
         db_path = tmp_path / "no-proj.db"
         conn = get_connection(db_path)
         init_db(conn)
@@ -1753,10 +1726,12 @@ class TestMiscActionPaths:
         conn.close()
         app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
-            notifications: list[str] = []
-            app.notify = lambda msg, **kw: notifications.append(str(msg))  # type: ignore[method-assign]
-            app._create_group()
-        assert any("project" in m.lower() for m in notifications)
+            await pilot.press("n")
+            await pilot.pause()
+            await pilot.press("g")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, GroupCreateModal)
 
     async def test_archive_task_already_archived_notifies(self, seeded_tui_db):
         """_open_archive_task notifies when task already archived."""
@@ -1771,14 +1746,11 @@ class TestMiscActionPaths:
             app._open_archive_task(t)
         assert any("already archived" in m for m in notifications)
 
-    async def test_n_then_g_without_projects_shows_warning(self, tmp_path):
-        """Pressing n → g on a workspace with no projects shows warning instead of modal."""
-        db_path = tmp_path / "no-proj2.db"
-        conn = get_connection(db_path)
-        init_db(conn)
-        ws = service.create_workspace(conn, "Empty")
-        service.create_status(conn, ws.id, "Todo")
-        conn.close()
+    async def test_n_then_g_opens_group_create_modal(self, seeded_tui_db):
+        """Pressing n → g opens GroupCreateModal."""
+        from stx.tui.screens.group_create import GroupCreateModal
+
+        db_path, _ = seeded_tui_db
         app = StxApp(db_path=db_path, config=TuiConfig())
         async with app.run_test() as pilot:
             await pilot.press("n")
@@ -1786,10 +1758,7 @@ class TestMiscActionPaths:
             await pilot.press("g")
             await pilot.pause()
             await pilot.pause()
-            # No GroupCreateModal — warning was shown instead
-            from stx.tui.screens.group_create import GroupCreateModal
-
-            assert not isinstance(app.screen, GroupCreateModal)
+            assert isinstance(app.screen, GroupCreateModal)
 
 
 def test_main_module_importable():

@@ -5,14 +5,13 @@ from textual.message import Message
 from textual.widgets import Tree
 from textual.widgets._tree import TreeNode
 
-from stx.models import Group, Project, Task, Workspace
+from stx.models import Group, Task, Workspace
 from stx.tui.markup import escape_markup
-from stx.tui.model import GroupNode, ProjectNode, WorkspaceModel
+from stx.tui.model import GroupNode, WorkspaceModel
 
 
-class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
+class WorkspaceTree(Tree[Workspace | Group | Task]):
     ICON_WORKSPACE = "\U0001f4e6"
-    ICON_PROJECT = "\U0001f5c2\ufe0f"
     ICON_GROUP = "\U0001f4c1"
     ICON_TASK = "\U0001f4dd"
 
@@ -23,13 +22,6 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
 
         def __init__(self, task: Task) -> None:
             self.task = task
-            super().__init__()
-
-    class ProjectSelected(Message):
-        """A project node was selected in the tree."""
-
-        def __init__(self, project: Project) -> None:
-            self.project = project
             super().__init__()
 
     class GroupSelected(Message):
@@ -54,26 +46,17 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
         return count
 
     @staticmethod
-    def _count_project_tasks(pnode: ProjectNode) -> int:
-        count = len(pnode.ungrouped_tasks)
-        for gnode in pnode.groups:
-            count += WorkspaceTree._count_group_tasks(gnode)
-        return count
-
-    @staticmethod
-    def _workspace_id_from_data(data: Workspace | Project | Group | Task | None) -> int | None:
+    def _workspace_id_from_data(data: Workspace | Group | Task | None) -> int | None:
         if isinstance(data, Workspace):
             return data.id
-        if isinstance(data, (Project, Group, Task)):
+        if isinstance(data, (Group, Task)):
             return data.workspace_id
         return None
 
     @staticmethod
-    def _node_key(data: Workspace | Project | Group | Task | None) -> tuple[str, int] | None:
+    def _node_key(data: Workspace | Group | Task | None) -> tuple[str, int] | None:
         if isinstance(data, Workspace):
             return ("workspace", data.id)
-        if isinstance(data, Project):
-            return ("project", data.id)
         if isinstance(data, Group):
             return ("group", data.id)
         return None
@@ -123,24 +106,11 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
             for child in self.root.children:
                 if isinstance(child.data, Workspace) and child.data.id == expand_workspace_id:
                     child.expand()
-                    if snapshot is None:
-                        for proj in child.children:
-                            if isinstance(getattr(proj, "data", None), Project):
-                                proj.expand()
                     break
 
-    def _populate_workspace_node(self, ws_node, model: WorkspaceModel) -> None:
-        for pnode in model.projects:
-            pcount = self._count_project_tasks(pnode)
-            proj_branch = ws_node.add(
-                f"{self.ICON_PROJECT} ({pcount}) {escape_markup(pnode.project.name)}",
-                data=pnode.project,
-            )
-            for gnode in pnode.groups:
-                self._add_group_node(proj_branch, gnode)
-            for task in pnode.ungrouped_tasks:
-                label = f"{self.ICON_TASK} {task.id:d}: {escape_markup(task.title)}"
-                proj_branch.add_leaf(label, data=task)
+    def _populate_workspace_node(self, ws_node: TreeNode, model: WorkspaceModel) -> None:
+        for gnode in model.root_groups:
+            self._add_group_node(ws_node, gnode)
         for task in model.unassigned_tasks:
             label = f"{self.ICON_TASK} {task.id:d}: {escape_markup(task.title)}"
             ws_node.add_leaf(label, data=task)
@@ -209,7 +179,5 @@ class WorkspaceTree(Tree[Workspace | Project | Group | Task]):
         node_data = event.node.data
         if isinstance(node_data, Task):
             self.post_message(self.TaskSelected(node_data))
-        elif isinstance(node_data, Project):
-            self.post_message(self.ProjectSelected(node_data))
         elif isinstance(node_data, Group):
             self.post_message(self.GroupSelected(node_data))

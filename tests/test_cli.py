@@ -325,11 +325,6 @@ class TestTaskCommands:
         out, _ = cli("task", "create", "My task", "-S", "in progress")
         assert "created task-0001" in out
 
-    def test_add_with_project(self, cli):
-        cli("project", "create", "backend")
-        out, _ = cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
-        assert "created task-0001" in out
-
     def test_add_with_priority_and_due(self, cli):
         out, _ = cli(
             "task", "create", "Important", "--priority", "3", "--due", "2026-04-01", "-S", "todo"
@@ -372,11 +367,12 @@ class TestTaskCommands:
         assert "== done ==" in out
         assert "(empty)" in out
 
-    def test_ls_shows_project(self, cli):
-        cli("project", "create", "backend")
-        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
-        out, _ = cli("task", "ls")
-        assert "@backend" in out
+    def test_task_shows_group_in_detail(self, cli):
+        cli("group", "create", "backend")
+        cli("task", "create", "Fix bug", "-S", "todo")
+        cli("group", "assign", "1", "backend")
+        out, _ = cli("task", "show", "1")
+        assert "backend" in out
 
     def test_ls_shows_priority(self, cli):
         cli("task", "create", "Fix bug", "--priority", "3", "-S", "todo")
@@ -402,11 +398,13 @@ class TestTaskCommands:
         assert "Due:         2026-04-01" in out
         assert "Status:      todo" in out
 
-    def test_show_with_project(self, cli):
-        cli("project", "create", "backend")
-        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
+    def test_show_with_group(self, cli):
+        cli("group", "create", "backend")
+        cli("task", "create", "Fix bug", "-S", "todo")
+        cli("group", "assign", "1", "backend")
         out, _ = cli("task", "show", "1")
-        assert "Project:     backend" in out
+        assert "Group:" in out
+        assert "backend" in out
 
     def test_show_with_deps(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
@@ -450,13 +448,6 @@ class TestTaskCommands:
         cli("task", "edit", "1", "--due", "2026-06-01")
         out, _ = cli("task", "show", "1")
         assert "Due:         2026-06-01" in out
-
-    def test_edit_project(self, cli):
-        cli("project", "create", "backend")
-        cli("task", "create", "Task", "-S", "todo")
-        cli("task", "edit", "1", "-p", "backend")
-        out, _ = cli("task", "show", "1")
-        assert "Project:     backend" in out
 
     def test_edit_nothing(self, cli):
         cli("task", "create", "Task", "-S", "todo")
@@ -531,99 +522,6 @@ class TestTaskCommands:
 
 
 # ---- Project commands ----
-
-
-class TestProjectCommands:
-    @pytest.fixture(autouse=True)
-    def _setup(self, cli):
-        cli("workspace", "create", "dev")
-
-    def test_create(self, cli):
-        out, _ = cli("project", "create", "backend")
-        assert "created project 'backend'" in out
-
-    def test_create_with_desc(self, cli):
-        out, _ = cli("project", "create", "backend", "-d", "Backend services")
-        assert "created project 'backend'" in out
-
-    def test_ls(self, cli):
-        cli("project", "create", "backend")
-        cli("project", "create", "frontend")
-        out, _ = cli("project", "ls")
-        assert "backend" in out
-        assert "frontend" in out
-
-    def test_ls_empty(self, cli):
-        out, _ = cli("project", "ls")
-        assert "no projects" in out
-
-    def test_show(self, cli):
-        cli("status", "create", "todo")
-        cli("project", "create", "backend", "-d", "API layer")
-        cli("task", "create", "Fix bug", "-p", "backend", "-S", "todo")
-        out, _ = cli("project", "show", "backend")
-        assert "backend" in out
-        assert "API layer" in out
-        assert "Tasks: 1" in out
-        assert "Fix bug" in out
-
-    def test_archive(self, cli):
-        cli("project", "create", "backend")
-        out, _ = cli("project", "archive", "backend", "--force")
-        assert "archived project 'backend'" in out
-
-    def test_edit_description(self, cli):
-        cli("project", "create", "backend")
-        out, _ = cli("project", "edit", "backend", "--desc", "API services")
-        assert "updated project 'backend'" in out
-        out, _ = cli("project", "show", "backend")
-        assert "API services" in out
-
-    def test_rename(self, cli):
-        cli("project", "create", "backend")
-        out, _ = cli("project", "rename", "backend", "api")
-        assert "renamed project 'backend' -> 'api'" in out
-        out2, _ = cli("project", "show", "api")
-        assert "api" in out2
-
-    def test_edit_no_changes(self, cli):
-        cli("project", "create", "backend")
-        out, _ = cli("project", "edit", "backend")
-        assert "nothing to update" in out
-
-    def test_create_empty_desc_normalized_to_null(self, cli):
-        out, _ = cli("--json", "project", "create", "backend", "--desc", "")
-        data = json.loads(out)
-        assert data["data"]["description"] is None
-
-    def test_create_whitespace_desc_normalized_to_null(self, cli):
-        out, _ = cli("--json", "project", "create", "backend", "--desc", "   ")
-        data = json.loads(out)
-        assert data["data"]["description"] is None
-
-    def test_ls_archived_filter_hide(self, cli):
-        cli("project", "create", "active")
-        cli("project", "create", "old")
-        cli("project", "archive", "old", "--force")
-        out, _ = cli("project", "ls")
-        assert "active" in out
-        assert "old" not in out
-
-    def test_ls_archived_filter_include(self, cli):
-        cli("project", "create", "active")
-        cli("project", "create", "old")
-        cli("project", "archive", "old", "--force")
-        out, _ = cli("project", "ls", "--archived", "include")
-        assert "active" in out
-        assert "old" in out
-
-    def test_ls_archived_filter_only(self, cli):
-        cli("project", "create", "active")
-        cli("project", "create", "old")
-        cli("project", "archive", "old", "--force")
-        out, _ = cli("project", "ls", "--archived", "only")
-        assert "active" not in out
-        assert "old" in out
 
 
 # ---- Edge commands ----
@@ -702,12 +600,6 @@ class TestErrorHandling:
         _, err = cli("task", "create", "Task", "-S", "nonexistent", expect_exit=3)
         assert "not found" in err
 
-    def test_project_not_found(self, cli):
-        cli("workspace", "create", "dev")
-        cli("status", "create", "todo")
-        _, err = cli("task", "create", "Task", "-S", "todo", "-p", "nonexistent", expect_exit=3)
-        assert "not found" in err
-
     def test_archive_status_with_active_tasks_blocked(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
@@ -756,7 +648,6 @@ class TestLsFilters:
         cli("workspace", "create", "work")
         cli("status", "create", "backlog")
         cli("status", "create", "doing")
-        cli("project", "create", "alpha")
 
     def test_filter_by_status(self, cli):
         self._setup_workspace(cli)
@@ -765,16 +656,6 @@ class TestLsFilters:
         out, _ = cli("task", "ls", "-S", "backlog")
         assert "task1" in out
         assert "task2" not in out or "task2" not in out.split("== backlog ==")[0]
-
-    def test_filter_by_project(self, cli):
-        self._setup_workspace(cli)
-        cli("task", "create", "task1", "-p", "alpha", "-S", "backlog")
-        cli("task", "create", "task2", "-S", "backlog")
-        out, _ = cli("task", "ls", "-p", "alpha")
-        assert "task1" in out
-        # task2 not in any non-empty column section
-        lines = [ln for ln in out.splitlines() if "task2" in ln]
-        assert len(lines) == 0
 
     def test_filter_by_priority(self, cli):
         self._setup_workspace(cli)
@@ -809,11 +690,6 @@ class TestLsFilters:
         _, err = cli("task", "ls", "-S", "nonexistent", expect_exit=3)
         assert "not found" in err
 
-    def test_invalid_project_name(self, cli):
-        self._setup_workspace(cli)
-        _, err = cli("task", "ls", "-p", "nonexistent", expect_exit=3)
-        assert "not found" in err
-
 
 class TestMvWorkspace:
     @pytest.fixture(autouse=True)
@@ -832,28 +708,12 @@ class TestMvWorkspace:
         assert "workspace 'ops'" in out
         assert "status 'backlog'" in out
 
-    def test_transfer_to_workspace_with_project(self, cli):
-        cli("workspace", "create", "ops")
-        cli("workspace", "use", "ops")
-        cli("status", "create", "backlog")
-        cli("project", "create", "infra")
-        cli("workspace", "use", "dev")
-        cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "transfer", "1", "--to", "ops", "--status", "backlog", "-p", "infra")
-        assert "workspace 'ops'" in out
-
     def test_transfer_no_column_fails(self, cli):
         cli("workspace", "create", "ops")
         cli("workspace", "use", "dev")
         cli("task", "create", "Task A", "-S", "todo")
         _, err = cli("task", "transfer", "1", "--to", "ops", expect_exit=2)
         assert "--status" in err or "required" in err
-
-    def test_mv_project_only_use_edit(self, cli):
-        cli("project", "create", "backend")
-        cli("task", "create", "Task A", "-S", "todo")
-        out, _ = cli("task", "edit", "1", "-p", "backend")
-        assert "updated" in out
 
     def test_mv_no_column_fails(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
@@ -885,187 +745,165 @@ class TestMvWorkspace:
 
 class TestGroupCLI:
     """Fixture `cli` provides a helper that always passes --db to a temp DB.
-    Each test creates its own workspace/project/column setup."""
+    Each test creates its own workspace/status/group setup."""
 
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         self.cli = cli
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        cli("project", "create", "sprint1")
 
     def test_create_group(self):
-        out, _ = self.cli("group", "create", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "create", "Frontend")
         assert "created group 'Frontend'" in out
         assert "group-0001" in out
 
     def test_create_with_parent(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli(
-            "group", "create", "Components", "--project", "sprint1", "--parent", "Frontend"
-        )
+        self.cli("group", "create", "Frontend")
+        out, _ = self.cli("group", "create", "Components", "--parent", "Frontend")
         assert "created group 'Components'" in out
 
-    def test_create_requires_project(self):
-        _, err = self.cli("group", "create", "Orphan", expect_exit=2)
-        assert "--project" in err and "required" in err
-
     def test_list_groups(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("group", "create", "Backend", "--project", "sprint1")
-        out, _ = self.cli("group", "ls", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("group", "create", "Backend")
+        out, _ = self.cli("group", "ls")
         assert "Frontend" in out
         assert "Backend" in out
 
     def test_list_groups_empty(self):
-        out, _ = self.cli("group", "ls", "--project", "sprint1")
+        out, _ = self.cli("group", "ls")
         assert "no groups" in out
 
     def test_show_group(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Fix bug", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
+        out, _ = self.cli("group", "show", "Frontend")
         assert "group-0001  Frontend" in out
-        assert "sprint1" in out
         assert "task-0001" in out
 
     def test_show_group_not_found(self):
-        _, err = self.cli("group", "show", "nope", "--project", "sprint1", expect_exit=3)
+        _, err = self.cli("group", "show", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_rename_group(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "rename", "Frontend", "UI", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        out, _ = self.cli("group", "rename", "Frontend", "UI")
         assert "renamed" in out
         assert "'UI'" in out
 
     def test_archive_group(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "archive", "Frontend", "--project", "sprint1", "--force")
+        self.cli("group", "create", "Frontend")
+        out, _ = self.cli("group", "archive", "Frontend", "--force")
         assert "archived group 'Frontend'" in out
 
     def test_archive_cascades_tasks(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
-        self.cli("group", "archive", "Frontend", "--project", "sprint1", "--force")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Fix bug", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
+        self.cli("group", "archive", "Frontend", "--force")
         # Task should be archived along with the group (hidden from ls)
         out, _ = self.cli("task", "ls")
         assert "Fix bug" not in out
 
     def test_mv_reparent(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("group", "create", "Backend", "--project", "sprint1")
-        out, _ = self.cli("group", "mv", "Backend", "--parent", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("group", "create", "Backend")
+        out, _ = self.cli("group", "mv", "Backend", "--parent", "Frontend")
         assert "moved" in out
         assert "'Frontend'" in out
 
     def test_mv_promote_to_top(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("group", "create", "Child", "--project", "sprint1", "--parent", "Frontend")
-        out, _ = self.cli("group", "mv", "Child", "--to-top", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("group", "create", "Child", "--parent", "Frontend")
+        out, _ = self.cli("group", "mv", "Child", "--to-top")
         assert "promoted" in out
 
     def test_assign_task(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        out, _ = self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Fix bug", "-S", "todo")
+        out, _ = self.cli("group", "assign", "task-0001", "Frontend")
         assert "assigned task-0001 to group 'Frontend'" in out
 
-    def test_assign_auto_sets_project(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "No project task", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+    def test_assign_shows_group_in_task(self):
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Unassigned task", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
         out, _ = self.cli("task", "show", "task-0001")
-        assert "sprint1" in out
-
-    def test_assign_cross_project_raises(self):
-        self.cli("project", "create", "sprint2")
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Task", "--project", "sprint2", "-S", "todo")
-        _, err = self.cli(
-            "group", "assign", "task-0001", "Frontend", "--project", "sprint1", expect_exit=4
-        )
-        assert "project" in err
+        assert "Group:" in out
+        assert "Frontend" in out
 
     def test_unassign_task(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Fix bug", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
         out, _ = self.cli("group", "unassign", "task-0001")
         assert "unassigned" in out
 
     def test_show_displays_group(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Fix bug", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Fix bug", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
         out, _ = self.cli("task", "show", "task-0001")
         assert "Group:" in out
         assert "Frontend" in out
 
     def test_ls_group_filter(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        self.cli("task", "create", "Grouped", "--project", "sprint1", "-S", "todo")
-        self.cli("task", "create", "Ungrouped", "--project", "sprint1", "-S", "todo")
-        self.cli("group", "assign", "task-0001", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        self.cli("task", "create", "Grouped", "-S", "todo")
+        self.cli("task", "create", "Ungrouped", "-S", "todo")
+        self.cli("group", "assign", "task-0001", "Frontend")
         out, _ = self.cli("task", "ls", "--group", "Frontend")
         assert "Grouped" in out
         assert "Ungrouped" not in out
 
-    def test_ambiguous_group_requires_project(self):
-        self.cli("project", "create", "sprint2")
-        self.cli("group", "create", "Shared", "--project", "sprint1")
-        self.cli("group", "create", "Shared", "--project", "sprint2")
+    def test_ambiguous_group_requires_parent(self):
+        self.cli("group", "create", "parent-a")
+        self.cli("group", "create", "Shared", "--parent", "parent-a")
+        self.cli("group", "create", "parent-b")
+        self.cli("group", "create", "Shared", "--parent", "parent-b")
         _, err = self.cli("group", "show", "Shared", expect_exit=3)
         assert "ambiguous" in err
 
     def test_cycle_detection(self):
-        self.cli("group", "create", "A", "--project", "sprint1")
-        self.cli("group", "create", "B", "--project", "sprint1", "--parent", "A")
-        _, err = self.cli(
-            "group", "mv", "A", "--parent", "B", "--project", "sprint1", expect_exit=4
-        )
+        self.cli("group", "create", "A")
+        self.cli("group", "create", "B", "--parent", "A")
+        _, err = self.cli("group", "mv", "A", "--parent", "B", expect_exit=4)
         assert "cycle" in err
 
     def test_create_with_description(self):
-        out, _ = self.cli(
-            "group", "create", "Frontend", "--project", "sprint1", "--desc", "UI components"
-        )
+        out, _ = self.cli("group", "create", "Frontend", "--desc", "UI components")
         assert "created group 'Frontend'" in out
-        out, _ = self.cli("group", "show", "Frontend", "--project", "sprint1")
+        out, _ = self.cli("group", "show", "Frontend")
         assert "UI components" in out
 
     def test_create_empty_desc_normalized_to_null(self):
-        out, _ = self.cli(
-            "--json", "group", "create", "Frontend", "--project", "sprint1", "--desc", ""
-        )
+        out, _ = self.cli("--json", "group", "create", "Frontend", "--desc", "")
         data = json.loads(out)
         assert data["data"]["description"] is None
 
     def test_edit_description(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "edit", "Frontend", "--project", "sprint1", "--desc", "UI layer")
+        self.cli("group", "create", "Frontend")
+        out, _ = self.cli("group", "edit", "Frontend", "--desc", "UI layer")
         assert "updated group 'Frontend'" in out
 
     def test_edit_no_changes(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
-        out, _ = self.cli("group", "edit", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
+        out, _ = self.cli("group", "edit", "Frontend")
         assert "nothing to update" in out
 
     def test_task_create_with_group(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
+        self.cli("group", "create", "Frontend")
         out, _ = self.cli("task", "create", "Fix bug", "-S", "todo", "--group", "Frontend")
         assert "created task-0001" in out
         out, _ = self.cli("task", "show", "task-0001")
         assert "Frontend" in out
-        assert "sprint1" in out
 
-    def test_task_create_group_infers_project(self):
-        self.cli("group", "create", "Frontend", "--project", "sprint1")
+    def test_task_create_shows_group(self):
+        self.cli("group", "create", "Frontend")
         self.cli("task", "create", "Fix bug", "-S", "todo", "--group", "Frontend")
         out, _ = self.cli("task", "show", "task-0001")
-        assert "sprint1" in out
+        assert "Frontend" in out
 
 
 # ---- Tag ----
@@ -1219,13 +1057,11 @@ class TestWorkspaceShow:
     def test_workspace_show_text_output(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        cli("project", "create", "backend")
         cli("tag", "create", "bug")
-        cli("group", "create", "G1", "-p", "backend")
+        cli("group", "create", "G1")
         out, _ = cli("workspace", "show")
         assert "== dev ==" in out
-        assert "Projects:" in out
-        assert "backend" in out
+        assert "Projects:" not in out
         assert "Tags:" in out
         assert "bug" in out
         assert "Groups:" in out
@@ -1319,13 +1155,6 @@ class TestJsonOutput:
         assert data["data"]["id"] == 1
         assert data["data"]["name"] == "Backlog"
 
-    def test_project_create(self, cli):
-        cli("workspace", "create", "B")
-        data = self._json(cli, "project", "create", "P1")
-        assert data["ok"] is True
-        assert data["data"]["id"] == 1
-        assert data["data"]["name"] == "P1"
-
     def test_dep_create(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
@@ -1382,15 +1211,6 @@ class TestJsonOutput:
         assert isinstance(data["data"], list)
         assert len(data["data"]) == 2
 
-    def test_project_ls(self, cli):
-        cli("workspace", "create", "B")
-        cli("project", "create", "P1")
-        data = self._json(cli, "project", "ls")
-        assert data["ok"] is True
-        payload = data["data"]
-        assert isinstance(payload, list)
-        assert payload[0]["name"] == "P1"
-
     def test_log_empty(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
@@ -1401,28 +1221,12 @@ class TestJsonOutput:
 
     def test_group_ls(self, cli):
         cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("project", "create", "P1")
-        cli("group", "create", "G1", "-p", "P1")
+        cli("group", "create", "G1")
         data = self._json(cli, "group", "ls")
         assert data["ok"] is True
         payload = data["data"]
         assert isinstance(payload, list)
         assert payload[0]["title"] == "G1"
-
-    def test_group_ls_json_includes_project_name(self, cli):
-        cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("project", "create", "Alpha")
-        cli("project", "create", "Beta")
-        cli("group", "create", "G1", "-p", "Alpha")
-        cli("group", "create", "G2", "-p", "Beta")
-        data = self._json(cli, "group", "ls")
-        assert data["ok"] is True
-        payload = data["data"]
-        names = {g["title"]: g["project_name"] for g in payload}
-        assert names["G1"] == "Alpha"
-        assert names["G2"] == "Beta"
 
     def test_tag_ls(self, cli):
         cli("workspace", "create", "B")
@@ -1461,23 +1265,9 @@ class TestJsonOutput:
         assert payload["tags"][0]["name"] == "bug"
         assert payload["tags"][1]["name"] == "feature"
 
-    def test_project_show(self, cli):
-        cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("project", "create", "P1", "-d", "desc")
-        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
-        data = self._json(cli, "project", "show", "P1")
-        assert data["ok"] is True
-        payload = data["data"]
-        assert payload["name"] == "P1"
-        assert payload["description"] == "desc"
-        assert len(payload["tasks"]) == 1
-
     def test_group_show(self, cli):
         cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("project", "create", "P1")
-        cli("group", "create", "G1", "-p", "P1")
+        cli("group", "create", "G1")
         data = self._json(cli, "group", "show", "G1")
         assert data["ok"] is True
         assert data["data"]["title"] == "G1"
@@ -1519,40 +1309,6 @@ class TestJsonOutput:
         assert payload["edge_ids"] == []
         assert payload["blocking_reason"] is None
         assert payload["is_archived"] is False
-        assert payload["target_project_id"] is None
-
-    def test_transfer_dry_run_includes_target_project_id(self, cli):
-        cli("workspace", "create", "B1")
-        cli("status", "create", "Todo")
-        cli("task", "create", "T1", "-S", "todo")
-        cli("workspace", "create", "B2")
-        cli("status", "create", "Inbox")
-        cli("project", "create", "infra")
-        data = self._json(
-            cli,
-            "task",
-            "transfer",
-            "1",
-            "--to",
-            "B2",
-            "--status",
-            "Inbox",
-            "--project",
-            "infra",
-            "--dry-run",
-        )
-        assert data["ok"] is True
-        assert data["data"]["target_project_id"] is not None
-
-    def test_mv_project_only_use_edit(self, cli):
-        cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("project", "create", "P1")
-        cli("task", "create", "T1", "-S", "todo")
-        data = self._json(cli, "task", "edit", "1", "--project", "P1")
-        assert data["ok"] is True
-        assert data["data"]["id"] == 1
-        assert data["data"]["project_id"] == 1
 
     # -- Edit edge case --
 
@@ -1609,10 +1365,9 @@ class TestJsonOutput:
     def test_group_assign(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
-        cli("project", "create", "P1")
-        cli("group", "create", "G1", "-p", "P1")
-        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
-        data = self._json(cli, "group", "assign", "1", "G1", "-p", "P1")
+        cli("group", "create", "G1")
+        cli("task", "create", "T1", "-S", "todo")
+        data = self._json(cli, "group", "assign", "1", "G1")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
         assert data["data"]["group"]["title"] == "G1"
@@ -1620,10 +1375,9 @@ class TestJsonOutput:
     def test_group_unassign(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
-        cli("project", "create", "P1")
-        cli("group", "create", "G1", "-p", "P1")
-        cli("task", "create", "T1", "-p", "P1", "-S", "todo")
-        cli("group", "assign", "1", "G1", "-p", "P1")
+        cli("group", "create", "G1")
+        cli("task", "create", "T1", "-S", "todo")
+        cli("group", "assign", "1", "G1")
         data = self._json(cli, "group", "unassign", "1")
         assert data["ok"] is True
         assert data["data"]["id"] == 1
@@ -1633,17 +1387,15 @@ class TestJsonOutput:
     def test_workspace_show(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
-        cli("project", "create", "P1")
         cli("tag", "create", "bug")
-        cli("group", "create", "G1", "-p", "P1")
+        cli("group", "create", "G1")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "workspace", "show")
         assert data["ok"] is True
         payload = data["data"]
         assert payload["view"]["workspace"]["name"] == "B"
         assert len(payload["view"]["statuses"]) == 1
-        assert len(payload["projects"]) == 1
-        assert payload["projects"][0]["name"] == "P1"
+        assert "projects" not in payload
         assert len(payload["tags"]) == 1
         assert payload["tags"][0]["name"] == "bug"
         assert len(payload["groups"]) == 1
@@ -1655,7 +1407,7 @@ class TestJsonOutput:
         assert data["ok"] is True
         payload = data["data"]
         assert payload["view"]["workspace"]["name"] == "Empty"
-        assert payload["projects"] == []
+        assert "projects" not in payload
         assert payload["tags"] == []
         assert payload["groups"] == []
 
@@ -1928,12 +1680,10 @@ class TestEditDryRun:
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
-        cli("project", "create", "alpha")
-        cli("project", "create", "beta")
-        cli("group", "create", "top", "-p", "alpha")
-        cli("group", "create", "child", "-p", "alpha", "--parent", "top")
+        cli("group", "create", "top")
+        cli("group", "create", "child", "--parent", "top")
         cli("tag", "create", "bug")
-        cli("task", "create", "T1", "-S", "todo", "-p", "alpha", "--priority", "2")
+        cli("task", "create", "T1", "-S", "todo", "--priority", "2")
 
     def test_task_edit_dry_run_text(self):
         out, _ = self.cli(
@@ -1967,35 +1717,21 @@ class TestEditDryRun:
         show, _ = self.cli("task", "show", "1")
         assert "Status:      todo" in show
 
-    def test_task_mv_dry_run_project_change(self):
-        out, _ = self.cli("task", "mv", "1", "-S", "done", "-p", "beta", "--dry-run")
-        assert "project" in out
-        assert "'alpha'" in out and "'beta'" in out
-        # Verify project wasn't actually changed
-        show, _ = self.cli("task", "show", "1")
-        assert "Project:     alpha" in show
-
-    def test_project_edit_dry_run(self):
-        out, _ = self.cli("project", "edit", "alpha", "--desc", "new description", "--dry-run")
-        assert "dry-run" in out
-        assert "project 'alpha'" in out
-        assert "description" in out
-
     def test_group_edit_dry_run(self):
-        out, _ = self.cli("group", "edit", "top", "-p", "alpha", "--desc", "new desc", "--dry-run")
+        out, _ = self.cli("group", "edit", "top", "--desc", "new desc", "--dry-run")
         assert "dry-run" in out
         assert "description" in out
 
     def test_group_rename_dry_run(self):
-        out, _ = self.cli("group", "rename", "top", "top-renamed", "-p", "alpha", "--dry-run")
+        out, _ = self.cli("group", "rename", "top", "top-renamed", "--dry-run")
         assert "dry-run" in out
         assert "title" in out
         # Still exists under old name — new name must not have been written
-        show, _ = self.cli("group", "show", "top", "-p", "alpha")
+        show, _ = self.cli("group", "show", "top")
         assert "top-renamed" not in show
 
     def test_group_mv_dry_run_to_top(self):
-        out, _ = self.cli("group", "mv", "child", "--to-top", "-p", "alpha", "--dry-run")
+        out, _ = self.cli("group", "mv", "child", "--to-top", "--dry-run")
         assert "dry-run" in out
         assert "parent" in out
 
@@ -2007,13 +1743,12 @@ class TestArchiveDryRun:
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
-        cli("project", "create", "proj")
-        cli("group", "create", "top", "--project", "proj")
-        cli("group", "create", "child", "--parent", "top", "--project", "proj")
-        cli("task", "create", "t1", "-S", "todo", "-p", "proj")
-        cli("task", "create", "t2", "-S", "todo", "-p", "proj")
-        cli("group", "assign", "1", "top", "--project", "proj")
-        cli("group", "assign", "2", "child", "--project", "proj")
+        cli("group", "create", "top")
+        cli("group", "create", "child", "--parent", "top")
+        cli("task", "create", "t1", "-S", "todo")
+        cli("task", "create", "t2", "-S", "todo")
+        cli("group", "assign", "1", "top")
+        cli("group", "assign", "2", "child")
 
     def test_task_dry_run(self):
         out, _ = self.cli("task", "archive", "1", "--dry-run")
@@ -2024,7 +1759,7 @@ class TestArchiveDryRun:
         assert "t1" in out2
 
     def test_group_dry_run(self):
-        out, _ = self.cli("group", "archive", "top", "--project", "proj", "--dry-run")
+        out, _ = self.cli("group", "archive", "top", "--dry-run")
         assert "dry-run" in out
         assert "descendant groups: 1" in out  # child group
         assert "tasks: 2" in out  # both tasks in subtree
@@ -2032,16 +1767,9 @@ class TestArchiveDryRun:
         out2, _ = self.cli("task", "ls")
         assert "t1" in out2
 
-    def test_project_dry_run(self):
-        out, _ = self.cli("project", "archive", "proj", "--dry-run")
-        assert "dry-run" in out
-        assert "groups: 2" in out
-        assert "tasks: 2" in out
-
     def test_workspace_dry_run(self):
         out, _ = self.cli("workspace", "archive", "--dry-run")
         assert "dry-run" in out
-        assert "projects: 1" in out
         assert "groups: 2" in out
         assert "statuses: 2" in out
         assert "tasks: 2" in out
@@ -2054,36 +1782,26 @@ class TestArchiveCascade:
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
         cli("status", "create", "done")
-        cli("project", "create", "proj")
-        cli("group", "create", "top", "--project", "proj")
-        cli("group", "create", "child", "--parent", "top", "--project", "proj")
-        cli("task", "create", "t1", "-S", "todo", "-p", "proj")
-        cli("task", "create", "t2", "-S", "done", "-p", "proj")
-        cli("group", "assign", "1", "top", "--project", "proj")
-        cli("group", "assign", "2", "child", "--project", "proj")
+        cli("group", "create", "top")
+        cli("group", "create", "child", "--parent", "top")
+        cli("task", "create", "t1", "-S", "todo")
+        cli("task", "create", "t2", "-S", "done")
+        cli("group", "assign", "1", "top")
+        cli("group", "assign", "2", "child")
 
     def test_group_cascade_archives_all(self):
-        self.cli("group", "archive", "top", "--project", "proj", "--force")
+        self.cli("group", "archive", "top", "--force")
         # Tasks hidden from default ls
         out, _ = self.cli("task", "ls")
         assert "t1" not in out
         assert "t2" not in out
         # Groups hidden from default ls
-        out2, _ = self.cli("group", "ls", "--project", "proj")
+        out2, _ = self.cli("group", "ls")
         assert "top" not in out2
         assert "child" not in out2
-        # But visible with --all
-        out3, _ = self.cli("group", "ls", "--project", "proj", "--archived", "include")
+        # Root group visible with --archived include
+        out3, _ = self.cli("group", "ls", "--archived", "include")
         assert "top" in out3
-        assert "child" in out3
-
-    def test_project_cascade_archives_all(self):
-        self.cli("project", "archive", "proj", "--force")
-        out, _ = self.cli("task", "ls")
-        assert "t1" not in out
-        assert "t2" not in out
-        out2, _ = self.cli("project", "ls")
-        assert "no projects" in out2
 
     def test_workspace_cascade_archives_all(self, db_path, config_path):
         self.cli("workspace", "archive", "--force")
@@ -2235,10 +1953,9 @@ class TestJsonDryRun:
         self.cli = cli
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        cli("project", "create", "proj")
-        cli("group", "create", "grp", "--project", "proj")
-        cli("task", "create", "t1", "-S", "todo", "-p", "proj")
-        cli("group", "assign", "1", "grp", "--project", "proj")
+        cli("group", "create", "grp")
+        cli("task", "create", "t1", "-S", "todo")
+        cli("group", "assign", "1", "grp")
         cli("tag", "create", "bug")
         cli("task", "edit", "1", "--tag", "bug")
 
@@ -2253,17 +1970,10 @@ class TestJsonDryRun:
         assert data["data"]["already_archived"] is False
 
     def test_group_dry_run_json(self):
-        data = self._json("group", "archive", "grp", "--project", "proj", "--dry-run")
+        data = self._json("group", "archive", "grp", "--dry-run")
         assert data["ok"] is True
         assert data["data"]["entity_type"] == "group"
         assert data["data"]["task_count"] == 1
-
-    def test_project_dry_run_json(self):
-        data = self._json("project", "archive", "proj", "--dry-run")
-        assert data["ok"] is True
-        assert data["data"]["entity_type"] == "project"
-        assert data["data"]["task_count"] == 1
-        assert data["data"]["group_count"] == 1
 
     def test_workspace_dry_run_json(self):
         data = self._json("workspace", "archive", "--dry-run")
@@ -2317,56 +2027,32 @@ class TestEndToEndSmoke:
         cli("status", "create", "todo")
         cli("status", "create", "in-progress")
         cli("status", "create", "done")
-        # Projects
-        cli("project", "create", "backend")
-        cli("project", "create", "frontend")
-        # Groups (nested)
-        cli("group", "create", "api", "--project", "backend")
-        cli("group", "create", "endpoints", "--parent", "api", "--project", "backend")
-        cli("group", "create", "db", "--project", "backend")
+        # Root groups (replace projects)
+        cli("group", "create", "backend")
+        cli("group", "create", "frontend")
+        # Nested groups under backend
+        cli("group", "create", "api", "--parent", "backend")
+        cli("group", "create", "endpoints", "--parent", "api")
+        cli("group", "create", "db", "--parent", "backend")
         # Tags
         cli("tag", "create", "bug")
         cli("tag", "create", "urgent")
         cli("tag", "create", "tech-debt")
         # Tasks
-        cli("task", "create", "Design API", "-S", "todo", "-p", "backend", "--tag", "bug")
-        cli(
-            "task",
-            "create",
-            "Implement routes",
-            "-S",
-            "in-progress",
-            "-p",
-            "backend",
-            "--tag",
-            "urgent",
-        )
-        cli("task", "create", "Write migrations", "-S", "todo", "-p", "backend")
-        cli("task", "create", "Dashboard UI", "-S", "done", "-p", "frontend")
+        cli("task", "create", "Design API", "-S", "todo", "--tag", "bug")
+        cli("task", "create", "Implement routes", "-S", "in-progress", "--tag", "urgent")
+        cli("task", "create", "Write migrations", "-S", "todo")
+        cli("task", "create", "Dashboard UI", "-S", "done")
         cli("task", "create", "Cleanup", "-S", "todo")
         # Group assignments
-        cli("group", "assign", "1", "api", "--project", "backend")
-        cli("group", "assign", "2", "endpoints", "--project", "backend")
-        cli("group", "assign", "3", "db", "--project", "backend")
+        cli("group", "assign", "1", "api")
+        cli("group", "assign", "2", "endpoints")
+        cli("group", "assign", "3", "db")
         # Task edges
         cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
         cli("edge", "create", "--source", "3", "--target", "1", "--kind", "blocks")
         # Group edges
-        cli(
-            "group",
-            "edge",
-            "create",
-            "--source",
-            "endpoints",
-            "--target",
-            "db",
-            "--source-project",
-            "backend",
-            "--target-project",
-            "backend",
-            "--kind",
-            "blocks",
-        )
+        cli("group", "edge", "create", "--source", "endpoints", "--target", "db", "--kind", "blocks")
 
     def test_listing_commands(self):
         out, _ = self.cli("task", "ls")
@@ -2386,14 +2072,9 @@ class TestEndToEndSmoke:
         assert "in-progress" in out
         assert "done" in out
 
-        out, _ = self.cli("project", "ls")
+        out, _ = self.cli("group", "ls")
         assert "backend" in out
         assert "frontend" in out
-
-        out, _ = self.cli("group", "ls", "--project", "backend")
-        assert "api" in out
-        assert "endpoints" in out
-        assert "db" in out
 
         out, _ = self.cli("tag", "ls")
         assert "bug" in out
@@ -2405,10 +2086,7 @@ class TestEndToEndSmoke:
         out, _ = self.cli("task", "show", "2")
         assert "task-0001" in out  # blocked-by reference
 
-        out, _ = self.cli("project", "show", "backend")
-        assert "backend" in out
-
-        out, _ = self.cli("group", "show", "api", "--project", "backend")
+        out, _ = self.cli("group", "show", "api")
         assert "api" in out
 
     def test_workspace_show(self):
@@ -2417,7 +2095,6 @@ class TestEndToEndSmoke:
         assert "in-progress" in out
         assert "done" in out
         assert "Design API" in out
-        assert "backend" in out
         assert "bug" in out
 
     def test_export(self):
@@ -2447,8 +2124,7 @@ class TestEndToEndSmoke:
     def test_dry_run_workspace(self):
         out, _ = self.cli("workspace", "archive", "--dry-run")
         assert "dry-run" in out
-        assert "projects: 2" in out
-        assert "groups: 3" in out
+        assert "groups: 5" in out
         assert "statuses: 3" in out
         assert "tasks: 5" in out
         # Nothing actually archived
@@ -2700,47 +2376,6 @@ class TestWorkspaceMetaNoActiveWorkspace:
 # ---- Project metadata ----
 
 
-class TestProjectMetaCommands:
-    @pytest.fixture(autouse=True)
-    def _setup(self, cli):
-        self.cli = cli
-        cli("workspace", "create", "dev")
-        cli("project", "create", "backend")
-
-    def test_ls_empty(self):
-        out, _ = self.cli("project", "meta", "ls", "backend")
-        assert "no metadata" in out
-
-    def test_set_and_get(self):
-        self.cli("project", "meta", "set", "backend", "owner", "alice")
-        out, _ = self.cli("project", "meta", "get", "backend", "owner")
-        assert "alice" in out
-
-    def test_del(self):
-        self.cli("project", "meta", "set", "backend", "owner", "alice")
-        self.cli("project", "meta", "del", "backend", "owner")
-        out, _ = self.cli("project", "meta", "ls", "backend")
-        assert "no metadata" in out
-
-    def test_del_missing(self):
-        _, err = self.cli("project", "meta", "del", "backend", "nope", expect_exit=3)
-        assert "not found" in err
-
-    def test_unknown_project(self):
-        _, err = self.cli("project", "meta", "set", "ghost", "k", "v", expect_exit=3)
-        assert "not found" in err
-
-    def test_case_insensitive(self):
-        self.cli("project", "meta", "set", "backend", "Owner", "alice")
-        out, _ = self.cli("project", "meta", "get", "backend", "OWNER")
-        assert "alice" in out
-
-    def test_set_json(self):
-        out, _ = self.cli("--json", "project", "meta", "set", "backend", "owner", "alice")
-        data = json.loads(out)
-        assert data["data"] == {"key": "owner", "value": "alice"}
-
-
 # ---- Group metadata ----
 
 
@@ -2749,85 +2384,38 @@ class TestGroupMetaCommands:
     def _setup(self, cli):
         self.cli = cli
         cli("workspace", "create", "dev")
-        cli("project", "create", "backend")
-        cli("group", "create", "Sprint 1", "--project", "backend")
+        cli("group", "create", "Sprint 1")
 
     def test_ls_empty(self):
-        out, _ = self.cli("group", "meta", "ls", "Sprint 1", "--project", "backend")
+        out, _ = self.cli("group", "meta", "ls", "Sprint 1")
         assert "no metadata" in out
 
     def test_set_and_get(self):
-        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01", "--project", "backend")
-        out, _ = self.cli("group", "meta", "get", "Sprint 1", "start", "--project", "backend")
+        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01")
+        out, _ = self.cli("group", "meta", "get", "Sprint 1", "start")
         assert "2026-01-01" in out
 
     def test_del(self):
-        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01", "--project", "backend")
-        self.cli("group", "meta", "del", "Sprint 1", "start", "--project", "backend")
-        out, _ = self.cli("group", "meta", "ls", "Sprint 1", "--project", "backend")
+        self.cli("group", "meta", "set", "Sprint 1", "start", "2026-01-01")
+        self.cli("group", "meta", "del", "Sprint 1", "start")
+        out, _ = self.cli("group", "meta", "ls", "Sprint 1")
         assert "no metadata" in out
 
     def test_del_missing(self):
-        _, err = self.cli(
-            "group",
-            "meta",
-            "del",
-            "Sprint 1",
-            "nope",
-            "--project",
-            "backend",
-            expect_exit=3,
-        )
+        _, err = self.cli("group", "meta", "del", "Sprint 1", "nope", expect_exit=3)
         assert "not found" in err
 
     def test_unknown_group(self):
-        _, err = self.cli(
-            "group",
-            "meta",
-            "set",
-            "Ghost",
-            "k",
-            "v",
-            "--project",
-            "backend",
-            expect_exit=3,
-        )
+        _, err = self.cli("group", "meta", "set", "Ghost", "k", "v", expect_exit=3)
         assert "not found" in err
 
     def test_case_insensitive(self):
-        self.cli(
-            "group",
-            "meta",
-            "set",
-            "Sprint 1",
-            "Start",
-            "2026-01-01",
-            "--project",
-            "backend",
-        )
-        out, _ = self.cli(
-            "group",
-            "meta",
-            "get",
-            "Sprint 1",
-            "START",
-            "--project",
-            "backend",
-        )
+        self.cli("group", "meta", "set", "Sprint 1", "Start", "2026-01-01")
+        out, _ = self.cli("group", "meta", "get", "Sprint 1", "START")
         assert "2026-01-01" in out
 
     def test_set_json(self):
-        out, _ = self.cli(
-            "--json",
-            "group",
-            "meta",
-            "set",
-            "Sprint 1",
-            "start",
-            "2026-01-01",
-            "--project",
-            "backend",
-        )
+        out, _ = self.cli("--json", "group", "meta", "set", "Sprint 1", "start", "2026-01-01")
         data = json.loads(out)
         assert data["data"] == {"key": "start", "value": "2026-01-01"}
 
@@ -2858,36 +2446,6 @@ class TestStatusListArchivedMarker:
     def test_no_archived_marker_on_active(self):
         out, _ = self.cli("status", "ls", "--archived", "include")
         lines = [ln for ln in out.splitlines() if "active" in ln]
-        assert len(lines) == 1
-        assert "(archived)" not in lines[0]
-
-
-# ---- task-0128: format_project_list archived marker ----
-
-
-class TestProjectListArchivedMarker:
-    """project ls --archived include/only renders (archived) suffix."""
-
-    @pytest.fixture(autouse=True)
-    def _setup(self, cli):
-        self.cli = cli
-        cli("workspace", "create", "dev")
-        cli("project", "create", "live")
-        cli("project", "create", "old")
-        cli("project", "archive", "old", "--force")
-
-    def test_archived_marker_shown_with_include(self):
-        out, _ = self.cli("project", "ls", "--archived", "include")
-        assert "(archived)" in out
-        assert "old (archived)" in out
-
-    def test_archived_marker_shown_with_only(self):
-        out, _ = self.cli("project", "ls", "--archived", "only")
-        assert "(archived)" in out
-
-    def test_no_archived_marker_on_live_project(self):
-        out, _ = self.cli("project", "ls", "--archived", "include")
-        lines = [ln for ln in out.splitlines() if "live" in ln]
         assert len(lines) == 1
         assert "(archived)" not in lines[0]
 

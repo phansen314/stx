@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Input, Select, Static
@@ -8,7 +7,6 @@ from textual.widgets import Button, Footer, Input, Select, Static
 from stx.formatting import format_timestamp
 from stx.models import Status
 from stx.service_models import TaskDetail
-from stx.tui.model import ProjectNode, flatten_group_tree
 from stx.tui.screens.base_edit import BaseEditModal, ModalScroll
 from stx.tui.widgets.markdown_editor import MarkdownEditor
 
@@ -18,14 +16,11 @@ class TaskEditModal(BaseEditModal):
         self,
         detail: TaskDetail,
         statuses: tuple[Status, ...],
-        project_nodes: tuple[ProjectNode, ...],
+        group_options: list[tuple[str, int]],
     ) -> None:
         self.detail = detail
         self._statuses = statuses
-        self._project_nodes = project_nodes
-        self._groups_by_project: dict[int, list[tuple[str, int]]] = {
-            node.project.id: flatten_group_tree(node.groups) for node in project_nodes
-        }
+        self._group_options = group_options
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -49,7 +44,6 @@ class TaskEditModal(BaseEditModal):
 
             status_options = [(s.name, s.id) for s in self._statuses]
             priority_options = [(str(i), i) for i in range(1, 6)]
-            project_options = [(node.project.name, node.project.id) for node in self._project_nodes]
 
             with Horizontal(classes="form-row"):
                 with Vertical(classes="form-group"):
@@ -71,25 +65,22 @@ class TaskEditModal(BaseEditModal):
                         classes="form-field",
                     )
 
+            group_ids = {gid for _, gid in self._group_options}
+            initial_group = (
+                self.detail.group_id
+                if self.detail.group_id is not None and self.detail.group_id in group_ids
+                else Select.NULL
+            )
+
             with Horizontal(classes="form-row"):
                 with Vertical(classes="form-group"):
-                    yield Static("Project", classes="form-label")
+                    yield Static("Group (optional)", classes="form-label")
                     yield Select(
-                        project_options,
-                        value=self.detail.project_id if self.detail.project_id else Select.NULL,
-                        id="task-edit-project",
-                        allow_blank=True,
-                        classes="form-field",
-                    )
-                with Vertical(classes="form-group"):
-                    yield Static("Group", classes="form-label")
-                    yield Select(
-                        [],
-                        value=Select.NULL,
+                        self._group_options,
+                        value=initial_group,
                         id="task-edit-group",
                         allow_blank=True,
                         classes="form-field",
-                        disabled=True,
                     )
 
             due_str = format_timestamp(self.detail.due_date) if self.detail.due_date else ""
@@ -145,36 +136,6 @@ class TaskEditModal(BaseEditModal):
 
     def on_mount(self) -> None:
         self.query_one("#task-edit-title", Input).focus()
-        # Explicitly wire the initial group Select state after mount so we
-        # don't depend on Textual's compose-time value handling, which only
-        # takes effect once the widget is on-screen.
-        group_select = self.query_one("#task-edit-group", Select)
-        options = self._groups_by_project.get(self.detail.project_id, [])  # type: ignore[arg-type]
-        group_select.set_options(options)
-        group_select.disabled = not options
-        if self.detail.group_id is not None and self.detail.group_id in {gid for _, gid in options}:
-            group_select.value = self.detail.group_id
-        # Remember the project we initialised for so the reactive handler
-        # can distinguish the mount-time Select.Changed echo from a real
-        # user change.
-        self._last_project_id: int | None = self.detail.project_id
-
-    @on(Select.Changed, "#task-edit-project")
-    def _on_project_changed(self, event: Select.Changed) -> None:
-        new_project = event.value if isinstance(event.value, int) else None
-        # Skip if this is the mount-time echo or any no-op (value unchanged).
-        if not hasattr(self, "_last_project_id") or new_project == self._last_project_id:
-            self._last_project_id = new_project
-            return
-        self._last_project_id = new_project
-        group_select = self.query_one("#task-edit-group", Select)
-        if new_project is not None:
-            options = self._groups_by_project.get(new_project, [])
-            group_select.set_options(options)
-            group_select.disabled = not options
-        else:
-            group_select.set_options([])
-            group_select.disabled = True
 
     def _do_save(self) -> None:
         title = self.query_one("#task-edit-title", Input).value.strip()
@@ -187,9 +148,6 @@ class TaskEditModal(BaseEditModal):
 
         status_id = self.query_one("#task-edit-status", Select).value
         priority = self.query_one("#task-edit-priority", Select).value
-
-        project_val = self.query_one("#task-edit-project", Select).value
-        project_id = project_val if isinstance(project_val, int) else None
 
         group_val = self.query_one("#task-edit-group", Select).value
         group_id = group_val if isinstance(group_val, int) else None
@@ -220,7 +178,6 @@ class TaskEditModal(BaseEditModal):
                 "description": description,
                 "status_id": status_id,
                 "priority": priority,
-                "project_id": project_id,
                 "group_id": group_id,
                 "due_date": due_date,
                 "start_date": start_date,

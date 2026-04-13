@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Group, JournalEntry, Project, Status, Tag, Task, Workspace
+from .models import Group, JournalEntry, Status, Tag, Task, Workspace
 
 # ---- Edge ref types (hydrated edge with kind) ----
 
@@ -59,7 +59,6 @@ class TaskListItem:
     id: int
     workspace_id: int
     title: str
-    project_id: int | None
     description: str | None
     status_id: int
     priority: int
@@ -71,7 +70,6 @@ class TaskListItem:
     finish_date: int | None
     group_id: int | None
     metadata: dict[str, str]
-    project_name: str | None = None
     tag_names: tuple[str, ...] = ()
 
 
@@ -82,7 +80,6 @@ class GroupRef:
 
     id: int
     workspace_id: int
-    project_id: int
     title: str
     description: str | None
     parent_id: int | None
@@ -111,7 +108,6 @@ class WorkspaceContext:
     """Aggregated workspace state for one-call session startup."""
 
     view: WorkspaceListView
-    projects: tuple[Project, ...]
     tags: tuple[Tag, ...]
     groups: tuple[GroupRef, ...]
 
@@ -135,7 +131,6 @@ class TaskDetail:
     id: int
     workspace_id: int
     title: str
-    project_id: int | None
     description: str | None
     status_id: int
     priority: int
@@ -148,24 +143,11 @@ class TaskDetail:
     group_id: int | None
     metadata: dict[str, str]
     status: Status
-    project: Project | None
     group: Group | None
     edge_sources: tuple[TaskEdgeRef, ...]
     edge_targets: tuple[TaskEdgeRef, ...]
     history: tuple[JournalEntry, ...]
     tags: tuple[Tag, ...]
-
-
-@dataclass(frozen=True)
-class ProjectDetail:
-    id: int
-    workspace_id: int
-    name: str
-    description: str | None
-    archived: bool
-    created_at: int
-    tasks: tuple[Task, ...]
-    metadata: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -181,7 +163,6 @@ class GroupDetail:
 
     id: int
     workspace_id: int
-    project_id: int
     title: str
     description: str | None
     parent_id: int | None
@@ -206,7 +187,6 @@ class MoveToWorkspacePreview:
     source_workspace_id: int
     target_workspace_id: int
     target_status_id: int
-    target_project_id: int | None
     can_move: bool
     blocking_reason: str | None
     edge_ids: tuple[int, ...]
@@ -218,18 +198,17 @@ class ArchivePreview:
     """Dry-run result for an archive command. Counts reflect additional
     entities beyond the root that *would* be archived."""
 
-    entity_type: Literal["task", "group", "project", "status", "tag", "workspace"]
+    entity_type: Literal["task", "group", "status", "tag", "workspace"]
     entity_name: str
     already_archived: bool
     task_count: int
     group_count: int
-    project_count: int
     status_count: int
 
 
 @dataclass(frozen=True)
 class EntityUpdatePreview:
-    """Dry-run result for a field-level update (task/project/group edit).
+    """Dry-run result for a field-level update (task/group edit).
     `before` / `after` contain only fields that differ — unchanged fields
     are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
     other entity kinds leave those empty.
@@ -240,9 +219,9 @@ class EntityUpdatePreview:
     JSON representation. Callers must treat these fields as read-only.
     """
 
-    entity_type: Literal["task", "project", "group"]
+    entity_type: Literal["task", "group"]
     entity_id: int
-    label: str  # task title, project name, group title
+    label: str  # task title, group title
     before: dict[str, Any] = field(default_factory=dict)
     after: dict[str, Any] = field(default_factory=dict)
     tags_added: tuple[str, ...] = ()
@@ -251,8 +230,7 @@ class EntityUpdatePreview:
 
 @dataclass(frozen=True)
 class TaskMovePreview:
-    """Dry-run result for `task mv`. Shows from/to status, position, and
-    optional project change."""
+    """Dry-run result for `task mv`. Shows from/to status and position."""
 
     task_id: int
     title: str
@@ -260,6 +238,3 @@ class TaskMovePreview:
     to_status: str
     from_position: int
     to_position: int
-    from_project: str | None
-    to_project: str | None
-    project_changed: bool

@@ -1,15 +1,14 @@
-"""Tests for create modals: NewResourceModal, TaskCreateModal, ProjectCreateModal, GroupCreateModal, StatusCreateModal."""
+"""Tests for create modals: NewResourceModal, TaskCreateModal, GroupCreateModal, StatusCreateModal."""
 
 from __future__ import annotations
 
 from helpers import ModalTestApp
 from textual.widgets import Input, Select, Static, TextArea
 
-from stx.models import Group, Project, Status, Workspace
-from stx.tui.model import GroupNode, ProjectNode
+from stx.models import Status, Workspace
+from stx.tui.model import GroupNode
 from stx.tui.screens.group_create import GroupCreateModal
 from stx.tui.screens.new_resource import NewResourceModal
-from stx.tui.screens.project_create import ProjectCreateModal
 from stx.tui.screens.status_create import StatusCreateModal
 from stx.tui.screens.task_create import TaskCreateModal
 
@@ -22,51 +21,9 @@ def make_status(**overrides) -> Status:
     return Status(**defaults)
 
 
-def make_project(**overrides) -> Project:
-    defaults = dict(
-        id=1,
-        workspace_id=1,
-        name="Alpha",
-        description=None,
-        archived=False,
-        created_at=0,
-        metadata={},
-    )
-    defaults.update(overrides)
-    return Project(**defaults)
-
-
 STATUSES = (make_status(id=1, name="todo"), make_status(id=2, name="done"))
-PROJECTS = (make_project(id=1, name="Alpha"), make_project(id=2, name="Beta"))
 
-PROJECT_NODES = tuple(ProjectNode(project=p, groups=(), ungrouped_tasks=()) for p in PROJECTS)
-
-
-def _group(id: int, project_id: int, title: str) -> Group:
-    return Group(
-        id=id,
-        workspace_id=1,
-        project_id=project_id,
-        title=title,
-        description=None,
-        parent_id=None,
-        position=0,
-        archived=False,
-        created_at=0,
-        metadata={},
-    )
-
-
-def _nodes_with_groups() -> tuple[ProjectNode, ...]:
-    alpha_groups = (
-        GroupNode(group=_group(10, 1, "Login"), tasks=(), children=()),
-        GroupNode(group=_group(11, 1, "Signup"), tasks=(), children=()),
-    )
-    beta_groups = (GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),)
-    return (
-        ProjectNode(project=PROJECTS[0], groups=alpha_groups, ungrouped_tasks=()),
-        ProjectNode(project=PROJECTS[1], groups=beta_groups, ungrouped_tasks=()),
-    )
+GROUP_OPTIONS: list[tuple[str, int]] = [("Frontend", 10), ("Backend", 20)]
 
 
 # ---- NewResourceModal tests ----
@@ -84,12 +41,6 @@ class TestNewResourceModal:
         async with app.run_test() as pilot:
             await pilot.press("g")
             assert app.result == "group"
-
-    async def test_p_key_dismisses_project(self):
-        app = ModalTestApp(NewResourceModal())
-        async with app.run_test() as pilot:
-            await pilot.press("p")
-            assert app.result == "project"
 
     async def test_escape_dismisses_none(self):
         app = ModalTestApp(NewResourceModal())
@@ -109,19 +60,13 @@ class TestNewResourceModal:
             await pilot.click("#new-group")
             assert app.result == "group"
 
-    async def test_project_button_click(self):
-        app = ModalTestApp(NewResourceModal())
-        async with app.run_test() as pilot:
-            await pilot.click("#new-project")
-            assert app.result == "project"
-
 
 # ---- TaskCreateModal tests ----
 
 
 class TestTaskCreateModal:
     async def test_empty_title_shows_error(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             app.screen.action_save()
             await pilot.pause()
@@ -130,13 +75,13 @@ class TestTaskCreateModal:
             assert app.result == "NOT_SET"
 
     async def test_cancel_dismisses_none(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             await pilot.press("escape")
             assert app.result is None
 
     async def test_minimal_task(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             app.screen.query_one("#task-create-title", Input).value = "My task"
             app.screen.action_save()
@@ -145,7 +90,6 @@ class TestTaskCreateModal:
                 "title": "My task",
                 "status_id": 1,
                 "priority": 1,
-                "project_id": None,
                 "group_id": None,
                 "description": None,
                 "due_date": None,
@@ -154,7 +98,7 @@ class TestTaskCreateModal:
             }
 
     async def test_invalid_date_shows_error(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             app.screen.query_one("#task-create-title", Input).value = "My task"
             app.screen.query_one("#task-create-due", Input).value = "not-a-date"
@@ -165,7 +109,7 @@ class TestTaskCreateModal:
             assert app.result == "NOT_SET"
 
     async def test_finish_before_start_shows_error(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             app.screen.query_one("#task-create-title", Input).value = "My task"
             app.screen.query_one("#task-create-start", Input).value = "2026-06-01"
@@ -177,7 +121,7 @@ class TestTaskCreateModal:
             assert app.result == "NOT_SET"
 
     async def test_with_description(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, PROJECT_NODES))
+        app = ModalTestApp(TaskCreateModal(STATUSES, []))
         async with app.run_test() as pilot:
             app.screen.query_one("#task-create-title", Input).value = "My task"
             textarea = app.screen.query_one(TextArea)
@@ -186,81 +130,20 @@ class TestTaskCreateModal:
             await pilot.pause()
             assert app.result["description"] == "some notes"
 
-    async def test_group_select_starts_disabled(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, _nodes_with_groups()))
+    async def test_group_select_available_with_options(self):
+        app = ModalTestApp(TaskCreateModal(STATUSES, GROUP_OPTIONS))
         async with app.run_test() as pilot:
-            group_select = app.screen.query_one("#task-create-group", Select)
-            assert group_select.disabled is True
-
-    async def test_selecting_project_enables_group_select(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, _nodes_with_groups()))
-        async with app.run_test() as pilot:
-            app.screen.query_one("#task-create-project", Select).value = 1
-            await pilot.pause()
             group_select = app.screen.query_one("#task-create-group", Select)
             assert group_select.disabled is False
 
-    async def test_create_with_project_and_group(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, _nodes_with_groups()))
+    async def test_create_with_group(self):
+        app = ModalTestApp(TaskCreateModal(STATUSES, GROUP_OPTIONS))
         async with app.run_test() as pilot:
             app.screen.query_one("#task-create-title", Input).value = "My task"
-            app.screen.query_one("#task-create-project", Select).value = 1
-            await pilot.pause()
-            app.screen.query_one("#task-create-group", Select).value = 11  # Signup
-            app.screen.action_save()
-            await pilot.pause()
-            assert app.result["project_id"] == 1
-            assert app.result["group_id"] == 11
-
-    async def test_changing_project_clears_group(self):
-        app = ModalTestApp(TaskCreateModal(STATUSES, _nodes_with_groups()))
-        async with app.run_test() as pilot:
-            app.screen.query_one("#task-create-project", Select).value = 1
-            await pilot.pause()
             app.screen.query_one("#task-create-group", Select).value = 10
-            await pilot.pause()
-            app.screen.query_one("#task-create-project", Select).value = 2
-            await pilot.pause()
-            group_select = app.screen.query_one("#task-create-group", Select)
-            assert group_select.value is Select.NULL
-
-
-# ---- ProjectCreateModal tests ----
-
-
-class TestProjectCreateModal:
-    async def test_empty_name_shows_error(self):
-        app = ModalTestApp(ProjectCreateModal())
-        async with app.run_test() as pilot:
             app.screen.action_save()
             await pilot.pause()
-            error = app.screen.query_one("#modal-error", Static)
-            assert "Name is required" in str(error.render())
-            assert app.result == "NOT_SET"
-
-    async def test_cancel_dismisses_none(self):
-        app = ModalTestApp(ProjectCreateModal())
-        async with app.run_test() as pilot:
-            await pilot.press("escape")
-            assert app.result is None
-
-    async def test_name_only(self):
-        app = ModalTestApp(ProjectCreateModal())
-        async with app.run_test() as pilot:
-            app.screen.query_one("#project-create-name", Input).value = "NewProj"
-            app.screen.action_save()
-            await pilot.pause()
-            assert app.result == {"name": "NewProj", "description": None}
-
-    async def test_name_and_description(self):
-        app = ModalTestApp(ProjectCreateModal())
-        async with app.run_test() as pilot:
-            app.screen.query_one("#project-create-name", Input).value = "NewProj"
-            textarea = app.screen.query_one(TextArea)
-            textarea.insert("A description")
-            app.screen.action_save()
-            await pilot.pause()
-            assert app.result == {"name": "NewProj", "description": "A description"}
+            assert app.result["group_id"] == 10
 
 
 # ---- GroupCreateModal tests ----
@@ -268,7 +151,7 @@ class TestProjectCreateModal:
 
 class TestGroupCreateModal:
     async def test_empty_title_shows_error(self):
-        app = ModalTestApp(GroupCreateModal(PROJECTS))
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=[]))
         async with app.run_test() as pilot:
             app.screen.action_save()
             await pilot.pause()
@@ -277,18 +160,37 @@ class TestGroupCreateModal:
             assert app.result == "NOT_SET"
 
     async def test_cancel_dismisses_none(self):
-        app = ModalTestApp(GroupCreateModal(PROJECTS))
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=[]))
         async with app.run_test() as pilot:
             await pilot.press("escape")
             assert app.result is None
 
-    async def test_valid_group(self):
-        app = ModalTestApp(GroupCreateModal(PROJECTS))
+    async def test_valid_root_group(self):
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=[]))
         async with app.run_test() as pilot:
             app.screen.query_one("#group-create-title", Input).value = "Sprint 1"
             app.screen.action_save()
             await pilot.pause()
-            assert app.result == {"project_id": 1, "title": "Sprint 1", "description": None}
+            assert app.result == {
+                "workspace_id": 1,
+                "title": "Sprint 1",
+                "parent_id": None,
+                "description": None,
+            }
+
+    async def test_valid_group_with_parent(self):
+        app = ModalTestApp(GroupCreateModal(workspace_id=1, group_options=GROUP_OPTIONS))
+        async with app.run_test() as pilot:
+            app.screen.query_one("#group-create-title", Input).value = "Sub"
+            app.screen.query_one("#group-create-parent", Select).value = 10
+            app.screen.action_save()
+            await pilot.pause()
+            assert app.result == {
+                "workspace_id": 1,
+                "title": "Sub",
+                "parent_id": 10,
+                "description": None,
+            }
 
 
 # ---- StatusCreateModal tests ----

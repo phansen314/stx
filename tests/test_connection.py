@@ -44,7 +44,6 @@ class TestInitDb:
         }
         assert tables == {
             "workspaces",
-            "projects",
             "statuses",
             "tasks",
             "task_edges",
@@ -495,21 +494,12 @@ class TestMigrations:
         row = conn.execute("SELECT group_id FROM tasks WHERE id = 1").fetchone()
         assert row["group_id"] == 1
         row = conn.execute("SELECT group_id FROM tasks WHERE id = 2").fetchone()
-        assert row["group_id"] is None
+        # After migration 015, task 2 (project_id=1, group_id=NULL) is remapped
+        # to the project-root group (id=2, created from project 1).
+        assert row["group_id"] == 2
         # Verify COLLATE NOCASE applied to name/title columns by migration 003
         # (case-insensitive lookup should work on workspaces after rebuild)
         assert conn.execute("SELECT id FROM workspaces WHERE name = 'B'").fetchone() is not None
-        # Verify composite FK (group_id, project_id) enforces group-project match
-        conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (2, 1, 'p2')")
-        conn.execute(
-            "INSERT INTO groups (id, workspace_id, project_id, title) VALUES (2, 1, 2, 'g2')"
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            # Task in project 1 cannot be assigned to group in project 2
-            conn.execute(
-                "INSERT INTO tasks (workspace_id, title, status_id, project_id, group_id) "
-                "VALUES (1, 'bad', 1, 1, 2)"
-            )
         conn.close()
 
     def test_migration_005_adds_group_dependencies(self, tmp_path: Path) -> None:
@@ -612,12 +602,9 @@ class TestMigrations:
             ).fetchall()
         }
         assert "group_edges" in tables
-        # After migration 006: boards→workspaces, board_id→workspace_id
+        # After all migrations: boards→workspaces (006), projects removed (015)
         conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'b')")
-        conn.execute("INSERT INTO projects (id, workspace_id, name) VALUES (1, 1, 'p')")
-        conn.execute(
-            "INSERT INTO groups (id, workspace_id, project_id, title) VALUES (1, 1, 1, 'g')"
-        )
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (1, 1, 'g')")
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -802,8 +789,8 @@ class TestMigrations:
         _run_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
-        # Metadata columns added to the three entities with default '{}'
-        for table in ("workspaces", "projects", "groups"):
+        # Metadata columns present on surviving entities with default '{}'
+        for table in ("workspaces", "groups"):
             row = conn.execute(f"SELECT metadata FROM {table}").fetchone()
             assert row[0] == "{}"
 
@@ -811,10 +798,9 @@ class TestMigrations:
         t1 = conn.execute("SELECT metadata FROM tasks WHERE id=1").fetchone()
         assert _json.loads(t1[0]) == {"branch": "feat"}
 
-        # json_valid CHECK is now enforced on all four entity tables
+        # json_valid CHECK is now enforced (projects table removed by migration 015)
         for sql in (
             "UPDATE workspaces SET metadata = 'not json' WHERE id = 1",
-            "UPDATE projects SET metadata = 'not json' WHERE id = 1",
             "UPDATE groups SET metadata = 'not json' WHERE id = 1",
             "UPDATE tasks SET metadata = 'not json' WHERE id = 1",
         ):

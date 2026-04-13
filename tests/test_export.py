@@ -8,7 +8,6 @@ import pytest
 from helpers import (
     insert_group,
     insert_journal_entry,
-    insert_project,
     insert_status,
     insert_tag,
     insert_task,
@@ -25,21 +24,14 @@ from stx.repository import set_task_group_id
 
 
 def _seed_workspace(conn: sqlite3.Connection) -> int:
-    """Create a workspace with statuses, projects, tasks, and a dependency."""
+    """Create a workspace with statuses, groups, tasks, and a dependency."""
     with transaction(conn):
         bid = insert_workspace(conn, "Work")
         col_todo = insert_status(conn, bid, "Todo")
         col_done = insert_status(conn, bid, "Done")
-        pid = insert_project(conn, bid, "Backend", description="API work")
-        t1 = insert_task(
-            conn,
-            bid,
-            "Set up CI",
-            col_todo,
-            project_id=pid,
-            priority=2,
-            due_date=1777593600,
-        )
+        gid = insert_group(conn, bid, "Backend", description="API work")
+        t1 = insert_task(conn, bid, "Set up CI", col_todo, priority=2, due_date=1777593600)
+        set_task_group_id(conn, t1, gid)
         t2 = insert_task(conn, bid, "Write docs", col_done)
         insert_task_dependency(conn, t2, t1)
     return bid
@@ -83,18 +75,13 @@ class TestExportFull:
         assert "| 1 | Done | 1 |" in md
         assert "| 2 | Todo | 1 |" in md
 
-    def test_project_table(self, conn: sqlite3.Connection) -> None:
-        md = export_markdown(conn)
-        assert "### Projects" in md
-        assert "| Backend | API work | 1 |" in md
-
     def test_task_table(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
         assert "### Tasks" in md
         assert "#### Todo" in md
-        assert "| task-0001 | Set up CI | P2 | Backend |  | 2026-05-01 |" in md
+        assert "| task-0001 | Set up CI | P2 |  | 2026-05-01 |" in md
         assert "#### Done" in md
-        assert "| task-0002 | Write docs | P1 |  |  |  |" in md
+        assert "| task-0002 | Write docs | P1 |  |  |" in md
 
     def test_dependency_mermaid(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
@@ -114,13 +101,6 @@ class TestExportEdgeCases:
         md = export_markdown(conn)
         assert "#### Empty" not in md
 
-    def test_no_projects_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "B")
-            insert_status(conn, bid, "Col")
-        md = export_markdown(conn)
-        assert "### Projects" not in md
-
     def test_no_deps_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
@@ -139,14 +119,6 @@ class TestExportEdgeCases:
             conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (tid,))
         md = export_markdown(conn)
         assert "Hidden" not in md
-
-    def test_project_with_no_description(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "B")
-            insert_status(conn, bid, "Col")
-            insert_project(conn, bid, "NoDesc", description=None)
-        md = export_markdown(conn)
-        assert "| NoDesc |  | 0 |" in md
 
     def test_multiple_workspaces(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
@@ -191,7 +163,7 @@ class TestExportTags:
             tag_id = insert_tag(conn, bid, "bug")
             insert_task_tag(conn, tid, tag_id)
         md = export_markdown(conn)
-        assert "| task-0001 | Fix bug | P1 |  | bug |  |" in md
+        assert "| task-0001 | Fix bug | P1 | bug |  |" in md
 
     def test_no_tags_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
@@ -207,9 +179,8 @@ class TestExportGroups:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
-            pid = insert_project(conn, bid, "P")
-            gid = insert_group(conn, pid, "Frontend")
-            tid = insert_task(conn, bid, "Fix UI", col, project_id=pid)
+            gid = insert_group(conn, bid, "Frontend")
+            tid = insert_task(conn, bid, "Fix UI", col)
             set_task_group_id(conn, tid, gid)
         md = export_markdown(conn)
         assert "### Groups" in md
@@ -219,10 +190,8 @@ class TestExportGroups:
     def test_nested_groups(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
-            col = insert_status(conn, bid, "Col")
-            pid = insert_project(conn, bid, "P")
-            parent = insert_group(conn, pid, "Frontend")
-            insert_group(conn, pid, "Components", parent_id=parent)
+            parent = insert_group(conn, bid, "Frontend")
+            insert_group(conn, bid, "Components", parent_id=parent)
         md = export_markdown(conn)
         assert "**Frontend**" in md
         assert "**Components**" in md
@@ -231,19 +200,19 @@ class TestExportGroups:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             insert_status(conn, bid, "Col")
-            insert_project(conn, bid, "P")
         md = export_markdown(conn)
         assert "### Groups" not in md
 
-    def test_ungrouped_tasks_count(self, conn: sqlite3.Connection) -> None:
+    def test_ungrouped_task_appears_in_tasks_section(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Col")
-            pid = insert_project(conn, bid, "P")
-            insert_group(conn, pid, "G")
-            insert_task(conn, bid, "Ungrouped", col, project_id=pid)
+            insert_group(conn, bid, "G")
+            insert_task(conn, bid, "Ungrouped", col)
         md = export_markdown(conn)
-        assert "1 ungrouped task" in md
+        # Task with no group_id still appears in the tasks section
+        assert "Ungrouped" in md
+        assert "### Tasks" in md
 
 
 class TestMdEscape:
@@ -278,11 +247,10 @@ class TestExportMdEscaping:
         md = export_markdown(conn)
         assert "line1<br>line2" in md
 
-    def test_backtick_in_project_description_escaped(self, conn: sqlite3.Connection) -> None:
+    def test_backtick_in_group_description_escaped(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
-            insert_status(conn, bid, "Col")
-            insert_project(conn, bid, "P", description="use `cmd` here")
+            insert_group(conn, bid, "G", description="use `cmd` here")
         md = export_markdown(conn)
         assert r"use \`cmd\` here" in md
 
@@ -338,7 +306,6 @@ class TestExportFullJson:
             "exported_at",
             "workspaces",
             "statuses",
-            "projects",
             "tasks",
             "tags",
             "groups",
@@ -353,7 +320,6 @@ class TestExportFullJson:
         for key in (
             "workspaces",
             "statuses",
-            "projects",
             "tasks",
             "tags",
             "groups",
@@ -367,8 +333,7 @@ class TestExportFullJson:
         with transaction(conn):
             bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
-            pid = insert_project(conn, bid, "P", description="desc")
-            tid = insert_task(conn, bid, "T1", col, project_id=pid)
+            tid = insert_task(conn, bid, "T1", col)
             tag_id = insert_tag(conn, bid, "bug")
             insert_task_tag(conn, tid, tag_id)
             insert_journal_entry(conn, tid, field="title", old_value="Old", new_value="T1")
@@ -392,8 +357,7 @@ class TestExportFullJson:
             bid = insert_workspace(conn, "Work")
             col1 = insert_status(conn, bid, "Todo")
             col2 = insert_status(conn, bid, "Done")
-            pid = insert_project(conn, bid, "Backend")
-            t1 = insert_task(conn, bid, "T1", col1, project_id=pid)
+            t1 = insert_task(conn, bid, "T1", col1)
             t2 = insert_task(conn, bid, "T2", col2)
             insert_task_dependency(conn, t2, t1)
             tag_id = insert_tag(conn, bid, "urgent")
@@ -492,47 +456,27 @@ class TestExportEntityMetadata:
         assert "**Metadata:**" in md
         assert "**env**: prod" in md
 
-    def test_project_metadata_section(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "W")
-            insert_status(conn, bid, "Todo")
-            pid = insert_project(conn, bid, "backend")
-            conn.execute(
-                """UPDATE projects SET metadata = '{"owner":"alice"}' WHERE id = ?""",
-                (pid,),
-            )
-        md = export_markdown(conn)
-        assert "### Project Metadata" in md
-        assert "#### backend" in md
-        assert "**owner**: alice" in md
-
     def test_group_metadata_section(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "W")
             insert_status(conn, bid, "Todo")
-            pid = insert_project(conn, bid, "backend")
-            gid = insert_group(conn, pid, "Sprint1")
+            gid = insert_group(conn, bid, "backend")
             conn.execute(
                 """UPDATE groups SET metadata = '{"sprint":"3"}' WHERE id = ?""",
                 (gid,),
             )
         md = export_markdown(conn)
         assert "### Group Metadata" in md
-        assert "#### backend > Sprint1" in md
+        assert "#### backend" in md
         assert "**sprint**: 3" in md
 
     def test_json_export_includes_entity_metadata(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):
             bid = insert_workspace(conn, "W")
             insert_status(conn, bid, "Todo")
-            pid = insert_project(conn, bid, "backend")
-            gid = insert_group(conn, pid, "Sprint1")
+            gid = insert_group(conn, bid, "backend")
             conn.execute('UPDATE workspaces SET metadata = \'{"env":"prod"}\' WHERE id = ?', (bid,))
-            conn.execute(
-                'UPDATE projects SET metadata = \'{"owner":"alice"}\' WHERE id = ?', (pid,)
-            )
             conn.execute('UPDATE groups SET metadata = \'{"sprint":"3"}\' WHERE id = ?', (gid,))
         result = export_full_json(conn)
         assert result["workspaces"][0]["metadata"] == {"env": "prod"}
-        assert result["projects"][0]["metadata"] == {"owner": "alice"}
         assert result["groups"][0]["metadata"] == {"sprint": "3"}

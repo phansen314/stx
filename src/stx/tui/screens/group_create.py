@@ -4,19 +4,17 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Input, Select, Static
 
-from stx.models import Project
 from stx.tui.screens.base_edit import BaseEditModal, ModalScroll
 from stx.tui.widgets.markdown_editor import MarkdownEditor
 
 
 class GroupCreateModal(BaseEditModal):
-    def __init__(self, projects: tuple[Project, ...]) -> None:
-        self._projects = projects
+    def __init__(self, workspace_id: int, group_options: list[tuple[str, int]]) -> None:
+        self._workspace_id = workspace_id
+        self._group_options = group_options
         super().__init__()
 
     def compose(self) -> ComposeResult:
-        project_options = [(p.name, p.id) for p in self._projects]
-
         with ModalScroll(classes="modal-container"):
             yield Static("New Group", classes="modal-id")
 
@@ -34,12 +32,12 @@ class GroupCreateModal(BaseEditModal):
                 classes="form-field",
             )
 
-            yield Static("Project", classes="form-label")
+            yield Static("Parent Group (optional)", classes="form-label")
             yield Select(
-                project_options,
-                value=self._projects[0].id if self._projects else Select.NULL,
-                id="group-create-project",
-                allow_blank=False,
+                self._group_options,
+                value=Select.NULL,
+                id="group-create-parent",
+                allow_blank=True,
                 classes="form-field",
             )
 
@@ -58,12 +56,17 @@ class GroupCreateModal(BaseEditModal):
             self._show_error("Title is required")
             return
 
-        project_val = self.query_one("#group-create-project", Select).value
-        if not isinstance(project_val, int):
-            self._show_error("Project is required")
-            return
+        parent_val = self.query_one("#group-create-parent", Select).value
+        parent_id = parent_val if isinstance(parent_val, int) else None
 
         desc_text = self.query_one("#group-create-desc", MarkdownEditor).text.strip()
         description = desc_text or None
 
-        self.dismiss({"project_id": project_val, "title": title, "description": description})
+        self.dismiss(
+            {
+                "workspace_id": self._workspace_id,
+                "title": title,
+                "parent_id": parent_id,
+                "description": description,
+            }
+        )

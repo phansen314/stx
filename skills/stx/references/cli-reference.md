@@ -43,9 +43,9 @@ See [`json-schema.md`](json-schema.md) for per-command `data` shapes.
 
 Archives are **soft-deletes** — rows are never removed from the database; the `archived` flag is set to `1`.
 
-- **Visibility:** archived entities are hidden by default. Use `--archived include` or `--archived only` on `ls` commands where supported (`workspace ls`, `status ls`, `project ls`, `tag ls`, `group ls`, `task ls`).
+- **Visibility:** archived entities are hidden by default. Use `--archived include` or `--archived only` on `ls` commands where supported (`workspace ls`, `status ls`, `tag ls`, `group ls`, `task ls`).
 - **No unarchive command.** There is no `unarchive` or `restore` subcommand. To restore an entity, use the SQLite CLI directly: `sqlite3 ~/.local/share/stx/stx.db "UPDATE tasks SET archived=0 WHERE id=N"`.
-- **Cascade archive:** `workspace archive`, `project archive`, and `group archive` cascade to all descendants (statuses, tasks, groups, tags where applicable). See individual archive subcommand rows for cascade scope.
+- **Cascade archive:** `workspace archive` and `group archive` cascade to all descendants (statuses, tasks, groups where applicable). See individual archive subcommand rows for cascade scope.
 
 ---
 
@@ -59,17 +59,16 @@ Archives are **soft-deletes** — rows are never removed from the database; the 
 |---|---|---|---|
 | `--status` | `-S` | **required** | Target status name |
 | `--desc` | `-d` | — | Description |
-| `--project` | `-p` | — | Project name |
 | `--priority` | — | `1` | Priority (free-form integer; interpretation is user-defined — use metadata for labeled schemes) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
 | `--tag` | `-t` | — | Tag name (repeatable) |
-| `--group` | `-g` | — | Group title (infers project from group if `--project` not given) |
+| `--group` | `-g` | — | Group title |
 
 ```sh
 stx task create "Write README" -S "To Do"
-stx task create "Deploy to prod" -S Backlog --project "Q2 launch" --priority 3 --due 2026-05-01
+stx task create "Deploy to prod" -S Backlog --priority 3 --due 2026-05-01
 stx task create "Add tests" -S "To Do" --tag backend --tag ci
-stx task create "Fix layout" -S "To Do" --group "Frontend" --project "Q2 launch"
+stx task create "Fix layout" -S "To Do" --group "Frontend"
 ```
 
 The JSON response is a full `TaskDetail` (same shape as `stx task show`), including any tags attached via `--tag`.
@@ -82,7 +81,6 @@ The JSON response is a full `TaskDetail` (same shape as `stx task show`), includ
 |---|---|---|---|
 | `--archived` | — | `hide` | Archived visibility: `hide` (default), `include` (active + archived), `only` (archived only) |
 | `--status` | `-S` | — | Filter by status name |
-| `--project` | `-p` | — | Filter by project name |
 | `--priority` | — | — | Filter by priority integer |
 | `--search` | — | — | Title substring search |
 | `--group` | `-g` | — | Filter by group title |
@@ -90,7 +88,7 @@ The JSON response is a full `TaskDetail` (same shape as `stx task show`), includ
 
 ```sh
 stx task ls
-stx task ls --project "Q2 launch" --status "In Progress"
+stx task ls --group "Sprint 1" --status "In Progress"
 stx task ls --search auth --priority 3
 stx task ls --tag backend --archived include
 ```
@@ -118,7 +116,6 @@ All flags are optional; only provided fields are updated.
 | `--desc` | `-d` | — | New description |
 | `--priority` | — | — | New priority integer |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
-| `--project` | `-p` | — | Change project |
 | `--tag` | `-t` | — | Add tag (repeatable) |
 | `--untag` | — | — | Remove tag (repeatable; errors if tag not currently on task) |
 | `--dry-run` | — | off | Preview the field + tag diff without writing |
@@ -139,13 +136,11 @@ stx task edit task-0003 --priority 5 --dry-run
 |---|---|
 | `--status` / `-S` | Target status name (**required**) |
 | `position` (optional positional) | Integer position within status (default: `0` = top) |
-| `--project` / `-p` | Also change the task's project |
 | `--dry-run` | Preview from/to status + position without writing |
 
 ```sh
 stx task mv task-0001 --status "In Progress"
 stx task mv task-0001 -S Done 2          # position 2 within Done status
-stx task mv task-0001 -S Backlog --project "Next sprint"
 stx task mv task-0001 -S Done --dry-run
 ```
 
@@ -165,9 +160,9 @@ Shows the full audit trail of field changes for a task. Entries come from the un
 
 ---
 
-## Entity Metadata — `task meta` · `workspace meta` · `project meta` · `group meta`
+## Entity Metadata — `task meta` · `workspace meta` · `group meta`
 
-Tasks, workspaces, projects, and groups each carry an independent JSON key/value metadata blob for arbitrary side data (external IDs, branch names, JIRA tickets, environment tags, sprint windows, ownership, etc.). The rules below apply to **all four** entity types — the per-entity subsections that follow only differ in how you identify the target entity.
+Tasks, workspaces, and groups each carry an independent JSON key/value metadata blob for arbitrary side data (external IDs, branch names, JIRA tickets, environment tags, sprint windows, ownership, etc.). The rules below apply to **all three** entity types — the per-entity subsections that follow only differ in how you identify the target entity.
 
 **Key rules:** charset `[a-z0-9_.-]+` after lowercase-normalization, 1–64 characters. Keys are **case-insensitive** (normalized on write); `set X Branch` and `get X BRANCH` resolve to the same stored `branch` entry.
 
@@ -182,7 +177,7 @@ Tasks, workspaces, projects, and groups each carry an independent JSON key/value
 
 Text output for `ls` on an empty entity: `"no metadata"`. `get`/`set`/`del` on a missing key raise `LookupError` (`not_found`, exit 3).
 
-Markdown export (`stx export --md`) renders metadata under dedicated sections: `**Metadata:**` block per workspace, `### Project Metadata`, `### Group Metadata`, `### Task Metadata`. JSON export (`stx export`) inlines `metadata` dicts on every entity.
+Markdown export (`stx export --md`) renders metadata under dedicated sections: `**Metadata:**` block per workspace, `### Group Metadata`, `### Task Metadata`. JSON export (`stx export`) inlines `metadata` dicts on every entity.
 
 ---
 
@@ -228,44 +223,24 @@ stx -w ops workspace meta get env     # -w targets a different workspace
 
 ---
 
-### `stx project meta`
+### `stx group meta`
 
-Positional project name is required (there is no "active project" concept).
+Positional group title identifies the group within the active workspace.
 
 | Command | Args | Description |
 |---|---|---|
-| `project meta ls` | `name` | List metadata for a project |
-| `project meta get` | `name key` | Get a value |
-| `project meta set` | `name key value` | Set or overwrite a value |
-| `project meta del` | `name key` | Remove a key |
+| `group meta ls` | `title` | List metadata for a group |
+| `group meta get` | `title key` | Get a value |
+| `group meta set` | `title key value` | Set or overwrite a value |
+| `group meta del` | `title key` | Remove a key |
 
 ```sh
-stx project meta set backend owner alice
-stx project meta set backend slack "#backend-dev"
-stx project meta ls backend
-stx project meta del backend slack
+stx group meta set "Sprint 1" start 2026-01-01
+stx group meta set "Sprint 1" end 2026-01-14
+stx group meta ls "Sprint 1"
 ```
 
----
-
-### `stx group meta`
-
-Positional group title + optional `--project/-p` for disambiguation when the title collides across projects in the same workspace.
-
-| Command | Args | Flags | Description |
-|---|---|---|---|
-| `group meta ls` | `title` | `--project/-p` | List metadata for a group |
-| `group meta get` | `title key` | `--project/-p` | Get a value |
-| `group meta set` | `title key value` | `--project/-p` | Set or overwrite a value |
-| `group meta del` | `title key` | `--project/-p` | Remove a key |
-
-```sh
-stx group meta set "Sprint 1" start 2026-01-01 --project backend
-stx group meta set "Sprint 1" end 2026-01-14 --project backend
-stx group meta ls "Sprint 1" --project backend
-```
-
-In `stx export --md` the Group Metadata section labels each block `#### <project> > <group>` to disambiguate.
+In `stx export --md` the Group Metadata section labels each block `#### <group title>`.
 
 ---
 
@@ -283,12 +258,10 @@ In `stx export --md` the Group Metadata section labels each block `#### <project
 |---|---|---|---|
 | `--to` | — | **yes** | Target workspace name |
 | `--status` | `-S` | **yes** | Status on target workspace |
-| `--project` | `-p` | no | Project on target workspace |
 | `--dry-run` | — | no | Preview without executing; validates blocking edges |
 
 ```sh
 stx task transfer task-0001 --to ops --status Backlog
-stx task transfer task-0001 --to ops --status Backlog --project infra
 stx task transfer task-0001 --to ops --status Backlog --dry-run
 ```
 
@@ -303,10 +276,10 @@ stx task transfer task-0001 --to ops --status Backlog --dry-run
 |---|---|---|---|
 | `workspace create` | `name` | `--statuses "A,B,C"` | Create workspace; auto-switches active; optionally seed statuses. `--statuses` takes a single comma-separated string (e.g. `--statuses "To Do,In Progress,Done"`). Quote the whole value. |
 | `workspace ls` | — | `--archived {hide,include,only}` (default `hide`) | List workspaces; marks active workspace |
-| `workspace show` | `[name]` | — | Single-call workspace snapshot: statuses with task counts, tasks, projects, tags, groups. Designed as a one-shot startup view for AI sessions. Operates on named workspace, active workspace, or `-w` override. |
+| `workspace show` | `[name]` | — | Single-call workspace snapshot: statuses with task counts, tasks, tags, groups. Designed as a one-shot startup view for AI sessions. Operates on named workspace, active workspace, or `-w` override. |
 | `workspace use` | `name` | — | Switch active workspace |
 | `workspace rename` | `old new` | — | Rename workspace from `old` to `new` |
-| `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (projects, groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
+| `workspace archive` | `[name]` | `--force`, `--dry-run` | Cascade-archive workspace and all descendants (groups, statuses, tasks). Prompts y/N unless `--force`. Clears active pointer if archiving active workspace. |
 
 ```sh
 stx workspace create work --statuses "To Do,In Progress,Done"
@@ -339,19 +312,6 @@ stx status archive "Old Status" --dry-run
 stx status archive "Old Status" --reassign-to "Backlog"
 stx status archive "Old Status" --force
 ```
-
----
-
-## `stx project` Subcommands
-
-| Command | Args | Flags | Description |
-|---|---|---|---|
-| `project create` | `name` | `--desc` / `-d` | Create project |
-| `project ls` | — | `--archived hide\|include\|only` | List projects; default hides archived |
-| `project show` | `name` | — | Show project detail |
-| `project edit` | `name` | `--desc` / `-d`, `--dry-run` | Edit project description; `--dry-run` previews the diff |
-| `project rename` | `old new` | — | Rename project from `old` to `new` |
-| `project archive` | `name` | `--force`, `--dry-run` | Cascade-archive project and all groups/tasks. Prompts y/N unless `--force`. |
 
 ---
 
@@ -404,34 +364,32 @@ stx tag archive backend --unassign
 
 ## `stx group` Subcommands
 
-Groups are project-scoped hierarchical collections of tasks. All group commands accept `--project/-p` to scope to a project.
-
-**Project flag asymmetry:** `group create` requires `--project` because groups cannot exist outside a project. `group ls` makes it optional — omit it to list every group in the workspace across all projects. This is intentional: creation demands the scope, listing is allowed to span it for convenience.
+Groups are workspace-scoped hierarchical collections of tasks. Root groups have no parent (`parent_id IS NULL`); nested groups specify `--parent`. All group commands resolve the group title within the active workspace (or `-w`).
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `group create` | `title` | `--project/-p` (**required**), `--parent TITLE`, `--desc/-d` | Create group; optionally nested under parent |
-| `group ls` | — | `--project/-p`, `--archived {hide,include,only}` (default `hide`) | List groups (flat) |
-| `group show` | `title` | `--project/-p` | Show detail with ancestry |
-| `group rename` | `title new_title` | `--project/-p`, `--dry-run` | Rename; `--dry-run` previews the diff |
-| `group edit` | `title` | `--desc/-d`, `--project/-p`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
-| `group archive` | `title` | `--project/-p`, `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
-| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--project/-p`, `--dry-run` | Reparent under another group, or `--to-top` to promote to top-level; `--dry-run` previews the diff |
-| `group assign` | `task title` | `--project/-p` | Assign task to group |
+| `group create` | `title` | `--parent TITLE`, `--desc/-d` | Create group; optionally nested under a parent group |
+| `group ls` | — | `--archived {hide,include,only}` (default `hide`) | List groups (flat, root-level by default) |
+| `group show` | `title` | — | Show detail with ancestry |
+| `group rename` | `title new_title` | `--dry-run` | Rename; `--dry-run` previews the diff |
+| `group edit` | `title` | `--desc/-d`, `--dry-run` | Edit group description; `--dry-run` previews the diff |
+| `group archive` | `title` | `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
+| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--dry-run` | Reparent under another group, or `--to-top` to promote to root level; `--dry-run` previews the diff |
+| `group assign` | `task title` | — | Assign task to group |
 | `group unassign` | `task` | — | Unassign task from its group |
-| `group edge create` | — | `-s/--source TITLE --target TITLE --kind KIND` (all required), `--source-project`, `--target-project` | Add an edge between groups with the given kind. Project flags disambiguate when titles collide across projects or the edge is cross-project. |
-| `group edge archive` | — | `-s/--source TITLE --target TITLE` (both required), `--source-project`, `--target-project` | Archive an active group edge. |
-| `group edge ls` | — | `-s/--source TITLE`, `--kind KIND`, `--source-project` | List active group edges on the active workspace; optional source/kind filters. |
-| `group edge meta ls\|get\|set\|del` | `[key [value]]` | `-s/--source TITLE --target TITLE --source-project --target-project` | Metadata CRUD on a single group edge. Same rules as task-edge metadata. |
+| `group edge create` | — | `-s/--source TITLE --target TITLE --kind KIND` (all required), `--source-parent`, `--target-parent` | Add an edge between groups with the given kind. Parent flags disambiguate when titles collide. |
+| `group edge archive` | — | `-s/--source TITLE --target TITLE` (both required), `--source-parent`, `--target-parent` | Archive an active group edge. |
+| `group edge ls` | — | `-s/--source TITLE`, `--kind KIND` | List active group edges on the active workspace; optional source/kind filters. |
+| `group edge meta ls\|get\|set\|del` | `[key [value]]` | `-s/--source TITLE --target TITLE --source-parent --target-parent` | Metadata CRUD on a single group edge. Same rules as task-edge metadata. |
 
 ```sh
-stx group create "Backend" --project "API rewrite" --desc "Core API services"
-stx group create "Auth" --project "API rewrite" --parent "Backend"
-stx group assign task-0005 "Auth" --project "API rewrite"
-stx group ls --project "API rewrite"
-stx group mv "Auth" --parent "Frontend" --project "API rewrite"
-stx group mv "Backend" --to-top --project "API rewrite"  # promote to top-level
-stx group edge create --source "Sprint 2" --target "Sprint 1" --kind blocks --source-project backend --target-project backend
+stx group create "Backend" --desc "Core API services"
+stx group create "Auth" --parent "Backend"
+stx group assign task-0005 "Auth"
+stx group ls
+stx group mv "Auth" --parent "Frontend"
+stx group mv "Backend" --to-top  # promote to root level
+stx group edge create --source "Sprint 2" --target "Sprint 1" --kind blocks
 ```
 
 ---
@@ -514,7 +472,7 @@ stx config unset active_workspace
 
 Launches the Textual TUI interface. No JSON output. Useful for interactive exploration — not scripted workflows.
 
-**Keybindings** (selected): `w` focus tree, `b` focus board, `e` edit selected entity, `m` edit metadata on selected entity (task/workspace/project/group), `n` new resource, `s` switch workspace, `[`/`]` move task across statuses, `r` refresh, `ctrl+q` quit. The metadata editor is reached by pressing `m` on a focused kanban task card or any entity node in the workspace tree; it presents editable key/value rows with add/delete buttons and atomically bulk-replaces the entity's metadata blob on save via `service.replace_*_metadata`. Keys are normalized to lowercase before comparison so retyping a key's case is a no-op.
+**Keybindings** (selected): `w` focus tree, `b` focus board, `e` edit selected entity, `m` edit metadata on selected entity (task/workspace/group), `n` new resource, `s` switch workspace, `[`/`]` move task across statuses, `r` refresh, `ctrl+q` quit. The metadata editor is reached by pressing `m` on a focused kanban task card or any entity node in the workspace tree; it presents editable key/value rows with add/delete buttons and atomically bulk-replaces the entity's metadata blob on save via `service.replace_*_metadata`. Keys are normalized to lowercase before comparison so retyping a key's case is a no-op.
 
 Switching workspace via the left-panel tree is an in-session focus change only; it does not modify the active workspace persisted on disk. Use `stx workspace use` or `stx config set active_workspace` to change the terminal default.
 
@@ -530,15 +488,14 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 
 | Command | `data` shape |
 |---|---|
-| `task create` | full TaskDetail (with `status`, `project`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`). `edge_sources`/`edge_targets` each is a list of `{task: Task, kind: str}`. |
+| `task create` | full TaskDetail (with `status`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`). `edge_sources`/`edge_targets` each is a list of `{task: Task, kind: str}`. |
 | `task edit`, `task archive`, `task mv` | full TaskDetail (same shape as `task show`) |
-| `task edit --dry-run`, `project edit --dry-run`, `group edit/rename/mv --dry-run` | `EntityUpdatePreview`: `{entity_type, entity_id, label, before, after, tags_added, tags_removed}` |
-| `task mv --dry-run` | `TaskMovePreview`: `{task_id, title, from_status, to_status, from_position, to_position, from_project, to_project, project_changed}` |
+| `task edit --dry-run`, `group edit/rename/mv --dry-run` | `EntityUpdatePreview`: `{entity_type, entity_id, label, before, after, tags_added, tags_removed}` |
+| `task mv --dry-run` | `TaskMovePreview`: `{task_id, title, from_status, to_status, from_position, to_position}` |
 | `workspace create/rename` | full Workspace object |
 | `workspace archive` | `{"workspace": {...Workspace}, "active_cleared": bool}` — `active_cleared` is `true` when the archived workspace was the active workspace and the active-workspace pointer was cleared as a side-effect. **Note:** this is the only archive command that returns an envelope rather than a bare entity — the `active_cleared` field represents a CLI state side-effect that cannot be inferred from the workspace object alone. |
 | `status create/rename/archive` | full Status object |
 | `status order` | `{"workspace_id": N, "statuses": [{"id": N, "name": str}, ...]}` |
-| `project create/archive` | full Project object |
 | `tag create/archive` | full Tag object |
 | `edge create/archive` | `{"source_id": N, "source_title": str, "target_id": N, "target_title": str, "kind": str}` |
 | `edge ls` | array of **TaskEdgeListItem**: `[{"source_id": N, "source_title": str, "target_id": N, "target_title": str, "workspace_id": N, "kind": str}, ...]` |
@@ -550,26 +507,24 @@ Every task-referencing command auto-detects whether the argument is an ID or a t
 | `group assign` | full TaskDetail — hydrated `group` object includes `title` |
 | `group unassign` | full TaskDetail |
 | `task transfer` (live) | `{"task": {...TaskDetail}, "source_task_id": N}` |
-| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "target_project_id": N\|null, "can_move": bool, "blocking_reason": str\|null, "edge_ids": [...], "is_archived": bool}` |
-| `task ls` | `[{"status": {...Status}, "tasks": [{...TaskListItem}]}, ...]` — grouped by status, mirrors text output. Each element has a full Status object and a `tasks` array of TaskListItem objects (with pre-resolved `project_name`, `tag_names`). |
+| `task transfer --dry-run` | `{"task_id": N, "task_title": str, "source_workspace_id": N, "target_workspace_id": N, "target_status_id": N, "can_move": bool, "blocking_reason": str\|null, "edge_ids": [...], "is_archived": bool}` |
+| `task ls` | `[{"status": {...Status}, "tasks": [{...TaskListItem}]}, ...]` — grouped by status, mirrors text output. Each element has a full Status object and a `tasks` array of TaskListItem objects (with pre-resolved `tag_names`). |
 | `workspace ls` | array of Workspace objects with `"active": bool` field |
 | `status ls` | array of Status objects |
-| `project ls` | array of Project objects |
 | `tag ls` | array of Tag objects |
-| `group ls` | array of GroupRef objects with `project_name` denormalized (avoids extra round-trip) |
-| `task show` | full TaskDetail (with `status`, `project`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`) |
-| `project show` | ProjectDetail with `tasks` array and `metadata` dict |
+| `group ls` | array of GroupRef objects |
+| `task show` | full TaskDetail (with `status`, `group`, `tags`, `edge_sources`, `edge_targets`, `history`, `metadata`) |
 | `group show` | GroupDetail with `tasks`, `children` arrays, and `metadata` dict |
-| `workspace ls` / `project ls` / `group ls` | entities include their `metadata` dicts |
+| `workspace ls` / `group ls` | entities include their `metadata` dicts |
 | `task log` | array of TaskHistory objects |
-| `workspace show` | `{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}` |
+| `workspace show` | `{"view": {"workspace": {...}, "statuses": [...]}, "tags": [...], "groups": [...]}` |
 | `export` | `{"markdown": "..."}` or `{"output_path": "...", "bytes": N}` when `-o FILE` |
 | `backup` | `{"source": "...", "dest": "...", "bytes": N}` |
 | `info` | `{"db": {"path": str, "exists": bool}, "wal": {...}, "shm": {...}, "active_workspace": {...}}` |
-| `task meta ls`, `workspace meta ls`, `project meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
-| `task meta get/set/del`, `workspace meta get/set/del`, `project meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
+| `task meta ls`, `workspace meta ls`, `group meta ls` | `[{"key": "...", "value": "..."}]` (sorted; empty list if no metadata) |
+| `task meta get/set/del`, `workspace meta get/set/del`, `group meta get/set/del` | `{"key": "...", "value": "..."}` |
 | `config ls` | full TuiConfig dict: `{theme, show_task_descriptions, show_archived, confirm_archive, default_priority, auto_refresh_seconds, active_workspace, status_order}` |
 | `config get` | `{"key": str, "value": any}` |
 | `config set`, `config unset` | `{"key": str, "value": any}` — value after write |
 
-> **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "projects": [...], "tags": [...], "groups": [...]}`) for full workspace snapshot.
+> **`task ls` vs `workspace show`:** `task ls --json` returns `[{status, tasks}]` — tasks grouped by status, matching the text output. `workspace show` returns the richer kanban context view (`{"view": {"workspace": {...}, "statuses": [...]}, "tags": [...], "groups": [...]}`) for full workspace snapshot.

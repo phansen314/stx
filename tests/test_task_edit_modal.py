@@ -3,17 +3,16 @@ from __future__ import annotations
 from helpers import ModalTestApp
 from textual.widgets import Input, Select, Static, TextArea
 
-from stx.models import Group, Project, Status
+from stx.models import Group, Status
 from stx.service_models import TaskDetail
-from stx.tui.model import GroupNode, ProjectNode
+from stx.tui.model import GroupNode
 from stx.tui.screens.task_edit import TaskEditModal
 
 
-def _group(id: int, project_id: int, title: str) -> Group:
+def _group(id: int, title: str) -> Group:
     return Group(
         id=id,
         workspace_id=1,
-        project_id=project_id,
         title=title,
         description=None,
         parent_id=None,
@@ -24,29 +23,11 @@ def _group(id: int, project_id: int, title: str) -> Group:
     )
 
 
-def _project_node(
-    project_id: int,
-    name: str,
-    groups: tuple[GroupNode, ...] = (),
-) -> ProjectNode:
-    project = Project(
-        id=project_id,
-        workspace_id=1,
-        name=name,
-        description=None,
-        archived=False,
-        created_at=0,
-        metadata={},
-    )
-    return ProjectNode(project=project, groups=groups, ungrouped_tasks=())
-
-
 def make_detail(**overrides) -> TaskDetail:
     defaults = dict(
         id=1,
         workspace_id=1,
         title="Test task",
-        project_id=None,
         description="desc",
         status_id=1,
         priority=2,
@@ -59,7 +40,6 @@ def make_detail(**overrides) -> TaskDetail:
         group_id=None,
         metadata={},
         status=Status(id=1, workspace_id=1, name="Todo", archived=False, created_at=0),
-        project=None,
         group=None,
         edge_sources=(),
         edge_targets=(),
@@ -75,28 +55,20 @@ STATUSES = (
     Status(id=2, workspace_id=1, name="Done", archived=False, created_at=0),
 )
 
-PROJECTS = (
-    Project(
-        id=1,
-        workspace_id=1,
-        name="Alpha",
-        description=None,
-        archived=False,
-        created_at=0,
-        metadata={},
-    ),
-)
-
-PROJECT_NODES = tuple(ProjectNode(project=p, groups=(), ungrouped_tasks=()) for p in PROJECTS)
+GROUP_OPTIONS: list[tuple[str, int]] = [
+    ("Frontend", 10),
+    ("Frontend > Login", 11),
+    ("Backend", 20),
+]
 
 
 def _make_app(
     *,
-    project_nodes: tuple[ProjectNode, ...] = PROJECT_NODES,
+    group_options: list[tuple[str, int]] = GROUP_OPTIONS,
     **detail_overrides,
 ) -> ModalTestApp:
     detail = make_detail(**detail_overrides)
-    modal = TaskEditModal(detail, STATUSES, project_nodes)
+    modal = TaskEditModal(detail, STATUSES, group_options)
     return ModalTestApp(modal)
 
 
@@ -201,24 +173,6 @@ class TestSaveFieldChanges:
             await pilot.pause()
             assert app.result == {"task_id": 1, "changes": {"priority": 5}}
 
-    async def test_project_change(self):
-        app = _make_app(project_id=None)
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#task-edit-project", Select).value = 1
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {"task_id": 1, "changes": {"project_id": 1}}
-
-    async def test_project_blank(self):
-        app = _make_app(project_id=1)
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#task-edit-project", Select).clear()
-            modal.action_save()
-            await pilot.pause()
-            assert app.result == {"task_id": 1, "changes": {"project_id": None}}
-
     async def test_multiple_changes(self):
         app = _make_app()
         async with app.run_test() as pilot:
@@ -234,86 +188,31 @@ class TestSaveFieldChanges:
 
 
 class TestGroupSelector:
-    def _nodes_with_groups(self) -> tuple[ProjectNode, ...]:
-        frontend_groups = (
-            GroupNode(group=_group(10, 1, "Login"), tasks=(), children=()),
-            GroupNode(group=_group(11, 1, "Signup"), tasks=(), children=()),
-        )
-        backend_groups = (GroupNode(group=_group(20, 2, "API"), tasks=(), children=()),)
-        return (
-            _project_node(1, "Frontend", groups=frontend_groups),
-            _project_node(2, "Backend", groups=backend_groups),
-        )
-
-    async def test_group_disabled_when_no_project(self):
-        app = _make_app(
-            project_id=None,
-            group_id=None,
-            project_nodes=self._nodes_with_groups(),
-        )
-        async with app.run_test() as pilot:
-            modal = app.screen
-            group_select = modal.query_one("#task-edit-group", Select)
-            assert group_select.disabled is True
-
     async def test_group_pre_selected_from_detail(self):
-        app = _make_app(
-            project_id=1,
-            group_id=10,
-            project_nodes=self._nodes_with_groups(),
-        )
+        app = _make_app(group_id=10)
         async with app.run_test() as pilot:
             modal = app.screen
             group_select = modal.query_one("#task-edit-group", Select)
-            assert group_select.disabled is False
             assert group_select.value == 10
 
-    async def test_changing_project_clears_group(self):
-        app = _make_app(
-            project_id=1,
-            group_id=10,  # Login in Frontend
-            project_nodes=self._nodes_with_groups(),
-        )
+    async def test_group_select_null_when_unset(self):
+        app = _make_app(group_id=None)
         async with app.run_test() as pilot:
             modal = app.screen
-            modal.query_one("#task-edit-project", Select).value = 2  # Backend
-            await pilot.pause()
             group_select = modal.query_one("#task-edit-group", Select)
-            # The old group (10, Login) doesn't belong to Backend, so it clears to NULL.
             assert group_select.value is Select.NULL
 
-    async def test_changing_project_to_none_disables_group(self):
-        app = _make_app(
-            project_id=1,
-            group_id=10,
-            project_nodes=self._nodes_with_groups(),
-        )
-        async with app.run_test() as pilot:
-            modal = app.screen
-            modal.query_one("#task-edit-project", Select).clear()
-            await pilot.pause()
-            group_select = modal.query_one("#task-edit-group", Select)
-            assert group_select.disabled is True
-
     async def test_assign_group_save_includes_group_id(self):
-        app = _make_app(
-            project_id=1,
-            group_id=None,
-            project_nodes=self._nodes_with_groups(),
-        )
+        app = _make_app(group_id=None)
         async with app.run_test() as pilot:
             modal = app.screen
-            modal.query_one("#task-edit-group", Select).value = 11  # Signup
+            modal.query_one("#task-edit-group", Select).value = 11
             modal.action_save()
             await pilot.pause()
             assert app.result == {"task_id": 1, "changes": {"group_id": 11}}
 
     async def test_unassign_group_save_clears_group_id(self):
-        app = _make_app(
-            project_id=1,
-            group_id=10,
-            project_nodes=self._nodes_with_groups(),
-        )
+        app = _make_app(group_id=10)
         async with app.run_test() as pilot:
             modal = app.screen
             modal.query_one("#task-edit-group", Select).clear()
@@ -321,20 +220,11 @@ class TestGroupSelector:
             await pilot.pause()
             assert app.result == {"task_id": 1, "changes": {"group_id": None}}
 
-    async def test_switch_project_and_group_together(self):
-        app = _make_app(
-            project_id=1,
-            group_id=10,  # Login in Frontend
-            project_nodes=self._nodes_with_groups(),
-        )
+    async def test_no_groups_still_renders(self):
+        app = _make_app(group_options=[], group_id=None)
         async with app.run_test() as pilot:
             modal = app.screen
-            modal.query_one("#task-edit-project", Select).value = 2  # Backend
-            await pilot.pause()
-            modal.query_one("#task-edit-group", Select).value = 20  # API
+            modal.query_one("#task-edit-title", Input).value = "New title"
             modal.action_save()
             await pilot.pause()
-            assert app.result == {
-                "task_id": 1,
-                "changes": {"project_id": 2, "group_id": 20},
-            }
+            assert app.result == {"task_id": 1, "changes": {"title": "New title"}}

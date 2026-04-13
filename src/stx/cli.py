@@ -156,22 +156,16 @@ def cmd_task_create(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     col = service.get_status_by_name(conn, workspace.id, args.status)
-    project_id = (
-        service.get_project_by_name(conn, workspace.id, args.project).id if args.project else None
-    )
     group_id = None
     if args.group:
-        grp = service.resolve_group(conn, workspace.id, args.group, project_name=args.project)
+        grp = service.resolve_group(conn, workspace.id, args.group)
         group_id = grp.id
-        if project_id is None:
-            project_id = grp.project_id
     due = parse_date(args.due) if args.due else None
     task = service.create_task(
         conn,
         workspace_id=workspace.id,
         title=args.title,
         status_id=col.id,
-        project_id=project_id,
         description=(args.desc or "").strip() or None,
         priority=args.priority,
         due_date=due,
@@ -187,12 +181,9 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
     status_id = (
         service.get_status_by_name(conn, workspace.id, args.status).id if args.status else None
     )
-    project_id = (
-        service.get_project_by_name(conn, workspace.id, args.project).id if args.project else None
-    )
     tag_id = service.get_tag_by_name(conn, workspace.id, args.tag).id if args.tag else None
     group_id = (
-        service.resolve_group(conn, workspace.id, args.group, project_name=args.project).id
+        service.resolve_group(conn, workspace.id, args.group).id
         if args.group
         else None
     )
@@ -202,7 +193,6 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
         conn,
         workspace.id,
         status_id=status_id,
-        project_id=project_id,
         tag_id=tag_id,
         group_id=group_id,
         priority=args.priority,
@@ -236,8 +226,6 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCo
         changes["priority"] = args.priority
     if args.due is not None:
         changes["due_date"] = parse_date(args.due)
-    if args.project is not None:
-        changes["project_id"] = service.get_project_by_name(conn, workspace.id, args.project).id
     add_tags = tuple(args.tag or ())
     remove_tags = tuple(args.untag or ())
     if not changes and not add_tags and not remove_tags:
@@ -269,26 +257,12 @@ def cmd_task_mv(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
     task_id = _resolve_task(conn, workspace, args.task)
     col = service.get_status_by_name(conn, workspace.id, args.status)
     position = args.position if args.position is not None else 0
-    change_project = args.project is not None
-    project_id = (
-        service.get_project_by_name(conn, workspace.id, args.project).id if change_project else None
-    )
     pre = service.get_task_detail(conn, task_id)
     from_status = pre.status.name
     if args.dry_run:
-        preview = service.preview_move_task(
-            conn,
-            task_id,
-            col.id,
-            position,
-            project_id=project_id,
-            change_project=change_project,
-        )
+        preview = service.preview_move_task(conn, task_id, col.id, position)
         return Ok(data=preview, text=presenters.format_task_move_preview(preview))
-    if change_project:
-        service.move_task(conn, task_id, col.id, position, source="cli", project_id=project_id)
-    else:
-        service.move_task(conn, task_id, col.id, position, source="cli")
+    service.move_task(conn, task_id, col.id, position, source="cli")
     detail = service.get_task_detail(conn, task_id)
     return Ok(data=detail, text=f"moved {format_task_num(task_id)}: {from_status} -> {col.name}")
 
@@ -300,26 +274,18 @@ def cmd_task_transfer(
     task_id = _resolve_task(conn, workspace, args.task)
     target_workspace = service.get_workspace_by_name(conn, args.to_workspace)
     target_col = service.get_status_by_name(conn, target_workspace.id, args.status)
-    target_project = (
-        service.get_project_by_name(conn, target_workspace.id, args.project)
-        if args.project
-        else None
-    )
-    project_id = target_project.id if target_project else None
     if args.dry_run:
         preview = service.preview_move_to_workspace(
             conn,
             task_id,
             target_workspace.id,
             target_col.id,
-            project_id=project_id,
         )
         text = presenters.format_move_preview(
             preview,
             target_workspace.name,
             target_col.name,
             source_workspace_name=workspace.name,
-            target_project_name=target_project.name if target_project else None,
         )
         return Ok(data=preview, text=text)
     new = service.move_task_to_workspace(
@@ -327,7 +293,6 @@ def cmd_task_transfer(
         task_id,
         target_workspace.id,
         target_col.id,
-        project_id=project_id,
         source="cli",
     )
     detail = service.get_task_detail(conn, new.id)
@@ -517,84 +482,6 @@ def cmd_status_archive(
     return Ok(data=updated, text=f"archived status '{col.name}'")
 
 
-# ---- Project subcommands ----
-
-
-def cmd_project_create(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    description = (args.desc or "").strip() or None
-    proj = service.create_project(conn, workspace.id, args.name, description=description)
-    return Ok(data=proj, text=f"created project '{proj.name}'")
-
-
-def cmd_project_ls(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    include_archived = args.archived in ("include", "only")
-    only_archived = args.archived == "only"
-    projects = service.list_projects(
-        conn,
-        workspace.id,
-        include_archived=include_archived,
-        only_archived=only_archived,
-    )
-    return Ok(data=projects, text=presenters.format_project_list(projects))
-
-
-def cmd_project_show(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    proj = service.get_project_by_name(conn, workspace.id, args.name)
-    detail = service.get_project_detail(conn, proj.id)
-    return Ok(data=detail, text=presenters.format_project_detail(detail))
-
-
-def cmd_project_edit(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    proj = service.get_project_by_name(conn, workspace.id, args.name)
-    changes: dict[str, Any] = {}
-    if args.desc is not None:
-        changes["description"] = args.desc.strip() or None
-    if args.dry_run:
-        preview = service.preview_update_project(conn, proj.id, changes)
-        return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
-    if not changes:
-        return Ok(data=proj, text="nothing to update")
-    updated = service.update_project(conn, proj.id, changes)
-    return Ok(data=updated, text=f"updated project '{updated.name}'")
-
-
-def cmd_project_rename(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    proj = service.get_project_by_name(conn, workspace.id, args.old_name)
-    updated = service.update_project(conn, proj.id, {"name": args.new_name})
-    return Ok(data=updated, text=f"renamed project '{args.old_name}' -> '{args.new_name}'")
-
-
-def cmd_project_archive(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    proj = service.get_project_by_name(conn, workspace.id, args.name)
-    if args.dry_run:
-        preview = service.preview_archive_project(conn, proj.id)
-        return Ok(data=preview, text="dry-run: " + presenters.format_archive_preview(preview))
-    if not args.force:
-        preview = service.preview_archive_project(conn, proj.id)
-        if not _confirm_archive(preview):
-            return Ok(data=None, text="aborted")
-    archived = service.cascade_archive_project(conn, proj.id, source="cli")
-    return Ok(data=archived, text=f"archived project '{proj.name}' and all descendants")
-
-
 # ---- Edge subcommands ----
 
 
@@ -705,8 +592,8 @@ def cmd_group_edge_create(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     kind = args.kind
     service.add_group_edge(conn, grp.id, dep.id, kind)
     return Ok(
@@ -725,8 +612,8 @@ def cmd_group_edge_archive(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     service.archive_group_edge(conn, grp.id, dep.id)
     return Ok(
         data={
@@ -745,9 +632,7 @@ def cmd_group_edge_ls(
     workspace = _resolve_workspace(conn, args, ctx)
     group_id: int | None = None
     if args.source:
-        grp = service.resolve_group(
-            conn, workspace.id, args.source, project_name=args.source_project
-        )
+        grp = service.resolve_group(conn, workspace.id, args.source)
         group_id = grp.id
     edges = service.list_group_edges(conn, workspace.id, kind=args.kind or None, group_id=group_id)
     text = presenters.format_edge_list(edges, entity="group")
@@ -761,8 +646,8 @@ def cmd_group_edge_meta_ls(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     meta = service.list_group_edge_metadata(conn, grp.id, dep.id)
     records = _meta_records(meta)
     text = presenters.format_metadata_block(meta, indent=2) or "no metadata"
@@ -773,8 +658,8 @@ def cmd_group_edge_meta_get(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     value = service.get_group_edge_meta(conn, grp.id, dep.id, args.key)
     key = args.key.lower()
     return Ok(data={"key": key, "value": value}, text=value)
@@ -784,8 +669,8 @@ def cmd_group_edge_meta_set(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     service.set_group_edge_meta(conn, grp.id, dep.id, args.key, args.value)
     key = args.key.lower()
     return Ok(
@@ -798,8 +683,8 @@ def cmd_group_edge_meta_del(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.source, project_name=args.source_project)
-    dep = service.resolve_group(conn, workspace.id, args.target, project_name=args.target_project)
+    grp = service.resolve_group(conn, workspace.id, args.source)
+    dep = service.resolve_group(conn, workspace.id, args.target)
     removed = service.remove_group_edge_meta(conn, grp.id, dep.id, args.key)
     key = args.key.lower()
     return Ok(
@@ -815,57 +700,39 @@ def cmd_group_create(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    proj = service.get_project_by_name(conn, workspace.id, args.project)
     parent_id = None
     if args.parent:
-        parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
+        parent = service.resolve_group(conn, workspace.id, args.parent)
         parent_id = parent.id
     description = (args.desc or "").strip() or None
     grp = service.create_group(
-        conn, proj.id, args.title, parent_id=parent_id, description=description
+        conn, workspace.id, args.title, parent_id=parent_id, description=description
     )
     return Ok(data=grp, text=f"created group '{grp.title}' ({format_group_num(grp.id)})")
 
 
 def cmd_group_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    project_name = args.project
-    if project_name:
-        projects = (service.get_project_by_name(conn, workspace.id, project_name),)
-    else:
-        projects = service.list_projects(conn, workspace.id)  # type: ignore[assignment]
-    if not projects:
-        return Ok(data=[], text=presenters.format_group_list(()))
     include_archived = args.archived in ("include", "only")
     only_archived = args.archived == "only"
-    refs_sections = tuple(
-        (
-            proj,
-            service.list_groups(
-                conn,
-                proj.id,
-                include_archived=include_archived,
-                only_archived=only_archived,
-            ),
-        )
-        for proj in projects
+    refs = service.list_groups(
+        conn,
+        workspace.id,
+        include_archived=include_archived,
+        only_archived=only_archived,
     )
-    payload = [
-        {**to_dict(r), "project_name": proj.name} for proj, refs in refs_sections for r in refs
-    ]
-    return Ok(data=payload, text=presenters.format_group_list(refs_sections))
+    return Ok(data=list(refs), text=presenters.format_group_list(refs))
 
 
 def cmd_group_show(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     detail = service.get_group_detail(conn, grp.id)
     ancestry = service.get_group_ancestry(conn, grp.id)
     ancestry_titles = tuple(g.title for g in ancestry)
-    proj = service.get_project(conn, detail.project_id)
-    text = presenters.format_group_detail(detail, proj.name, ancestry_titles)
+    text = presenters.format_group_detail(detail, ancestry_titles)
     return Ok(data=detail, text=text)
 
 
@@ -873,7 +740,7 @@ def cmd_group_rename(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.old_title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.old_title)
     changes = {"title": args.new_title}
     if args.dry_run:
         preview = service.preview_update_group(conn, grp.id, changes)
@@ -886,7 +753,7 @@ def cmd_group_edit(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     changes: dict[str, Any] = {}
     if args.desc is not None:
         changes["description"] = args.desc.strip() or None
@@ -903,7 +770,7 @@ def cmd_group_archive(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     if args.dry_run:
         preview = service.preview_archive_group(conn, grp.id)
         return Ok(data=preview, text="dry-run: " + presenters.format_archive_preview(preview))
@@ -917,11 +784,11 @@ def cmd_group_archive(
 
 def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     if args.to_top:
         changes: dict[str, Any] = {"parent_id": None}
     else:
-        parent = service.resolve_group(conn, workspace.id, args.parent, project_name=args.project)
+        parent = service.resolve_group(conn, workspace.id, args.parent)
         changes = {"parent_id": parent.id}
     if args.dry_run:
         preview = service.preview_update_group(conn, grp.id, changes)
@@ -942,7 +809,7 @@ def cmd_group_assign(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     task_id = _resolve_task(conn, workspace, args.task)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     service.assign_task_to_group(conn, task_id, grp.id, source="cli")
     detail = service.get_task_detail(conn, task_id)
     return Ok(
@@ -1211,54 +1078,6 @@ def cmd_workspace_meta_del(
     )
 
 
-# ---- Project metadata ----
-
-
-def cmd_project_meta_ls(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    project = service.get_project_by_name(conn, workspace.id, args.name)
-    records = _meta_records(project.metadata)
-    text = presenters.format_metadata_block(project.metadata, indent=2) or "no metadata"
-    return Ok(data=records, text=text)
-
-
-def cmd_project_meta_get(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    project = service.get_project_by_name(conn, workspace.id, args.name)
-    value = service.get_project_meta(conn, project.id, args.key)
-    key = args.key.lower()
-    return Ok(data={"key": key, "value": value}, text=value)
-
-
-def cmd_project_meta_set(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    project = service.get_project_by_name(conn, workspace.id, args.name)
-    service.set_project_meta(conn, project.id, args.key, args.value)
-    key = args.key.lower()
-    return Ok(
-        data={"key": key, "value": args.value},
-        text=f"set {key}={args.value} on project '{project.name}'",
-    )
-
-
-def cmd_project_meta_del(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    project = service.get_project_by_name(conn, workspace.id, args.name)
-    removed = service.remove_project_meta(conn, project.id, args.key)
-    key = args.key.lower()
-    return Ok(
-        data={"key": key, "value": removed}, text=f"removed {key} from project '{project.name}'"
-    )
-
-
 # ---- Group metadata ----
 
 
@@ -1266,7 +1085,7 @@ def cmd_group_meta_ls(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     records = _meta_records(grp.metadata)
     text = presenters.format_metadata_block(grp.metadata, indent=2) or "no metadata"
     return Ok(data=records, text=text)
@@ -1276,7 +1095,7 @@ def cmd_group_meta_get(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     value = service.get_group_meta(conn, grp.id, args.key)
     key = args.key.lower()
     return Ok(data={"key": key, "value": value}, text=value)
@@ -1286,7 +1105,7 @@ def cmd_group_meta_set(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     service.set_group_meta(conn, grp.id, args.key, args.value)
     key = args.key.lower()
     return Ok(
@@ -1299,7 +1118,7 @@ def cmd_group_meta_del(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
-    grp = service.resolve_group(conn, workspace.id, args.title, project_name=args.project)
+    grp = service.resolve_group(conn, workspace.id, args.title)
     removed = service.remove_group_meta(conn, grp.id, args.key)
     key = args.key.lower()
     return Ok(data={"key": key, "value": removed}, text=f"removed {key} from group '{grp.title}'")
@@ -1441,16 +1260,6 @@ HANDLERS: dict[str, CommandHandler] = {
     "status_rename": cmd_status_rename,
     "status_order": cmd_status_order,
     "status_archive": cmd_status_archive,
-    "project_create": cmd_project_create,
-    "project_ls": cmd_project_ls,
-    "project_show": cmd_project_show,
-    "project_edit": cmd_project_edit,
-    "project_rename": cmd_project_rename,
-    "project_archive": cmd_project_archive,
-    "project_meta_ls": cmd_project_meta_ls,
-    "project_meta_get": cmd_project_meta_get,
-    "project_meta_set": cmd_project_meta_set,
-    "project_meta_del": cmd_project_meta_del,
     "edge_create": cmd_edge_create,
     "edge_archive": cmd_edge_archive,
     "edge_ls": cmd_edge_ls,
@@ -1521,8 +1330,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("title")
     p_create.add_argument("--desc", "-d", default=None)
     p_create.add_argument("--status", "-S", required=True, help="status name")
-    p_create.add_argument("--project", "-p", default=None)
-    p_create.add_argument("--priority", type=int, default=1)
+    p_create.add_argument("--priority", "-p", type=int, default=1)
     p_create.add_argument("--due", default=None, help="YYYY-MM-DD")
     p_create.add_argument(
         "--tag", "-t", action="append", default=None, help="tag name (repeatable)"
@@ -1538,8 +1346,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="archived visibility: hide (default), include, or only",
     )
     p_ls.add_argument("--status", "-S", default=None, help="filter by status name")
-    p_ls.add_argument("--project", "-p", default=None, help="filter by project name")
-    p_ls.add_argument("--priority", type=int, default=None, help="filter by priority integer")
+    p_ls.add_argument("--priority", "-p", type=int, default=None, help="filter by priority integer")
     p_ls.add_argument("--search", default=None, help="search title substring")
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
     p_ls.add_argument("--tag", "-t", default=None, help="filter by tag name")
@@ -1553,9 +1360,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("task", help="task number (task-NNNN/N/#N) or title")
     p_edit.add_argument("--title", default=None)
     p_edit.add_argument("--desc", "-d", default=None)
-    p_edit.add_argument("--priority", type=int, default=None)
+    p_edit.add_argument("--priority", "-p", type=int, default=None)
     p_edit.add_argument("--due", default=None, help="YYYY-MM-DD")
-    p_edit.add_argument("--project", "-p", default=None)
     p_edit.add_argument("--tag", "-t", action="append", default=None, help="add tag (repeatable)")
     p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
     p_edit.add_argument("--dry-run", action="store_true", help="preview changes without writing")
@@ -1571,7 +1377,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="zero-indexed position within status; 0 = top (default), higher values move further down",
     )
-    p_mv.add_argument("--project", "-p", default=None, help="also change task project")
     p_mv.add_argument("--dry-run", action="store_true", help="preview move without writing")
 
     p_transfer = task_sub.add_parser("transfer", help="move task to a different workspace")
@@ -1581,7 +1386,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_workspace", required=True, help="target workspace name"
     )
     p_transfer.add_argument("--status", "-S", required=True, help="status on target workspace")
-    p_transfer.add_argument("--project", "-p", default=None, help="project on target workspace")
     p_transfer.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     p_tarch = task_sub.add_parser("archive", help="archive a task (with confirmation)")
@@ -1646,7 +1450,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_wr.add_argument("new_name", help="new workspace name")
 
     p_wsh = workspace_sub.add_parser(
-        "show", help="workspace snapshot: statuses, tasks, projects, tags, groups"
+        "show", help="workspace snapshot: statuses, tasks, groups, tags"
     )
     p_wsh.set_defaults(command="workspace_show")
     p_wsh.add_argument(
@@ -1720,69 +1524,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_carch.add_argument("--force", action="store_true", help="archive tasks instead of blocking")
     p_carch.add_argument("--dry-run", action="store_true", help="preview without executing")
 
-    # ---- Project subcommands ----
-
-    p_proj = sub.add_parser("project", help="project management")
-    proj_sub = p_proj.add_subparsers()
-
-    p_pc = proj_sub.add_parser("create", help="create a project")
-    p_pc.set_defaults(command="project_create")
-    p_pc.add_argument("name")
-    p_pc.add_argument("--desc", "-d", default=None)
-
-    p_pl = proj_sub.add_parser("ls", help="list projects")
-    p_pl.set_defaults(command="project_ls")
-    p_pl.add_argument(
-        "--archived",
-        choices=["hide", "include", "only"],
-        default="hide",
-        help="archived visibility: hide (default), include, or only",
-    )
-
-    p_ps = proj_sub.add_parser("show", help="show project detail")
-    p_ps.set_defaults(command="project_show")
-    p_ps.add_argument("name")
-
-    p_pe = proj_sub.add_parser("edit", help="edit a project")
-    p_pe.set_defaults(command="project_edit")
-    p_pe.add_argument("name")
-    p_pe.add_argument("--desc", "-d", default=None, help="project description")
-    p_pe.add_argument("--dry-run", action="store_true", help="preview changes without writing")
-
-    p_pren = proj_sub.add_parser("rename", help="rename a project")
-    p_pren.set_defaults(command="project_rename")
-    p_pren.add_argument("old_name")
-    p_pren.add_argument("new_name")
-
-    p_parc = proj_sub.add_parser("archive", help="cascade-archive project and all groups/tasks")
-    p_parc.set_defaults(command="project_archive")
-    p_parc.add_argument("name")
-    p_parc.add_argument("--force", action="store_true", help="skip confirmation prompt")
-    p_parc.add_argument("--dry-run", action="store_true", help="preview without executing")
-
-    p_pmeta = proj_sub.add_parser("meta", help="project metadata key/value management")
-    pmeta_sub = p_pmeta.add_subparsers()
-
-    p_pmeta_ls = pmeta_sub.add_parser("ls", help="list all metadata")
-    p_pmeta_ls.set_defaults(command="project_meta_ls")
-    p_pmeta_ls.add_argument("name", help="project name")
-
-    p_pmeta_get = pmeta_sub.add_parser("get", help="get a metadata value")
-    p_pmeta_get.set_defaults(command="project_meta_get")
-    p_pmeta_get.add_argument("name", help="project name")
-    p_pmeta_get.add_argument("key")
-
-    p_pmeta_set = pmeta_sub.add_parser("set", help="set a metadata key/value")
-    p_pmeta_set.set_defaults(command="project_meta_set")
-    p_pmeta_set.add_argument("name", help="project name")
-    p_pmeta_set.add_argument("key")
-    p_pmeta_set.add_argument("value")
-
-    p_pmeta_del = pmeta_sub.add_parser("del", help="delete a metadata key")
-    p_pmeta_del.set_defaults(command="project_meta_del")
-    p_pmeta_del.add_argument("name", help="project name")
-    p_pmeta_del.add_argument("key")
-
     # ---- Edge subcommands ----
 
     p_edge = sub.add_parser("edge", help="task edge management (kinded links between tasks)")
@@ -1841,18 +1582,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_gc.add_argument("title")
     p_gc.add_argument("--desc", "-d", default=None, help="group description")
     p_gc.add_argument("--parent", default=None, help="parent group title")
-    p_gc.add_argument(
-        "--project", "-p", required=True, help="project name (required; groups are project-scoped)"
-    )
 
     p_gl = grp_sub.add_parser("ls", help="list groups")
     p_gl.set_defaults(command="group_ls")
-    p_gl.add_argument(
-        "--project",
-        "-p",
-        default=None,
-        help="filter by project name (optional; lists all projects when omitted)",
-    )
     p_gl.add_argument(
         "--archived",
         choices=["hide", "include", "only"],
@@ -1863,20 +1595,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_gs = grp_sub.add_parser("show", help="show group detail")
     p_gs.set_defaults(command="group_show")
     p_gs.add_argument("title")
-    p_gs.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     p_grn = grp_sub.add_parser("rename", help="rename a group")
     p_grn.set_defaults(command="group_rename")
     p_grn.add_argument("old_title", help="current group title")
     p_grn.add_argument("new_title", help="new group title")
-    p_grn.add_argument("--project", "-p", default=None, help="disambiguate by project")
     p_grn.add_argument("--dry-run", action="store_true", help="preview rename without writing")
 
     p_ge = grp_sub.add_parser("edit", help="edit a group")
     p_ge.set_defaults(command="group_edit")
     p_ge.add_argument("title")
     p_ge.add_argument("--desc", "-d", default=None, help="group description")
-    p_ge.add_argument("--project", "-p", default=None, help="disambiguate by project")
     p_ge.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_garc = grp_sub.add_parser(
@@ -1884,7 +1613,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_garc.set_defaults(command="group_archive")
     p_garc.add_argument("title")
-    p_garc.add_argument("--project", "-p", default=None, help="disambiguate by project")
     p_garc.add_argument("--force", action="store_true", help="skip confirmation prompt")
     p_garc.add_argument("--dry-run", action="store_true", help="preview without executing")
 
@@ -1896,14 +1624,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmv_parent.add_argument(
         "--to-top", action="store_true", help="promote to top-level (no parent)"
     )
-    p_gmv.add_argument("--project", "-p", default=None, help="disambiguate by project")
     p_gmv.add_argument("--dry-run", action="store_true", help="preview reparent without writing")
 
     p_gasn = grp_sub.add_parser("assign", help="assign task to group")
     p_gasn.set_defaults(command="group_assign")
     p_gasn.add_argument("task", help="task number or title")
     p_gasn.add_argument("title", help="group title")
-    p_gasn.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     p_gun = grp_sub.add_parser("unassign", help="unassign task from group")
     p_gun.set_defaults(command="group_unassign")
@@ -1915,58 +1641,42 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmeta_ls = gmeta_sub.add_parser("ls", help="list all metadata")
     p_gmeta_ls.set_defaults(command="group_meta_ls")
     p_gmeta_ls.add_argument("title", help="group title")
-    p_gmeta_ls.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     p_gmeta_get = gmeta_sub.add_parser("get", help="get a metadata value")
     p_gmeta_get.set_defaults(command="group_meta_get")
     p_gmeta_get.add_argument("title", help="group title")
     p_gmeta_get.add_argument("key")
-    p_gmeta_get.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     p_gmeta_set = gmeta_sub.add_parser("set", help="set a metadata key/value")
     p_gmeta_set.set_defaults(command="group_meta_set")
     p_gmeta_set.add_argument("title", help="group title")
     p_gmeta_set.add_argument("key")
     p_gmeta_set.add_argument("value")
-    p_gmeta_set.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     p_gmeta_del = gmeta_sub.add_parser("del", help="delete a metadata key")
     p_gmeta_del.set_defaults(command="group_meta_del")
     p_gmeta_del.add_argument("title", help="group title")
     p_gmeta_del.add_argument("key")
-    p_gmeta_del.add_argument("--project", "-p", default=None, help="disambiguate by project")
 
     # Group edges — nested under `group edge`
     p_gedge = grp_sub.add_parser("edge", help="group edge management (kinded links between groups)")
     gedge_sub = p_gedge.add_subparsers()
 
-    _SOURCE_PROJECT_HELP = (
-        "disambiguate --source by project (only needed when the title is ambiguous)"
-    )
-    _TARGET_PROJECT_HELP = (
-        "disambiguate --target by project (only needed when the title is ambiguous)"
-    )
-
     p_gea = gedge_sub.add_parser("create", help="add a group edge")
     p_gea.set_defaults(command="group_edge_create")
     p_gea.add_argument("-s", "--source", required=True, help="source group title (edge origin)")
     p_gea.add_argument("--target", required=True, help="target group title (edge destination)")
-    p_gea.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_gea.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
     p_gea.add_argument("--kind", required=True, help="edge kind (e.g. blocks, related-to)")
 
     p_ger = gedge_sub.add_parser("archive", help="archive a group edge")
     p_ger.set_defaults(command="group_edge_archive")
     p_ger.add_argument("-s", "--source", required=True, help="source group title")
     p_ger.add_argument("--target", required=True, help="target group title")
-    p_ger.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_ger.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
 
     p_gels = gedge_sub.add_parser("ls", help="list group edges in workspace")
     p_gels.set_defaults(command="group_edge_ls")
     p_gels.add_argument("-s", "--source", default=None, help="filter by source group title")
     p_gels.add_argument("--kind", default=None, help="filter by edge kind")
-    p_gels.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
 
     p_gemeta = gedge_sub.add_parser("meta", help="group edge metadata management")
     gemeta_sub = p_gemeta.add_subparsers()
@@ -1975,23 +1685,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_gemeta_ls.set_defaults(command="group_edge_meta_ls")
     p_gemeta_ls.add_argument("-s", "--source", required=True, help="source group title")
     p_gemeta_ls.add_argument("--target", required=True, help="target group title")
-    p_gemeta_ls.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_gemeta_ls.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
 
     p_gemeta_get = gemeta_sub.add_parser("get", help="get a group edge metadata value")
     p_gemeta_get.set_defaults(command="group_edge_meta_get")
     p_gemeta_get.add_argument("-s", "--source", required=True, help="source group title")
     p_gemeta_get.add_argument("--target", required=True, help="target group title")
-    p_gemeta_get.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_gemeta_get.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
     p_gemeta_get.add_argument("key")
 
     p_gemeta_set = gemeta_sub.add_parser("set", help="set a group edge metadata key/value")
     p_gemeta_set.set_defaults(command="group_edge_meta_set")
     p_gemeta_set.add_argument("-s", "--source", required=True, help="source group title")
     p_gemeta_set.add_argument("--target", required=True, help="target group title")
-    p_gemeta_set.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_gemeta_set.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
     p_gemeta_set.add_argument("key")
     p_gemeta_set.add_argument("value")
 
@@ -1999,8 +1703,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_gemeta_del.set_defaults(command="group_edge_meta_del")
     p_gemeta_del.add_argument("-s", "--source", required=True, help="source group title")
     p_gemeta_del.add_argument("--target", required=True, help="target group title")
-    p_gemeta_del.add_argument("--source-project", default=None, help=_SOURCE_PROJECT_HELP)
-    p_gemeta_del.add_argument("--target-project", default=None, help=_TARGET_PROJECT_HELP)
     p_gemeta_del.add_argument("key")
 
     # ---- Tag subcommands ----

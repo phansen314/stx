@@ -1,12 +1,9 @@
 ```mermaid
 erDiagram
-    workspaces ||--o{ projects : ""
     workspaces ||--o{ statuses : ""
-    groups ||--o{ groups : ""
     workspaces ||--o{ groups : ""
-    projects ||--o{ groups : ""
+    groups ||--o{ groups : ""
     statuses ||--o{ tasks : ""
-    projects ||--o{ tasks : ""
     workspaces ||--o{ tasks : ""
     groups ||--o{ tasks : ""
     tasks ||--o{ task_edges : ""
@@ -26,16 +23,6 @@ erDiagram
         TEXT metadata
     }
 
-    projects {
-        INTEGER id PK
-        INTEGER workspace_id FK
-        TEXT name
-        TEXT description
-        INTEGER archived
-        INTEGER created_at
-        TEXT metadata
-    }
-
     statuses {
         INTEGER id PK
         INTEGER workspace_id FK
@@ -47,7 +34,6 @@ erDiagram
     groups {
         INTEGER id PK
         INTEGER workspace_id FK
-        INTEGER project_id FK
         INTEGER parent_id FK
         TEXT title
         TEXT description
@@ -60,7 +46,6 @@ erDiagram
     tasks {
         INTEGER id PK
         INTEGER workspace_id FK
-        INTEGER project_id FK
         TEXT title
         TEXT description
         INTEGER status_id FK

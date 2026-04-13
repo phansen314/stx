@@ -34,12 +34,10 @@ service pre-validates them to provide clear messages.
 These constraints are also enforced by composite foreign keys in the schema.
 
 - **A task's status must belong to the same workspace as the task.**
-- **A task's project must belong to the same workspace as the task.**
 - **A task edge can only link tasks on the same workspace.** Enforced by the composite FK `task_edges.(source_id, workspace_id) → tasks(id, workspace_id)`.
 - **A group edge can only link groups on the same workspace.** Enforced by the composite FK `group_edges.(source_id, workspace_id) → groups(id, workspace_id)`.
 - **A tag can only be applied to a task on the same workspace.**
-- **A group's parent must belong to the same project.** (Also enforced by composite FK.)
-- **A task's group must belong to the same project as the task.**
+- **A group's parent must belong to the same workspace.** (Also enforced by composite FK.)
 
 ## Self-Reference (defense-in-depth)
 
@@ -53,7 +51,7 @@ service layer translates `IntegrityError` into human-readable messages.
 - **Duplicate edges are pre-checked** in the service layer: `add_task_edge`/`add_group_edge` reject insert when an active edge with the same `(source_id, target_id)` already exists (regardless of kind). The DB PK is the last line of defense.
 - **Edge kind validation:** `kind` is lowercase-normalized via `_normalize_edge_kind` and must match `[a-z0-9_.-]+`, 1-64 characters. Also DB-enforced via `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
 - **Duplicate tag assignments** rely on the DB `PRIMARY KEY` constraint — no service pre-check; the `IntegrityError` is translated to a clear message.
-- **Duplicate active names** for workspaces, statuses, projects, tasks, tags, and groups
+- **Duplicate active names** for workspaces, statuses, tasks, tags, and groups
   are rejected with entity-specific messages (via error translation).
 
 ## Archival Safety (service-only)
@@ -66,7 +64,6 @@ or mutation purposes. These rules exist only in the service layer.
 Active entities cannot point to archived parents:
 
 - **A task cannot be moved to an archived status.**
-- **A task cannot be assigned to an archived project.**
 - **A task cannot be assigned to an archived group.**
 - **An edge cannot be created between archived tasks.** `add_task_edge` raises `ValueError` if either endpoint is archived. Symmetric rule for `add_group_edge`.
 
@@ -75,8 +72,7 @@ Active entities cannot point to archived parents:
 Archiving a parent entity cascades to all its active descendants:
 
 - **Archiving a group** cascade-archives all descendant groups and tasks in the subtree.
-- **Archiving a project** cascade-archives all groups and tasks in the project.
-- **Archiving a workspace** cascade-archives all tasks, groups, projects, and statuses.
+- **Archiving a workspace** cascade-archives all tasks, groups, and statuses.
 - **Archiving a status** either reassigns active tasks to another status, force-archives
   them, or blocks if neither option is specified.
 
@@ -91,8 +87,8 @@ fixing metadata before unarchiving.
 - **An archived task cannot be moved to another workspace.**
 - **A task with active edges cannot be moved to another workspace.** Archive all
   edges (both directions) first via `stx edge archive`.
-- **The target status and project must belong to the target workspace.**
-- **The target status and project must not be archived.**
+- **The target status must belong to the target workspace.**
+- **The target status must not be archived.**
 
 ### Cross-workspace move side effects
 
@@ -107,8 +103,7 @@ original. Carried over:
 
 NOT carried over:
 
-- **group_id** — groups are project-scoped and the task may have a new or no
-  project on the target workspace.
+- **group_id** — groups are workspace-scoped and the target workspace has its own group hierarchy; the new task starts ungrouped.
 - **History** — the original task retains its history; the new task starts fresh.
 
 ## Automatic Behaviors (service-only)
@@ -116,34 +111,11 @@ NOT carried over:
 - **`tag_task` auto-creates the tag** on the workspace if it doesn't already exist,
   then applies it to the task. Calling `tag_task` is the only way to tag a task;
   it never fails with "tag not found."
-- **Assigning a task to a group auto-sets the task's project** if the task has no
-  project. This convenience lives in the `assign_task_to_group` wrapper (used by
-  `stx group assign`) — the underlying `update_task` is strict and requires the
-  caller to supply a consistent `project_id` alongside `group_id` when the task
-  has none.
-
-## Group–Project Consistency (service-only)
-
-- **A task's group must belong to the same project as the task.** Enforced by
-  `_validate_group_project_consistency()` on every `update_task` call that
-  touches `project_id` or `group_id`. The check uses the *effective* project
-  and group (pending change or current value), catching both directions:
-  - Assigning/changing a group whose project doesn't match the task's project.
-  - Changing the task's project out from under an existing group — the caller
-    must also clear or re-point `group_id` in the same update.
-- **Archived-group gating:** if a task's existing group was archived after
-  assignment, any subsequent `update_task` that touches `project_id` or
-  `group_id` will surface the "group is archived" error. The user must first
-  clear or reassign the group. Updates that don't touch those fields are
-  unaffected.
-- **`update_task` accepts `group_id` directly.** There is no second code path:
-  `assign_task_to_group` and `unassign_task_from_group` are thin wrappers over
-  `update_task` (via an inner `_update_task_body` so they can hold their own
-  outer transaction without tripping the transaction manager's nesting guard).
+- **`assign_task_to_group` validates same-workspace** and writes `group_id`. `update_task` accepts `group_id` directly; `assign_task_to_group` and `unassign_task_from_group` are thin wrappers over `update_task` (via `_update_task_body` so they can hold their own outer transaction without tripping the nesting guard).
 
 ## Entity Metadata (service-only)
 
-Tasks, workspaces, projects, and groups each carry an independent JSON
+Tasks, workspaces, and groups each carry an independent JSON
 key/value metadata blob, enforced identically at the service layer via
 generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
 / `_replace_entity_metadata`) that are called by per-entity one-line delegates.
@@ -157,8 +129,8 @@ generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
   `meta get X BRANCH` resolve to the same entry on any entity.
 - **Removing a missing key raises `LookupError`** with a "not found" message.
 - **Cross-workspace move preserves task metadata** — copied verbatim via
-  `repo.copy_task_metadata` as part of `move_task_to_workspace`. Workspace,
-  project, and group metadata is scoped to those entities and does not
+  `repo.copy_task_metadata` as part of `move_task_to_workspace`. Workspace
+  and group metadata is scoped to those entities and does not
   participate in cross-workspace task moves.
 - **Two write surfaces, same normalization rules.** Per-key writes go through
   `set_*_meta` / `remove_*_meta` (one key at a time, used by the CLI); bulk
@@ -184,7 +156,7 @@ generic helpers (`_set_entity_meta` / `_get_entity_meta` / `_remove_entity_meta`
 
 - **Task field changes are recorded as history entries** when a value actually
   changes (no-op updates are skipped). The set of trackable fields is fixed by
-  the `TaskField` enum: title, description, status, project, priority, due date,
+  the `TaskField` enum: title, description, status, priority, due date,
   position, archived, start date, finish date, group.
 - **Each history entry records old value, new value, and source** (e.g., "cli",
   "tui").
@@ -201,10 +173,9 @@ Translated error categories:
 | SQLite error | Translated message |
 |---|---|
 | `UNIQUE constraint failed: workspaces.name` | "a workspace with this name already exists" |
-| `UNIQUE constraint failed: projects.*` | "a project with this name already exists on this workspace" |
 | `UNIQUE constraint failed: statuses.*` | "a status with this name already exists on this workspace" |
 | `UNIQUE constraint failed: tags.*` | "a tag with this name already exists on this workspace" |
-| `UNIQUE constraint failed: groups.*` | "a group with this title already exists in this project" |
+| `UNIQUE constraint failed: groups.*` | "a group with this title already exists here" |
 | `UNIQUE constraint failed: tasks.*` | "a task with this title already exists on this workspace" |
 | `UNIQUE constraint failed: task_edges.*` / `group_edges.*` | "an edge already exists between these entities" |
 | `CHECK constraint failed: task_edges.*` / `group_edges.*` | "edge kind must match [a-z0-9_.-]+ and be 1-64 characters" |
