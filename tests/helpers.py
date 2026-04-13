@@ -121,30 +121,6 @@ def insert_group(
     return cur.lastrowid  # type: ignore[return-value]
 
 
-def insert_tag(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str = "tag1",
-) -> int:
-    cur = conn.execute(
-        "INSERT INTO tags (workspace_id, name) VALUES (?, ?)",
-        (workspace_id, name),
-    )
-    return cur.lastrowid  # type: ignore[return-value]
-
-
-def insert_task_tag(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_id: int,
-) -> None:
-    conn.execute(
-        "INSERT INTO task_tags (task_id, tag_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
-        (task_id, tag_id, task_id),
-    )
-
-
 def insert_journal_entry(
     conn: sqlite3.Connection,
     task_id: int,

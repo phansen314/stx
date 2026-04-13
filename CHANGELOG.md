@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING:** tags feature removed. Tasks no longer have tags; the `tags` /
+  `task_tags` tables are dropped, all `stx tag` subcommands are gone, and
+  `--tag` / `--untag` flags are removed from `task create`, `task ls`, and
+  `task edit`. `TaskListItem.tag_names`, `TaskDetail.tags`, and
+  `WorkspaceContext.tags` are gone from JSON output. Use per-entity metadata
+  JSON blobs if tagging-like grouping is needed.
+
+### Migrations
+- **017_drop_tags.sql.** Drops `tags` and `task_tags` tables plus their
+  indexes. Historical `journal` rows with `entity_type='tag'`/`'task_tag'` are
+  left untouched as dead history (`journal.entity_type` is an unconstrained
+  TEXT column). `SCHEMA_VERSION = 17`.
+
 ### Changed
 - **BREAKING:** `stx workspace rename` removed. Use `stx workspace edit --name <new>`.
   Operates on the active workspace or `-w` override (no more positional `old_name`).
@@ -14,16 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   The `edit` verb is now the single mutation surface for group fields; `--dry-run`
   still previews the diff.
 - **BREAKING:** `stx status rename` removed. Use `stx status edit <name> --name <new>`.
-- **BREAKING:** `stx tag rename` removed. Use `stx tag edit <name> --name <new>`.
 - **BREAKING:** `stx config unset` renamed to `stx config del`, matching the
   `del` verb family used by `{task,workspace,group} meta del`.
-- **BREAKING:** task `-t` short flag (alias for `--tag`) removed; use the long
-  form. Short `-t` now exclusively means `--target` under `stx edge`. Resolves
-  a cross-subcommand semantic collision.
-
 ### Added
-- `stx status show <name>` and `stx tag show <name>` detail views. Both report
-  the referencing task count alongside core fields.
+- `stx status show <name>` detail view, reporting the referencing task count
+  alongside core fields.
 - `stx group log <title>` and `stx workspace log` expose the unified journal
   for groups and workspaces (task `log` was already there). Presenter helper
   `format_task_history` renamed to `format_journal_entries` to reflect its
@@ -33,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Docs
 - README no longer claims metadata is supported on every entity kind — statuses
-  and tags have no metadata column.
+  have no metadata column.
 - CLAUDE.md brought forward to `SCHEMA_VERSION = 16` and the unified `edges` table
   (polymorphic endpoints, `acyclic` flag, collapsed `EntityType.EDGE`).
 

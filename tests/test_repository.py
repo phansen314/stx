@@ -11,11 +11,9 @@ from stx.models import (
     NewGroup,
     NewJournalEntry,
     NewStatus,
-    NewTag,
     NewTask,
     NewWorkspace,
     Status,
-    Tag,
     Task,
     TaskField,
     TaskFilter,
@@ -23,10 +21,8 @@ from stx.models import (
 )
 from stx.repository import (
     add_edge,
-    add_tag_to_task,
     archive_edge,
     batch_child_ids_by_group,
-    batch_tag_ids_by_task,
     batch_task_ids_by_group,
     copy_task_metadata,
     get_active_edge,
@@ -38,8 +34,6 @@ from stx.repository import (
     get_status,
     get_status_by_name,
     get_subtree_group_ids,
-    get_tag,
-    get_tag_by_name,
     get_task,
     get_task_by_title,
     get_workspace,
@@ -47,7 +41,6 @@ from stx.repository import (
     insert_group,
     insert_journal_entry,
     insert_status,
-    insert_tag,
     insert_task,
     insert_workspace,
     list_all_edge_rows,
@@ -61,11 +54,7 @@ from stx.repository import (
     list_groups_by_workspace,
     list_journal,
     list_statuses,
-    list_tag_ids_by_task,
-    list_tags,
-    list_tags_by_task,
     list_task_ids_by_group,
-    list_task_ids_by_tag,
     list_tasks,
     list_tasks_by_ids,
     list_tasks_by_status,
@@ -74,7 +63,6 @@ from stx.repository import (
     list_workspaces,
     remove_edge_metadata_key,
     remove_group_metadata_key,
-    remove_tag_from_task,
     remove_task_metadata_key,
     remove_workspace_metadata_key,
     reparent_children,
@@ -87,7 +75,6 @@ from stx.repository import (
     unassign_tasks_from_group,
     update_group,
     update_status,
-    update_tag,
     update_task,
     update_workspace,
 )
@@ -852,214 +839,10 @@ class TestListTasksFiltered:
         result = list_tasks_filtered(conn, workspace.id, task_filter=TaskFilter(priority=5))
         assert result == ()
 
-    def test_filter_by_tag(self, conn: sqlite3.Connection) -> None:
-        workspace, col1, col2, grp, t1, t2, t3 = self._seed(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="bug"))
-        add_tag_to_task(conn, t1.id, tag.id)
-        result = list_tasks_filtered(conn, workspace.id, task_filter=TaskFilter(tag_id=tag.id))
-        assert len(result) == 1
-        assert result[0].id == t1.id
-
     def test_filter_by_group(self, conn: sqlite3.Connection) -> None:
         workspace, col1, col2, grp, t1, t2, t3 = self._seed(conn)
         result = list_tasks_filtered(conn, workspace.id, task_filter=TaskFilter(group_id=grp.id))
         assert {t.id for t in result} == {t1.id, t3.id}
-
-
-# ---- Tag ----
-
-
-class TestTagRepository:
-    def _setup(self, conn: sqlite3.Connection) -> Workspace:
-        return insert_workspace(conn, NewWorkspace(name="b"))
-
-    def test_insert_and_get(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="bug"))
-        assert isinstance(tag, Tag)
-        assert tag.name == "bug"
-        assert tag.workspace_id == workspace.id
-        assert tag.archived is False
-        fetched = get_tag(conn, tag.id)
-        assert fetched is not None
-        assert fetched.id == tag.id
-
-    def test_get_missing(self, conn: sqlite3.Connection) -> None:
-        assert get_tag(conn, 9999) is None
-
-    def test_get_by_name(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="feature"))
-        fetched = get_tag_by_name(conn, workspace.id, "feature")
-        assert fetched is not None
-        assert fetched.id == tag.id
-
-    def test_get_by_name_missing(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        assert get_tag_by_name(conn, workspace.id, "nope") is None
-
-    def test_list_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="a"))
-        t2 = insert_tag(conn, NewTag(workspace_id=workspace.id, name="b"))
-        update_tag(conn, t2.id, {"archived": True})
-        assert len(list_tags(conn, workspace.id)) == 1
-        assert len(list_tags(conn, workspace.id, include_archived=True)) == 2
-
-    def test_list_only_archived(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="active"))
-        t2 = insert_tag(conn, NewTag(workspace_id=workspace.id, name="gone"))
-        update_tag(conn, t2.id, {"archived": True})
-        tags = list_tags(conn, workspace.id, only_archived=True)
-        assert len(tags) == 1
-        assert tags[0].name == "gone"
-
-    def test_list_ordered_by_name(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="zebra"))
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="alpha"))
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="middle"))
-        tags = list_tags(conn, workspace.id)
-        assert [t.name for t in tags] == ["alpha", "middle", "zebra"]
-
-    def test_update(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="old"))
-        updated = update_tag(conn, tag.id, {"name": "new"})
-        assert updated.name == "new"
-
-    def test_update_bad_field(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="t"))
-        with pytest.raises(ValueError):
-            update_tag(conn, tag.id, {"workspace_id": 999})
-
-    def test_update_missing(self, conn: sqlite3.Connection) -> None:
-        with pytest.raises(LookupError):
-            update_tag(conn, 9999, {"name": "x"})
-
-    def test_unique_name_per_workspace(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="dup"))
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_tag(conn, NewTag(workspace_id=workspace.id, name="dup"))
-
-    def test_unique_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        insert_tag(conn, NewTag(workspace_id=workspace.id, name="Bug"))
-        with pytest.raises(sqlite3.IntegrityError):
-            insert_tag(conn, NewTag(workspace_id=workspace.id, name="bug"))
-
-    def test_get_by_name_case_insensitive(self, conn: sqlite3.Connection) -> None:
-        workspace = self._setup(conn)
-        tag = insert_tag(conn, NewTag(workspace_id=workspace.id, name="Bug"))
-        fetched = get_tag_by_name(conn, workspace.id, "bug")
-        assert fetched is not None
-        assert fetched.id == tag.id
-
-    def test_same_name_different_workspaces(self, conn: sqlite3.Connection) -> None:
-        b1 = insert_workspace(conn, NewWorkspace(name="b1"))
-        b2 = insert_workspace(conn, NewWorkspace(name="b2"))
-        t1 = insert_tag(conn, NewTag(workspace_id=b1.id, name="shared"))
-        t2 = insert_tag(conn, NewTag(workspace_id=b2.id, name="shared"))
-        assert t1.id != t2.id
-
-
-class TestTaskTagRepository:
-    def _setup(self, conn: sqlite3.Connection) -> tuple[Workspace, Status, Task, Tag, Tag]:
-        workspace = insert_workspace(conn, NewWorkspace(name="b"))
-        col = insert_status(conn, NewStatus(workspace_id=workspace.id, name="todo"))
-        task = insert_task(conn, NewTask(workspace_id=workspace.id, title="t1", status_id=col.id))
-        tag1 = insert_tag(conn, NewTag(workspace_id=workspace.id, name="bug"))
-        tag2 = insert_tag(conn, NewTag(workspace_id=workspace.id, name="feature"))
-        return workspace, col, task, tag1, tag2
-
-    def test_add_and_list_tag_ids(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        ids = list_tag_ids_by_task(conn, task.id)
-        assert set(ids) == {tag1.id, tag2.id}
-
-    def test_list_tag_ids_excludes_archived_by_default(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        update_tag(conn, tag1.id, {"archived": True})
-        ids = list_tag_ids_by_task(conn, task.id)
-        assert set(ids) == {tag2.id}
-
-    def test_list_tag_ids_include_archived(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        update_tag(conn, tag1.id, {"archived": True})
-        ids = list_tag_ids_by_task(conn, task.id, include_archived=True)
-        assert set(ids) == {tag1.id, tag2.id}
-
-    def test_list_tags_by_task(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        tags = list_tags_by_task(conn, task.id)
-        assert len(tags) == 2
-        assert all(isinstance(t, Tag) for t in tags)
-        # ordered by name
-        assert tags[0].name == "bug"
-        assert tags[1].name == "feature"
-
-    def test_list_tags_by_task_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        update_tag(conn, tag1.id, {"archived": True})
-        assert len(list_tags_by_task(conn, task.id)) == 1
-        assert len(list_tags_by_task(conn, task.id, include_archived=True)) == 2
-
-    def test_list_task_ids_by_tag(self, conn: sqlite3.Connection) -> None:
-        workspace, col, task, tag1, _ = self._setup(conn)
-        task2 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t2", status_id=col.id))
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task2.id, tag1.id)
-        ids = list_task_ids_by_tag(conn, tag1.id)
-        assert set(ids) == {task.id, task2.id}
-
-    def test_remove_tag_from_task(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, _ = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        assert len(list_tag_ids_by_task(conn, task.id)) == 1
-        remove_tag_from_task(conn, task.id, tag1.id)
-        assert list_tag_ids_by_task(conn, task.id) == ()
-
-    def test_duplicate_tag_raises(self, conn: sqlite3.Connection) -> None:
-        _, _, task, tag1, _ = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        with pytest.raises(sqlite3.IntegrityError):
-            add_tag_to_task(conn, task.id, tag1.id)
-
-    def test_batch_tag_ids_by_task(self, conn: sqlite3.Connection) -> None:
-        workspace, col, task, tag1, tag2 = self._setup(conn)
-        task2 = insert_task(conn, NewTask(workspace_id=workspace.id, title="t2", status_id=col.id))
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        add_tag_to_task(conn, task2.id, tag1.id)
-        result = batch_tag_ids_by_task(conn, (task.id, task2.id))
-        assert set(result[task.id]) == {tag1.id, tag2.id}
-        assert result[task2.id] == (tag1.id,)
-
-    def test_batch_tag_ids_excludes_archived(self, conn: sqlite3.Connection) -> None:
-        workspace, col, task, tag1, tag2 = self._setup(conn)
-        add_tag_to_task(conn, task.id, tag1.id)
-        add_tag_to_task(conn, task.id, tag2.id)
-        update_tag(conn, tag1.id, {"archived": True})
-        result = batch_tag_ids_by_task(conn, (task.id,))
-        assert result[task.id] == (tag2.id,)
-        result_all = batch_tag_ids_by_task(conn, (task.id,), include_archived=True)
-        assert set(result_all[task.id]) == {tag1.id, tag2.id}
-
-    def test_batch_tag_ids_empty(self, conn: sqlite3.Connection) -> None:
-        assert batch_tag_ids_by_task(conn, ()) == {}
 
 
 # ---- Group ----

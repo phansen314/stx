@@ -44,7 +44,6 @@ def make_detail(**overrides) -> TaskDetail:
         edge_sources=(),
         edge_targets=(),
         history=(),
-        tags=(),
     )
     defaults.update(overrides)
     return TaskDetail(**defaults)

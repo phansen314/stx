@@ -9,10 +9,8 @@ from helpers import (
     insert_group,
     insert_journal_entry,
     insert_status,
-    insert_tag,
     insert_task,
     insert_task_dependency,
-    insert_task_tag,
     insert_workspace,
 )
 
@@ -79,9 +77,9 @@ class TestExportFull:
         md = export_markdown(conn)
         assert "### Tasks" in md
         assert "#### Todo" in md
-        assert "| task-0001 | Set up CI | P2 |  | 2026-05-01 |" in md
+        assert "| task-0001 | Set up CI | P2 | 2026-05-01 |" in md
         assert "#### Done" in md
-        assert "| task-0002 | Write docs | P1 |  |  |" in md
+        assert "| task-0002 | Write docs | P1 |  |" in md
 
     def test_dependency_mermaid(self, conn: sqlite3.Connection) -> None:
         md = export_markdown(conn)
@@ -143,37 +141,6 @@ class TestExportEdgeCases:
             t2 = insert_task(conn, b2, "T2", c2)
         with pytest.raises(ValueError, match="same workspace"):
             service.add_edge(conn, ("task", t2), ("task", t1), kind="blocks")
-
-
-class TestExportTags:
-    def test_tags_section(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "B")
-            col = insert_status(conn, bid, "Col")
-            tid = insert_task(conn, bid, "Fix bug", col)
-            tag_id = insert_tag(conn, bid, "bug")
-            insert_task_tag(conn, tid, tag_id)
-        md = export_markdown(conn)
-        assert "### Tags" in md
-        assert "| bug | 1 |" in md
-
-    def test_tags_in_task_table(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "B")
-            col = insert_status(conn, bid, "Col")
-            tid = insert_task(conn, bid, "Fix bug", col)
-            tag_id = insert_tag(conn, bid, "bug")
-            insert_task_tag(conn, tid, tag_id)
-        md = export_markdown(conn)
-        assert "| task-0001 | Fix bug | P1 | bug |  |" in md
-
-    def test_no_tags_section_when_none_exist(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "B")
-            col = insert_status(conn, bid, "Col")
-            insert_task(conn, bid, "Task", col)
-        md = export_markdown(conn)
-        assert "### Tags" not in md
 
 
 class TestExportGroups:
@@ -309,9 +276,7 @@ class TestExportFullJson:
             "workspaces",
             "statuses",
             "tasks",
-            "tags",
             "groups",
-            "task_tags",
             "edges",
             "journal",
         }
@@ -322,9 +287,7 @@ class TestExportFullJson:
             "workspaces",
             "statuses",
             "tasks",
-            "tags",
             "groups",
-            "task_tags",
             "edges",
             "journal",
         ):
@@ -335,8 +298,6 @@ class TestExportFullJson:
             bid = insert_workspace(conn, "B")
             col = insert_status(conn, bid, "Todo")
             tid = insert_task(conn, bid, "T1", col)
-            tag_id = insert_tag(conn, bid, "bug")
-            insert_task_tag(conn, tid, tag_id)
             insert_journal_entry(conn, tid, field="title", old_value="Old", new_value="T1")
         result = export_full_json(conn)
         serialized = json.dumps(result)  # must not raise TypeError
@@ -361,8 +322,6 @@ class TestExportFullJson:
             t1 = insert_task(conn, bid, "T1", col1)
             t2 = insert_task(conn, bid, "T2", col2)
             insert_task_dependency(conn, t2, t1)
-            tag_id = insert_tag(conn, bid, "urgent")
-            insert_task_tag(conn, t1, tag_id)
         result = export_full_json(conn)
         workspace_ids = {b["id"] for b in result["workspaces"]}
         assert bid in workspace_ids
@@ -375,7 +334,6 @@ class TestExportFullJson:
         assert edge_row["kind"] == "blocks"
         assert edge_row["metadata"] == {}
         assert edge_row["archived"] is False
-        assert any(tt["task_id"] == t1 and tt["tag_id"] == tag_id for tt in result["task_tags"])
 
     def test_journal_included(self, conn: sqlite3.Connection) -> None:
         with transaction(conn):

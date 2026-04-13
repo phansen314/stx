@@ -170,7 +170,6 @@ def cmd_task_create(
         priority=args.priority,
         due_date=due,
         group_id=group_id,
-        tags=tuple(args.tag or ()),
     )
     detail = service.get_task_detail(conn, task.id)
     return Ok(data=detail, text=f"created {format_task_num(task.id)}: {task.title}")
@@ -181,7 +180,6 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
     status_id = (
         service.get_status_by_name(conn, workspace.id, args.status).id if args.status else None
     )
-    tag_id = service.get_tag_by_name(conn, workspace.id, args.tag).id if args.tag else None
     group_id = (
         service.resolve_group(conn, workspace.id, args.group).id
         if args.group
@@ -193,7 +191,6 @@ def cmd_task_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
         conn,
         workspace.id,
         status_id=status_id,
-        tag_id=tag_id,
         group_id=group_id,
         priority=args.priority,
         search=args.search,
@@ -226,28 +223,13 @@ def cmd_task_edit(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCo
         changes["priority"] = args.priority
     if args.due is not None:
         changes["due_date"] = parse_date(args.due)
-    add_tags = tuple(args.tag or ())
-    remove_tags = tuple(args.untag or ())
-    if not changes and not add_tags and not remove_tags:
+    if not changes:
         detail = service.get_task_detail(conn, task_id)
         return Ok(data=detail, text="nothing to update")
     if args.dry_run:
-        preview = service.preview_update_task(
-            conn,
-            task_id,
-            changes,
-            add_tags=add_tags,
-            remove_tags=remove_tags,
-        )
+        preview = service.preview_update_task(conn, task_id, changes)
         return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
-    service.update_task(
-        conn,
-        task_id,
-        changes,
-        source="cli",
-        add_tags=add_tags,
-        remove_tags=remove_tags,
-    )
+    service.update_task(conn, task_id, changes, source="cli")
     detail = service.get_task_detail(conn, task_id)
     return Ok(data=detail, text=f"updated {format_task_num(task_id)}")
 
@@ -862,76 +844,6 @@ def cmd_group_unassign(
     return Ok(data=detail, text=f"unassigned {format_task_num(task_id)}{suffix}")
 
 
-# ---- Tag ----
-
-
-def cmd_tag_create(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    tag = service.create_tag(conn, workspace.id, args.name)
-    return Ok(data=tag, text=f"created tag '{tag.name}'")
-
-
-def cmd_tag_show(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    tag = service.get_tag_by_name(conn, workspace.id, args.name)
-    from .models import TaskFilter
-
-    tasks = service.list_tasks_filtered(
-        conn, workspace.id, task_filter=TaskFilter(tag_id=tag.id)
-    )
-    return Ok(data=tag, text=presenters.format_tag_detail(tag, len(tasks)))
-
-
-def cmd_tag_edit(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    tag = service.get_tag_by_name(conn, workspace.id, args.name)
-    changes: dict[str, Any] = {}
-    if args.new_name is not None:
-        changes["name"] = args.new_name
-    if not changes:
-        return Ok(data=tag, text="nothing to update")
-    old_name = tag.name
-    updated = service.update_tag(conn, tag.id, changes)
-    if "name" in changes and changes["name"] != old_name:
-        return Ok(data=updated, text=f"renamed tag '{old_name}' -> '{updated.name}'")
-    return Ok(data=updated, text=f"updated tag '{updated.name}'")
-
-
-def cmd_tag_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    include_archived = args.archived in ("include", "only")
-    only_archived = args.archived == "only"
-    tags = service.list_tags(
-        conn,
-        workspace.id,
-        include_archived=include_archived,
-        only_archived=only_archived,
-    )
-    return Ok(data=tags, text=presenters.format_tag_list(tags))
-
-
-def cmd_tag_archive(
-    conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
-) -> CmdResult:
-    workspace = _resolve_workspace(conn, args, ctx)
-    tag = service.get_tag_by_name(conn, workspace.id, args.name)
-    if args.dry_run:
-        preview = service.preview_archive_tag(conn, tag.id)
-        return Ok(data=preview, text="dry-run: " + presenters.format_archive_preview(preview))
-    if not args.force:
-        preview = service.preview_archive_tag(conn, tag.id)
-        if not _confirm_archive(preview):
-            return Ok(data=None, text="aborted")
-    archived = service.archive_tag(conn, tag.id, unassign=args.unassign)
-    return Ok(data=archived, text=f"archived tag '{tag.name}'")
-
-
 # ---- Context ----
 
 
@@ -1333,11 +1245,6 @@ HANDLERS: dict[str, CommandHandler] = {
     "group_meta_get": cmd_group_meta_get,
     "group_meta_set": cmd_group_meta_set,
     "group_meta_del": cmd_group_meta_del,
-    "tag_create": cmd_tag_create,
-    "tag_ls": cmd_tag_ls,
-    "tag_show": cmd_tag_show,
-    "tag_edit": cmd_tag_edit,
-    "tag_archive": cmd_tag_archive,
     "workspace_show": cmd_workspace_show,
     "config_ls": cmd_config_ls,
     "config_get": cmd_config_get,
@@ -1379,9 +1286,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--status", "-S", required=True, help="status name")
     p_create.add_argument("--priority", "-p", type=int, default=1)
     p_create.add_argument("--due", default=None, help="YYYY-MM-DD")
-    p_create.add_argument(
-        "--tag", action="append", default=None, help="tag name (repeatable)"
-    )
     p_create.add_argument("--group", "-g", default=None, help="group title")
 
     p_ls = task_sub.add_parser("ls", help="list tasks")
@@ -1396,7 +1300,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--priority", "-p", type=int, default=None, help="filter by priority integer")
     p_ls.add_argument("--search", default=None, help="search title substring")
     p_ls.add_argument("--group", "-g", default=None, help="filter by group title")
-    p_ls.add_argument("--tag", default=None, help="filter by tag name")
 
     p_show = task_sub.add_parser("show", help="show task detail")
     p_show.set_defaults(command="task_show")
@@ -1409,8 +1312,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--desc", "-d", default=None)
     p_edit.add_argument("--priority", "-p", type=int, default=None)
     p_edit.add_argument("--due", default=None, help="YYYY-MM-DD")
-    p_edit.add_argument("--tag", action="append", default=None, help="add tag (repeatable)")
-    p_edit.add_argument("--untag", action="append", default=None, help="remove tag (repeatable)")
     p_edit.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_mv = task_sub.add_parser("mv", help="move task to status (within workspace)")
@@ -1501,7 +1402,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_we.add_argument("--dry-run", action="store_true", help="preview changes without writing")
 
     p_wsh = workspace_sub.add_parser(
-        "show", help="workspace snapshot: statuses, tasks, groups, tags"
+        "show", help="workspace snapshot: statuses, tasks, groups"
     )
     p_wsh.set_defaults(command="workspace_show")
     p_wsh.add_argument(
@@ -1757,49 +1658,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmeta_del.set_defaults(command="group_meta_del")
     p_gmeta_del.add_argument("title", help="group title")
     p_gmeta_del.add_argument("key")
-
-    # ---- Tag subcommands ----
-
-    p_tag = sub.add_parser("tag", help="tag management")
-    tag_sub = p_tag.add_subparsers()
-
-    p_tc = tag_sub.add_parser("create", help="create a tag")
-    p_tc.set_defaults(command="tag_create")
-    p_tc.add_argument("name")
-
-    p_tl = tag_sub.add_parser("ls", help="list tags")
-    p_tl.set_defaults(command="tag_ls")
-    p_tl.add_argument(
-        "--archived",
-        choices=["hide", "include", "only"],
-        default="hide",
-        help="archived visibility: hide (default), include, or only",
-    )
-
-    p_tsh = tag_sub.add_parser("show", help="show tag detail")
-    p_tsh.set_defaults(command="tag_show")
-    p_tsh.add_argument("name")
-
-    p_tedit = tag_sub.add_parser("edit", help="edit a tag (rename, etc.)")
-    p_tedit.set_defaults(command="tag_edit")
-    p_tedit.add_argument("name", help="existing tag name")
-    p_tedit.add_argument(
-        "--name",
-        dest="new_name",
-        default=None,
-        help="new tag name (renames the tag)",
-    )
-
-    p_tr = tag_sub.add_parser("archive", help="archive a tag")
-    p_tr.set_defaults(command="tag_archive")
-    p_tr.add_argument("name")
-    p_tr.add_argument(
-        "--unassign",
-        action="store_true",
-        help="strip the tag from all tasks before archiving (without this flag, the archived tag remains attached to tasks)",
-    )
-    p_tr.add_argument("--force", action="store_true", help="skip confirmation prompt")
-    p_tr.add_argument("--dry-run", action="store_true", help="preview without executing")
 
     # ---- Config subcommands ----
 

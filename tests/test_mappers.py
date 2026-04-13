@@ -282,20 +282,15 @@ def _group() -> Group:
 
 class TestTaskToListItem:
     def test_creates_list_item(self) -> None:
-        item = task_to_list_item(_task(), tag_names=("a", "b"))
+        item = task_to_list_item(_task())
         assert isinstance(item, TaskListItem)
         assert item.title == "t"
-        assert item.tag_names == ("a", "b")
 
     def test_task_fields_copied(self) -> None:
         task = _task()
-        item = task_to_list_item(task, tag_names=())
+        item = task_to_list_item(task)
         for f in dataclasses.fields(task):
             assert getattr(item, f.name) == getattr(task, f.name)
-
-    def test_defaults(self) -> None:
-        item = task_to_list_item(_task(), tag_names=())
-        assert item.tag_names == ()
 
 
 class TestTaskToDetail:
@@ -339,7 +334,6 @@ class TestTaskToDetail:
         assert detail.edge_sources == ()
         assert detail.edge_targets == ()
         assert detail.history == ()
-        assert detail.tags == ()
 
     def test_status_is_required_at_construction(self) -> None:
         """status is a plain required field — omitting it is a TypeError from Python."""

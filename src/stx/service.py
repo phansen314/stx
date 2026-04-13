@@ -24,11 +24,9 @@ from .models import (
     NewGroup,
     NewJournalEntry,
     NewStatus,
-    NewTag,
     NewTask,
     NewWorkspace,
     Status,
-    Tag,
     Task,
     TaskFilter,
     Workspace,
@@ -60,7 +58,6 @@ _UNSET: Any = object()
 _UNIQUE_MESSAGES: dict[str, str] = {
     "workspaces.name": "a workspace with this name already exists",
     "statuses.workspace_id, statuses.name": "a status with this name already exists on this workspace",
-    "tags.workspace_id, tags.name": "a tag with this name already exists on this workspace",
     "tasks.workspace_id, tasks.title": "a task with this title already exists on this workspace",
     "uq_groups_workspace_parent_title_active": "a group with this title already exists under the same parent",
 }
@@ -81,8 +78,6 @@ def _translate_integrity_error(
                 return ValueError(human_msg)
         if "edges" in constraint:
             return ValueError("an edge already exists between these entities with this kind")
-        if "task_tags" in constraint:
-            return ValueError("task already has this tag")
         return ValueError("a unique constraint was violated")
     if "FOREIGN KEY constraint failed" in msg:
         if context:
@@ -153,14 +148,6 @@ def _validate_task_fields(
                 )
             if grp.archived:
                 raise ValueError(f"group {grp.id} is archived")
-
-
-def _ensure_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    """Return the active tag on workspace_id matching name, creating it if absent."""
-    tag = repo.get_tag_by_name(conn, workspace_id, name)
-    if tag is None:
-        tag = repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
-    return tag
 
 
 def _record_entity_changes(
@@ -411,7 +398,6 @@ def create_task(
     start_date: int | None = None,
     finish_date: int | None = None,
     group_id: int | None = None,
-    tags: tuple[str, ...] = (),
 ) -> Task:
     fields: dict[str, Any] = {
         "priority": priority,
@@ -425,7 +411,7 @@ def create_task(
         fields["group_id"] = group_id
     _validate_task_fields(fields, workspace_id=workspace_id, conn=conn)
     with transaction(conn), _friendly_errors():
-        task = repo.insert_task(
+        return repo.insert_task(
             conn,
             NewTask(
                 workspace_id=workspace_id,
@@ -440,10 +426,6 @@ def create_task(
                 group_id=group_id,
             ),
         )
-        for tag_name in tags:
-            tag = _ensure_tag(conn, workspace_id, tag_name)
-            repo.add_tag_to_task(conn, task.id, tag.id)
-        return task
 
 
 def get_task(conn: sqlite3.Connection, task_id: int) -> Task:
@@ -494,7 +476,6 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
         for nt, nid, title, k in repo.list_edge_targets_from_hydrated(conn, "task", task_id)
     )
     history = repo.list_journal(conn, EntityType.TASK, task_id)
-    tags = repo.list_tags_by_task(conn, task_id)
     return task_to_detail(
         task,
         status=status,
@@ -502,7 +483,6 @@ def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
         edge_sources=edge_sources,
         edge_targets=edge_targets,
         history=history,
-        tags=tags,
     )
 
 
@@ -529,7 +509,6 @@ def get_workspace_list_view(
     workspace_id: int,
     *,
     status_id: int | None = None,
-    tag_id: int | None = None,
     group_id: int | None = None,
     priority: int | None = None,
     search: str | None = None,
@@ -537,13 +516,12 @@ def get_workspace_list_view(
     only_archived: bool = False,
 ) -> WorkspaceListView:
     """Denormalized workspace view for list rendering. Groups task list items
-    by status with tag names pre-resolved."""
+    by status."""
     workspace = get_workspace(conn, workspace_id)
     task_filter = TaskFilter(
         status_id=status_id,
         priority=priority,
         search=search,
-        tag_id=tag_id,
         group_id=group_id,
         include_archived=include_archived,
         only_archived=only_archived,
@@ -552,11 +530,6 @@ def get_workspace_list_view(
     statuses = repo.list_statuses(
         conn, workspace_id, include_archived=include_archived or only_archived
     )
-    tags = repo.list_tags(conn, workspace_id, include_archived=True)
-    tag_name_by_id: dict[int, str] = {t.id: t.name for t in tags}
-
-    task_ids = tuple(t.id for t in tasks)
-    tag_map = repo.batch_tag_ids_by_task(conn, task_ids)
 
     items_by_status: dict[int, list[Task]] = {s.id: [] for s in statuses}
     for task in tasks:
@@ -564,25 +537,21 @@ def get_workspace_list_view(
         if bucket is not None:
             bucket.append(task)
 
-    def _to_item(task: Task) -> TaskListItem:
-        tag_names = tuple(
-            tag_name_by_id[tid] for tid in tag_map.get(task.id, ()) if tid in tag_name_by_id
-        )
-        return task_to_list_item(task, tag_names=tag_names)
-
     status_list = tuple(
-        WorkspaceListStatus(status=s, tasks=tuple(_to_item(t) for t in items_by_status[s.id]))
+        WorkspaceListStatus(
+            status=s,
+            tasks=tuple(task_to_list_item(t) for t in items_by_status[s.id]),
+        )
         for s in statuses
     )
     return WorkspaceListView(workspace=workspace, statuses=status_list)
 
 
 def get_workspace_context(conn: sqlite3.Connection, workspace_id: int) -> WorkspaceContext:
-    """Aggregated workspace state: view + tags + all groups. Active items only."""
+    """Aggregated workspace state: view + all groups. Active items only."""
     view = get_workspace_list_view(conn, workspace_id)
-    tags = list_tags(conn, workspace_id)
     groups = list_all_groups(conn, workspace_id)
-    return WorkspaceContext(view=view, tags=tags, groups=groups)
+    return WorkspaceContext(view=view, groups=groups)
 
 
 def update_task(
@@ -590,21 +559,11 @@ def update_task(
     task_id: int,
     changes: dict[str, Any],
     source: str,
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> Task:
-    if not changes and not add_tags and not remove_tags:
+    if not changes:
         return get_task(conn, task_id)
     with transaction(conn), _friendly_errors():
-        return _update_task_body(
-            conn,
-            task_id,
-            changes,
-            source,
-            add_tags=add_tags,
-            remove_tags=remove_tags,
-        )
+        return _update_task_body(conn, task_id, changes, source)
 
 
 def _validate_task_update(
@@ -632,9 +591,6 @@ def _update_task_body(
     task_id: int,
     changes: dict[str, Any],
     source: str,
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> Task:
     """Inner body of update_task. Assumes the caller holds a transaction.
 
@@ -644,24 +600,12 @@ def _update_task_body(
     """
     old = get_task(conn, task_id)
     _validate_task_update(conn, old, changes)
-    if changes:
-        updated = repo.update_task(conn, task_id, changes)
-        _record_entity_changes(
-            conn, EntityType.TASK, task_id, old.workspace_id, old, changes, source
-        )
-    else:
-        updated = old
-    for tag_name in add_tags:
-        tag = _ensure_tag(conn, old.workspace_id, tag_name)
-        repo.add_tag_to_task(conn, task_id, tag.id)
-    for tag_name in remove_tags:
-        existing_tag = repo.get_tag_by_name(conn, old.workspace_id, tag_name)
-        if existing_tag is None:
-            raise LookupError(f"tag {tag_name!r} not found")
-        existing = repo.list_tag_ids_by_task(conn, task_id)
-        if existing_tag.id not in existing:
-            raise LookupError(f"task {task_id} is not tagged {tag_name!r}")
-        repo.remove_tag_from_task(conn, task_id, existing_tag.id)
+    if not changes:
+        return old
+    updated = repo.update_task(conn, task_id, changes)
+    _record_entity_changes(
+        conn, EntityType.TASK, task_id, old.workspace_id, old, changes, source
+    )
     return updated
 
 
@@ -779,25 +723,13 @@ def move_task_to_workspace(
             ),
         )
 
-        # Migrate active tags by name to the target workspace.  Archived tags on
-        # the source workspace are intentionally skipped: they cannot be referenced
-        # on the destination workspace and recreating them there would resurrect
-        # tags the user had already retired.
-        for tag in repo.list_tags_by_task(conn, task_id):
-            target_tag = repo.get_tag_by_name(conn, target_workspace_id, tag.name)
-            if target_tag is None:
-                target_tag = repo.insert_tag(
-                    conn, NewTag(workspace_id=target_workspace_id, name=tag.name)
-                )
-            repo.add_tag_to_task(conn, new.id, target_tag.id)
-
         repo.copy_task_metadata(conn, task_id, new.id)
 
         repo.update_task(conn, task_id, {"archived": True})
         _record_entity_changes(
             conn, EntityType.TASK, task_id, old.workspace_id, old, {"archived": True}, source
         )
-        # Refetch: `new` was built before tags/metadata were attached.
+        # Refetch: `new` was built before metadata was attached.
         return get_task(conn, new.id)
 
 
@@ -1879,99 +1811,6 @@ def list_ungrouped_task_ids(
     return repo.list_ungrouped_task_ids(conn, workspace_id)
 
 
-# ---- Tag ----
-
-
-def create_tag(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    with transaction(conn), _friendly_errors():
-        return repo.insert_tag(conn, NewTag(workspace_id=workspace_id, name=name))
-
-
-def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag:
-    tag = repo.get_tag(conn, tag_id)
-    if tag is None:
-        raise LookupError(f"tag {tag_id} not found")
-    return tag
-
-
-def get_tag_by_name(conn: sqlite3.Connection, workspace_id: int, name: str) -> Tag:
-    tag = repo.get_tag_by_name(conn, workspace_id, name)
-    if tag is None:
-        raise LookupError(f"tag {name!r} not found")
-    return tag
-
-
-def list_tags(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    *,
-    include_archived: bool = False,
-    only_archived: bool = False,
-) -> tuple[Tag, ...]:
-    return repo.list_tags(
-        conn,
-        workspace_id,
-        include_archived=include_archived,
-        only_archived=only_archived,
-    )
-
-
-def update_tag(
-    conn: sqlite3.Connection,
-    tag_id: int,
-    changes: dict[str, Any],
-) -> Tag:
-    with transaction(conn), _friendly_errors():
-        return repo.update_tag(conn, tag_id, changes)
-
-
-def archive_tag(conn: sqlite3.Connection, tag_id: int, *, unassign: bool = False) -> Tag:
-    with transaction(conn), _friendly_errors():
-        if unassign:
-            repo.remove_all_task_tags_by_tag(conn, tag_id)
-        return repo.update_tag(conn, tag_id, {"archived": True})
-
-
-def tag_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_name: str,
-    workspace_id: int,
-) -> Tag:
-    with transaction(conn), _friendly_errors():
-        task = get_task(conn, task_id)
-        if task.workspace_id != workspace_id:
-            raise ValueError(
-                f"task {task_id} belongs to workspace {task.workspace_id}, "
-                f"not workspace {workspace_id}"
-            )
-        tag = _ensure_tag(conn, workspace_id, tag_name)
-        repo.add_tag_to_task(conn, task_id, tag.id)
-        return tag
-
-
-def untag_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_name: str,
-    workspace_id: int,
-) -> None:
-    with transaction(conn), _friendly_errors():
-        task = get_task(conn, task_id)
-        if task.workspace_id != workspace_id:
-            raise ValueError(
-                f"task {task_id} belongs to workspace {task.workspace_id}, "
-                f"not workspace {workspace_id}"
-            )
-        tag = repo.get_tag_by_name(conn, workspace_id, tag_name)
-        if tag is None:
-            raise LookupError(f"tag {tag_name!r} not found")
-        existing = repo.list_tag_ids_by_task(conn, task_id)
-        if tag.id not in existing:
-            raise LookupError(f"task {task_id} is not tagged {tag_name!r}")
-        repo.remove_tag_from_task(conn, task_id, tag.id)
-
-
 # ---- Archive (preview + cascade) ----
 
 
@@ -2023,25 +1862,10 @@ def preview_archive_status(conn: sqlite3.Connection, status_id: int) -> ArchiveP
     )
 
 
-def preview_archive_tag(conn: sqlite3.Connection, tag_id: int) -> ArchivePreview:
-    tag = get_tag(conn, tag_id)
-    return ArchivePreview(
-        entity_type="tag",
-        entity_name=tag.name,
-        already_archived=tag.archived,
-        task_count=repo.count_active_tasks_by_tag(conn, tag_id),
-        group_count=0,
-        status_count=0,
-    )
-
-
 def preview_update_task(
     conn: sqlite3.Connection,
     task_id: int,
     changes: dict[str, Any],
-    *,
-    add_tags: tuple[str, ...] = (),
-    remove_tags: tuple[str, ...] = (),
 ) -> EntityUpdatePreview:
     """Compute a diff for `update_task` without writing. Validates the
     merged change set the same way `update_task` does so dry-run surfaces
@@ -2050,22 +1874,12 @@ def preview_update_task(
     old = get_task(conn, task_id)
     _validate_task_update(conn, old, changes)
     before, after = _diff_fields(old, changes)
-    current_tag_names = tuple(t.name for t in repo.list_tags_by_task(conn, task_id))
-    added = tuple(t for t in add_tags if t.lower() not in {n.lower() for n in current_tag_names})
-    removed: list[str] = []
-    for t in remove_tags:
-        matches = [n for n in current_tag_names if n.lower() == t.lower()]
-        if not matches:
-            raise LookupError(f"task {task_id} is not tagged {t!r}")
-        removed.append(matches[0])
     return EntityUpdatePreview(
         entity_type="task",
         entity_id=task_id,
         label=old.title,
         before=before,
         after=after,
-        tags_added=added,
-        tags_removed=tuple(removed),
     )
 
 

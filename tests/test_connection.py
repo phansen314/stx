@@ -48,8 +48,6 @@ class TestInitDb:
             "tasks",
             "edges",
             "journal",
-            "tags",
-            "task_tags",
             "groups",
         }
 
@@ -247,41 +245,6 @@ class TestCrossWorkspaceConstraints:
             t2 = insert_task(conn, b2, "t2", c2)
         with pytest.raises(ValueError, match="same workspace"):
             service.add_edge(conn, ("task", t1), ("task", t2), kind="blocks")
-
-    def test_tag_same_workspace_allowed(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            bid = insert_workspace(conn, "b")
-            cid = insert_status(conn, bid)
-            tid = insert_task(conn, bid, "t", cid)
-            tag_id = conn.execute(
-                "INSERT INTO tags (workspace_id, name) VALUES (?, 'bug')", (bid,)
-            ).lastrowid
-        with transaction(conn):
-            conn.execute(
-                "INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (?, ?, ?)",
-                (tid, tag_id, bid),
-            )
-        row = conn.execute("SELECT * FROM task_tags").fetchone()
-        assert row["task_id"] == tid
-        assert row["tag_id"] == tag_id
-        assert row["workspace_id"] == bid
-
-    def test_tag_cross_workspace_rejected(self, conn: sqlite3.Connection) -> None:
-        with transaction(conn):
-            b1 = insert_workspace(conn, "b1")
-            b2 = insert_workspace(conn, "b2")
-            c1 = insert_status(conn, b1)
-            tid = insert_task(conn, b1, "t", c1)
-            tag_id = conn.execute(
-                "INSERT INTO tags (workspace_id, name) VALUES (?, 'bug')", (b2,)
-            ).lastrowid
-        with pytest.raises(sqlite3.IntegrityError):
-            with transaction(conn):
-                conn.execute(
-                    "INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (?, ?, ?)",
-                    (tid, tag_id, b1),
-                )
-
 
 class TestMigrations:
     def test_migration_001_upgrades_old_task_history(self, tmp_path: Path) -> None:
@@ -822,16 +785,15 @@ class TestMigrations:
                 conn.execute(sql)
 
         # Dependent rows preserved (task_history→journal in 013,
-        # task_dependencies→task_edges in 014, task_edges+group_edges→edges in 016)
+        # task_dependencies→task_edges in 014, task_edges+group_edges→edges in 016).
+        # Note: tags/task_tags dropped by migration 017.
         assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM task_tags").fetchone()[0] == 1
         assert (
             conn.execute("SELECT COUNT(*) FROM journal WHERE entity_type='task'").fetchone()[0] == 1
         )
 
         # Cascade FKs still fire after the recreate
         conn.execute("DELETE FROM tasks WHERE id = 1")
-        assert conn.execute("SELECT COUNT(*) FROM task_tags WHERE task_id = 1").fetchone()[0] == 0
         conn.close()
 
     def test_migration_011_fails_fast_on_invalid_task_metadata(
@@ -1200,6 +1162,155 @@ class TestMigrations:
             )
 
         # FK check after the cascade-recreate must be clean.
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert violations == []
+        conn.close()
+
+    def test_migration_017_drops_tags_tables(self, tmp_path: Path) -> None:
+        """End-to-end regression for migration 017.
+
+        Bootstraps a minimal v16 schema with `tags` + `task_tags` + a
+        `journal` row, seeds representative rows, runs migration 017, and
+        asserts:
+
+        - both `tags` and `task_tags` tables are dropped
+        - associated indexes are gone
+        - journal rows are untouched (entity_type is unconstrained TEXT)
+        - ``PRAGMA user_version`` is bumped to current SCHEMA_VERSION
+        - ``PRAGMA foreign_key_check`` comes up clean post-migration
+        """
+        db_path = tmp_path / "v16.db"
+        conn = get_connection(db_path)
+        # Minimal v16 schema: only what migration 017 touches + the FK targets.
+        conn.executescript("""
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE statuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                title TEXT NOT NULL COLLATE NOCASE,
+                description TEXT,
+                status_id INTEGER NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 1,
+                due_date INTEGER,
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                start_date INTEGER,
+                finish_date INTEGER,
+                group_id INTEGER,
+                metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+                FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                name TEXT NOT NULL COLLATE NOCASE,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE (id, workspace_id)
+            );
+            CREATE TABLE task_tags (
+                task_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                PRIMARY KEY (task_id, tag_id),
+                FOREIGN KEY (task_id, workspace_id) REFERENCES tasks(id, workspace_id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id, workspace_id) REFERENCES tags(id, workspace_id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX uq_tags_workspace_name_active
+                ON tags(workspace_id, name) WHERE archived = 0;
+            CREATE INDEX idx_tags_workspace_archived_name
+                ON tags(workspace_id, archived, name);
+            CREATE INDEX idx_task_tags_tag_id ON task_tags(tag_id);
+            CREATE TABLE journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL,
+                entity_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                source TEXT NOT NULL,
+                changed_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+        """)
+        conn.execute("PRAGMA user_version = 16")
+        conn.commit()
+
+        # Seed: 1 workspace, 1 status, 1 task, 2 tags, 1 task_tag link, and
+        # a couple of journal rows (one on the task, one historical 'tag' row).
+        conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'w')")
+        conn.execute(
+            "INSERT INTO statuses (id, workspace_id, name) VALUES (1, 1, 'todo')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (1, 1, 't1', 1)"
+        )
+        conn.execute("INSERT INTO tags (id, workspace_id, name) VALUES (1, 1, 'bug')")
+        conn.execute("INSERT INTO tags (id, workspace_id, name) VALUES (2, 1, 'urgent')")
+        conn.execute(
+            "INSERT INTO task_tags (task_id, tag_id, workspace_id) VALUES (1, 1, 1)"
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, field, "
+            "new_value, source) VALUES ('task', 1, 1, 'title', 't1', 'test')"
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, field, "
+            "new_value, source) VALUES ('tag', 1, 1, 'name', 'bug', 'test')"
+        )
+        conn.commit()
+
+        # Run migration 017 via the full migration runner.
+        _run_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+        # tags/task_tags tables are gone.
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "tags" not in tables
+        assert "task_tags" not in tables
+
+        # Their indexes are gone too.
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        assert "uq_tags_workspace_name_active" not in indexes
+        assert "idx_tags_workspace_archived_name" not in indexes
+        assert "idx_task_tags_tag_id" not in indexes
+
+        # Journal rows are untouched — including the historical 'tag' entry.
+        journal_rows = conn.execute(
+            "SELECT entity_type, entity_id, field, new_value FROM journal "
+            "ORDER BY id"
+        ).fetchall()
+        assert len(journal_rows) == 2
+        assert (journal_rows[0]["entity_type"], journal_rows[0]["entity_id"]) == ("task", 1)
+        assert (journal_rows[1]["entity_type"], journal_rows[1]["entity_id"]) == ("tag", 1)
+
+        # FK check post-migration must be clean.
         violations = conn.execute("PRAGMA foreign_key_check").fetchall()
         assert violations == []
         conn.close()

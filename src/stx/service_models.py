@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Group, JournalEntry, Status, Tag, Task, Workspace
+from .models import Group, JournalEntry, Status, Task, Workspace
 
 # ---- Edge ref types (hydrated edge endpoint with kind) ----
 
@@ -62,7 +62,6 @@ class TaskListItem:
     finish_date: int | None
     group_id: int | None
     metadata: dict[str, str]
-    tag_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,7 +99,6 @@ class WorkspaceContext:
     """Aggregated workspace state for one-call session startup."""
 
     view: WorkspaceListView
-    tags: tuple[Tag, ...]
     groups: tuple[GroupRef, ...]
 
 
@@ -139,7 +137,6 @@ class TaskDetail:
     edge_sources: tuple[EdgeRef, ...]
     edge_targets: tuple[EdgeRef, ...]
     history: tuple[JournalEntry, ...]
-    tags: tuple[Tag, ...]
 
 
 @dataclass(frozen=True)
@@ -190,7 +187,7 @@ class ArchivePreview:
     """Dry-run result for an archive command. Counts reflect additional
     entities beyond the root that *would* be archived."""
 
-    entity_type: Literal["task", "group", "status", "tag", "workspace"]
+    entity_type: Literal["task", "group", "status", "workspace"]
     entity_name: str
     already_archived: bool
     task_count: int
@@ -202,8 +199,7 @@ class ArchivePreview:
 class EntityUpdatePreview:
     """Dry-run result for a field-level update (task/group edit).
     `before` / `after` contain only fields that differ — unchanged fields
-    are omitted. Tag diffs live on `tags_added` / `tags_removed` for tasks;
-    other entity kinds leave those empty.
+    are omitted.
 
     Note: `before` and `after` are mutable dicts (shallow-frozen). This is
     an intentional exception to the tuple-everywhere convention because
@@ -216,8 +212,6 @@ class EntityUpdatePreview:
     label: str  # task title, group title
     before: dict[str, Any] = field(default_factory=dict)
     after: dict[str, Any] = field(default_factory=dict)
-    tags_added: tuple[str, ...] = ()
-    tags_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

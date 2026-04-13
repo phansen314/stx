@@ -6,7 +6,7 @@ Organize context into nestable hierarchies of workspaces and groups. Track tasks
 
 - **Structured context, not just tasks** — the primary unit is the hierarchy itself: workspaces and recursively nestable groups (Group → Group → … via `parent_id`).
 - **Metadata everywhere** — every node (workspace, group, task) carries a JSON key/value blob (`stx {entity} meta set/get/del`) and an optional long-form description on groups and tasks (rendered as Markdown in the TUI).
-- **Task management** — tasks have statuses, priorities, dates, tags, kinded edges, and positions. Statuses are user-defined per workspace — kanban columns are just one interpretation.
+- **Task management** — tasks have statuses, priorities, dates, kinded edges, and positions. Statuses are user-defined per workspace — kanban columns are just one interpretation.
 - **Kinded polymorphic edges** — labelled directional links with typed endpoints (`stx edge create --source task-0001 --target group:foo --kind blocks`). Tasks, groups, and workspaces can all be edge endpoints, and cross-type edges are supported. Each edge carries a `kind` label, its own metadata blob, and an `acyclic` flag (on by default for `blocks`/`spawns`). Mermaid diagrams generated on export.
 - **Agent-first CLI** — output auto-switches to JSON when piped (`stx task ls | jq`). Every command is composable without screen-scraping.
 - **Human-friendly TUI** — renders the hierarchy as a kanban board. The left panel shows the full workspace tree; the right panel shows one column per status.
@@ -18,7 +18,6 @@ Organize context into nestable hierarchies of workspaces and groups. Track tasks
 ```
 Workspace
 ├── Status  (workflow stages, user-defined)
-├── Tag  ↔  Task  (many-to-many, workspace-scoped)
 ├── Group
 │   ├── Group  (nested, no depth limit)
 │   │   └── Task
@@ -28,11 +27,11 @@ Workspace
 
 All entities support an `archived` flag (nothing is deleted).
 
-Workspaces, groups, and tasks additionally carry a JSON `metadata` key/value blob (keys normalized to lowercase). Statuses and tags do not.
+Workspaces, groups, and tasks additionally carry a JSON `metadata` key/value blob (keys normalized to lowercase). Statuses do not.
 
 Groups and tasks additionally support `description` (free-text, Markdown).
 
-Tasks additionally have: priority, due/start/finish dates, position, tags, kinded edges (`edge_sources` / `edge_targets`, each carrying a `kind` label and its own metadata blob), and change history.
+Tasks additionally have: priority, due/start/finish dates, position, kinded edges (`edge_sources` / `edge_targets`, each carrying a `kind` label and its own metadata blob), and change history.
 
 Groups additionally have: `parent_id` (recursive nesting), position, and kinded edges.
 
@@ -132,7 +131,6 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 | `--priority` | Filter by priority integer |
 | `--search` | Search by title substring |
 | `--group` / `-g` | Filter by group title |
-| `--tag` / `-t` | Filter by tag name |
 
 ### Workflow Commands
 
@@ -140,7 +138,6 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 |---------|-------------|
 | `stx status ...` | `create`, `ls`, `show`, `edit [--name]`, `order <statuses...>`, `archive [--reassign-to STATUS\|--force]` |
 | `stx edge ...` | `create --source <t> --target <t> --kind <k>`, `archive --source <t> --target <t>`, `ls [--source <t>] [--kind <k>]`, `meta ls\|get\|set\|del --source <t> --target <t>` |
-| `stx tag ...` | `create`, `ls`, `show`, `edit [--name]`, `archive [--unassign\|--force\|--dry-run]` |
 | `stx export` | Export database as JSON (default) or Markdown with Mermaid edge graphs labelled by `kind` (`--md`) |
 | `stx info` | Show stx file locations |
 | `stx backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |

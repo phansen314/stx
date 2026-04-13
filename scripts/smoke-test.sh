@@ -225,26 +225,6 @@ run "Show change log for task 1" \
     $CMD task log task-0001
 
 # ════════════════════════════════════════════════════════════════════
-#  TAGS
-# ════════════════════════════════════════════════════════════════════
-section "Tag commands"
-
-run "Create tag 'urgent'" \
-    $CMD tag create urgent
-
-run "List tags" \
-    $CMD tag ls
-
-run "Tag task 3" \
-    $CMD task edit task-0003 --tag urgent
-
-run "Show task 3 (verify tag)" \
-    $CMD task show task-0003
-
-run "Archive tag 'urgent'" \
-    $CMD tag archive urgent --unassign --force
-
-# ════════════════════════════════════════════════════════════════════
 #  GROUPS
 # ════════════════════════════════════════════════════════════════════
 section "Group commands"

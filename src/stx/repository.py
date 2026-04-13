@@ -11,7 +11,6 @@ from .mappers import (
     row_to_group,
     row_to_journal_entry,
     row_to_status,
-    row_to_tag,
     row_to_task,
     row_to_workspace,
 )
@@ -22,11 +21,9 @@ from .models import (
     NewGroup,
     NewJournalEntry,
     NewStatus,
-    NewTag,
     NewTask,
     NewWorkspace,
     Status,
-    Tag,
     Task,
     TaskFilter,
     Workspace,
@@ -51,7 +48,6 @@ _TASK_UPDATABLE: frozenset[str] = frozenset(
         "finish_date",
     }
 )
-_TAG_UPDATABLE: frozenset[str] = frozenset({"name", "archived"})
 _GROUP_UPDATABLE: frozenset[str] = frozenset(
     {
         "title",
@@ -288,9 +284,6 @@ def list_tasks_filtered(
     if f.search is not None:
         clauses.append("title LIKE ?")
         params.append(f"%{f.search}%")
-    if f.tag_id is not None:
-        clauses.append("id IN (SELECT task_id FROM task_tags WHERE tag_id = ?)")
-        params.append(f.tag_id)
     if f.group_id is not None:
         clauses.append("group_id = ?")
         params.append(f.group_id)
@@ -825,17 +818,6 @@ def get_reachable_nodes(
     return {(r["to_type"], r["to_id"]) for r in rows}
 
 
-def list_all_task_tags(
-    conn: sqlite3.Connection,
-) -> tuple[dict, ...]:
-    """Return all task_tags rows as plain dicts (full FK columns preserved)."""
-    rows = conn.execute("SELECT task_id, tag_id, workspace_id FROM task_tags").fetchall()
-    return tuple(
-        {"task_id": r["task_id"], "tag_id": r["tag_id"], "workspace_id": r["workspace_id"]}
-        for r in rows
-    )
-
-
 # ---- Journal functions ----
 
 
@@ -871,166 +853,6 @@ def list_all_journal(
     """Return all journal rows ordered by workspace and time."""
     rows = conn.execute("SELECT * FROM journal ORDER BY workspace_id, changed_at, id").fetchall()
     return tuple(row_to_journal_entry(r) for r in rows)
-
-
-# ---- Tag functions ----
-
-
-def insert_tag(conn: sqlite3.Connection, new: NewTag) -> Tag:
-    d = _asdict_for_insert(new)
-    cur = conn.execute(
-        "INSERT INTO tags (workspace_id, name) VALUES (:workspace_id, :name)",
-        d,
-    )
-    row = conn.execute("SELECT * FROM tags WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return row_to_tag(row)
-
-
-def get_tag(conn: sqlite3.Connection, tag_id: int) -> Tag | None:
-    row = conn.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)).fetchone()
-    return row_to_tag(row) if row else None
-
-
-def get_tag_by_name(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    name: str,
-) -> Tag | None:
-    row = conn.execute(
-        "SELECT * FROM tags WHERE workspace_id = ? AND name = ? AND archived = 0",
-        (workspace_id, name),
-    ).fetchone()
-    return row_to_tag(row) if row else None
-
-
-def list_tags(
-    conn: sqlite3.Connection,
-    workspace_id: int,
-    *,
-    include_archived: bool = False,
-    only_archived: bool = False,
-) -> tuple[Tag, ...]:
-    if only_archived:
-        archive_clause = " AND archived = 1"
-    elif include_archived:
-        archive_clause = ""
-    else:
-        archive_clause = " AND archived = 0"
-    rows = conn.execute(
-        f"SELECT * FROM tags WHERE workspace_id = ?{archive_clause} ORDER BY name",
-        (workspace_id,),
-    ).fetchall()
-    return tuple(row_to_tag(r) for r in rows)
-
-
-def update_tag(
-    conn: sqlite3.Connection,
-    tag_id: int,
-    changes: dict[str, Any],
-) -> Tag:
-    sql, params = _build_update("tags", tag_id, changes, _TAG_UPDATABLE)
-    cur = conn.execute(sql, params)
-    if cur.rowcount == 0:
-        raise LookupError(f"tag {tag_id} not found")
-    row = conn.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)).fetchone()
-    return row_to_tag(row)
-
-
-# ---- Task-tag join table functions ----
-
-
-def add_tag_to_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_id: int,
-) -> None:
-    conn.execute(
-        "INSERT INTO task_tags (task_id, tag_id, workspace_id) "
-        "VALUES (?, ?, (SELECT workspace_id FROM tasks WHERE id = ?))",
-        (task_id, tag_id, task_id),
-    )
-
-
-def remove_tag_from_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    tag_id: int,
-) -> None:
-    conn.execute(
-        "DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?",
-        (task_id, tag_id),
-    )
-
-
-def remove_all_task_tags_by_tag(conn: sqlite3.Connection, tag_id: int) -> None:
-    """Remove all task assignments for a tag (used before archiving)."""
-    conn.execute("DELETE FROM task_tags WHERE tag_id = ?", (tag_id,))
-
-
-def list_tag_ids_by_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    *,
-    include_archived: bool = False,
-) -> tuple[int, ...]:
-    archive_clause = (
-        "" if include_archived else " JOIN tags t ON t.id = tt.tag_id AND t.archived = 0"
-    )
-    rows = conn.execute(
-        f"SELECT tt.tag_id FROM task_tags tt{archive_clause} WHERE tt.task_id = ?",
-        (task_id,),
-    ).fetchall()
-    return tuple(r["tag_id"] for r in rows)
-
-
-def list_tags_by_task(
-    conn: sqlite3.Connection,
-    task_id: int,
-    *,
-    include_archived: bool = False,
-) -> tuple[Tag, ...]:
-    archive_clause = "" if include_archived else " AND t.archived = 0"
-    rows = conn.execute(
-        f"SELECT t.* FROM tags t "
-        f"JOIN task_tags tt ON t.id = tt.tag_id "
-        f"WHERE tt.task_id = ?{archive_clause} ORDER BY t.name",
-        (task_id,),
-    ).fetchall()
-    return tuple(row_to_tag(r) for r in rows)
-
-
-def list_task_ids_by_tag(
-    conn: sqlite3.Connection,
-    tag_id: int,
-) -> tuple[int, ...]:
-    rows = conn.execute(
-        "SELECT task_id FROM task_tags WHERE tag_id = ?",
-        (tag_id,),
-    ).fetchall()
-    return tuple(r["task_id"] for r in rows)
-
-
-def batch_tag_ids_by_task(
-    conn: sqlite3.Connection,
-    task_ids: tuple[int, ...],
-    *,
-    include_archived: bool = False,
-) -> dict[int, tuple[int, ...]]:
-    """Return {task_id: tuple_of_tag_ids} for a batch of task IDs."""
-    if not task_ids:
-        return {}
-    placeholders = ",".join("?" * len(task_ids))
-    archive_clause = "" if include_archived else " AND t.archived = 0"
-    rows = conn.execute(
-        f"SELECT tt.task_id, tt.tag_id FROM task_tags tt "
-        f"JOIN tags t ON t.id = tt.tag_id "
-        f"WHERE tt.task_id IN ({placeholders}){archive_clause}",
-        task_ids,
-    ).fetchall()
-    intermediate: dict[int, list[int]] = {}
-    for r in rows:
-        intermediate.setdefault(r["task_id"], []).append(r["tag_id"])
-    return {tid: tuple(intermediate.get(tid, ())) for tid in task_ids}
 
 
 # ---- Group functions ----
@@ -1386,19 +1208,6 @@ def count_active_tasks_by_status(
     row = conn.execute(
         "SELECT COUNT(*) AS cnt FROM tasks WHERE status_id = ? AND archived = 0",
         (status_id,),
-    ).fetchone()
-    return row["cnt"]
-
-
-def count_active_tasks_by_tag(
-    conn: sqlite3.Connection,
-    tag_id: int,
-) -> int:
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM task_tags tt "
-        "JOIN tasks t ON tt.task_id = t.id "
-        "WHERE tt.tag_id = ? AND t.archived = 0",
-        (tag_id,),
     ).fetchone()
     return row["cnt"]
 

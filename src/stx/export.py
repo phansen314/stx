@@ -38,29 +38,6 @@ def _render_statuses_section(
     return lines
 
 
-def _render_tags_section(
-    tags: tuple,
-    task_tag_map: dict,
-) -> list[str]:
-    if not tags:
-        return []
-    tag_task_count: dict[int, int] = {}
-    for tag_ids in task_tag_map.values():
-        for tag_id in tag_ids:
-            tag_task_count[tag_id] = tag_task_count.get(tag_id, 0) + 1
-    lines = [
-        "### Tags",
-        "",
-        "| Tag | Tasks |",
-        "|-----|-------|",
-    ]
-    for t in tags:
-        count = tag_task_count.get(t.id, 0)
-        lines.append(f"| {_md_escape(t.name)} | {count} |")
-    lines.append("")
-    return lines
-
-
 def _render_groups_section(
     conn: sqlite3.Connection,
     workspace_id: int,
@@ -109,8 +86,6 @@ def _render_groups_section(
 def _render_tasks_section(
     statuses: tuple,
     tasks_by_status: dict,
-    tag_map: dict,
-    task_tag_map: dict,
 ) -> list[str]:
     lines = ["### Tasks", ""]
     for s in statuses:
@@ -119,17 +94,14 @@ def _render_tasks_section(
             continue
         lines.append(f"#### {_md_escape(s.name)}")
         lines.append("")
-        lines.append("| Task | Title | Priority | Tags | Due |")
-        lines.append("|------|-------|----------|------|-----|")
+        lines.append("| Task | Title | Priority | Due |")
+        lines.append("|------|-------|----------|-----|")
         for t in col_tasks:
             task_num = format_task_num(t.id)
             pri = f"P{t.priority}" if t.priority else ""
-            task_tags = _md_escape(
-                ", ".join(tag_map[tid] for tid in task_tag_map.get(t.id, ()) if tid in tag_map)
-            )
             due = format_timestamp(t.due_date) if t.due_date else ""
             lines.append(
-                f"| {task_num} | {_md_escape(t.title)} | {pri} | {task_tags} | {due} |"
+                f"| {task_num} | {_md_escape(t.title)} | {pri} | {due} |"
             )
         lines.append("")
     return lines
@@ -259,7 +231,6 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
 
         statuses: list[dict] = []
         tasks: list[dict] = []
-        tags: list[dict] = []
         groups: list[dict] = []
 
         for workspace in workspaces:
@@ -271,15 +242,11 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
             tasks.extend(
                 dataclasses.asdict(t) for t in service.list_tasks(conn, bid, include_archived=True)
             )
-            tags.extend(
-                dataclasses.asdict(t) for t in service.list_tags(conn, bid, include_archived=True)
-            )
             groups.extend(
                 dataclasses.asdict(g)
                 for g in service.list_groups_for_workspace(conn, bid, include_archived=True)
             )
 
-        task_tags = list(repo.list_all_task_tags(conn))
         edges = list(repo.list_all_edge_rows(conn))
         journal = [dataclasses.asdict(h) for h in repo.list_all_journal(conn)]
 
@@ -289,9 +256,7 @@ def export_full_json(conn: sqlite3.Connection) -> dict:
         "workspaces": [dataclasses.asdict(w) for w in workspaces],
         "statuses": statuses,
         "tasks": tasks,
-        "tags": tags,
         "groups": groups,
-        "task_tags": task_tags,
         "edges": edges,
         "journal": journal,
     }
@@ -318,9 +283,6 @@ def export_markdown(conn: sqlite3.Connection) -> str:
         statuses = service.list_statuses(conn, bid)
         tasks = service.list_tasks(conn, bid)
         task_ids = {t.id for t in tasks}
-        tags = service.list_tags(conn, bid)
-        tag_map = {t.id: t.name for t in tags}
-        task_tag_map = repo.batch_tag_ids_by_task(conn, tuple(task_ids))
         groups = service.list_groups_for_workspace(conn, bid)
         group_ids = {g.id for g in groups}
 
@@ -329,9 +291,8 @@ def export_markdown(conn: sqlite3.Connection) -> str:
             tasks_by_status.setdefault(t.status_id, []).append(t)
 
         lines += _render_statuses_section(statuses, tasks_by_status)
-        lines += _render_tags_section(tags, task_tag_map)
         lines += _render_groups_section(conn, bid)
-        lines += _render_tasks_section(statuses, tasks_by_status, tag_map, task_tag_map)
+        lines += _render_tasks_section(statuses, tasks_by_status)
         lines += _render_descriptions_section(tasks)
         lines += _render_group_metadata_section(conn, bid)
         lines += _render_task_metadata_section(tasks)

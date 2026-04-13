@@ -9,7 +9,6 @@ class TaskFilter:
     status_id: int | None = None
     priority: int | None = None
     search: str | None = None
-    tag_id: int | None = None
     group_id: int | None = None
     include_archived: bool = False
     only_archived: bool = False
@@ -108,22 +107,7 @@ class NewJournalEntry:
     old_value: str | None = None
 
 
-@dataclass(frozen=True)
-class NewTag:
-    workspace_id: int
-    name: str
-
-
 # ---- Persisted types (full row from DB) ----
-
-
-@dataclass(frozen=True)
-class Tag:
-    id: int
-    workspace_id: int
-    name: str
-    archived: bool
-    created_at: int
 
 
 @dataclass(frozen=True)

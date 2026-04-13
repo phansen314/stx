@@ -36,7 +36,6 @@ These constraints are also enforced by composite foreign keys in the schema.
 - **A task's status must belong to the same workspace as the task.**
 - **A task edge can only link tasks on the same workspace.** Enforced by the composite FK `task_edges.(source_id, workspace_id) → tasks(id, workspace_id)`.
 - **A group edge can only link groups on the same workspace.** Enforced by the composite FK `group_edges.(source_id, workspace_id) → groups(id, workspace_id)`.
-- **A tag can only be applied to a task on the same workspace.**
 - **A group's parent must belong to the same workspace.** (Also enforced by composite FK.)
 
 ## Self-Reference (defense-in-depth)
@@ -50,8 +49,7 @@ service layer translates `IntegrityError` into human-readable messages.
 
 - **Duplicate edges are pre-checked** in the service layer: `add_task_edge`/`add_group_edge` reject insert when an active edge with the same `(source_id, target_id)` already exists (regardless of kind). The DB PK is the last line of defense.
 - **Edge kind validation:** `kind` is lowercase-normalized via `_normalize_edge_kind` and must match `[a-z0-9_.-]+`, 1-64 characters. Also DB-enforced via `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
-- **Duplicate tag assignments** rely on the DB `PRIMARY KEY` constraint — no service pre-check; the `IntegrityError` is translated to a clear message.
-- **Duplicate active names** for workspaces, statuses, tasks, tags, and groups
+- **Duplicate active names** for workspaces, statuses, tasks, and groups
   are rejected with entity-specific messages (via error translation).
 
 ## Archival Safety (service-only)
@@ -78,9 +76,9 @@ Archiving a parent entity cascades to all its active descendants:
 
 ### Mutations on archived entities are allowed
 
-Editing, tagging, or otherwise mutating an archived entity is permitted —
-except for adding edges (see the archived-endpoint rule above). This supports
-fixing metadata before unarchiving.
+Editing or otherwise mutating an archived entity is permitted — except for
+adding edges (see the archived-endpoint rule above). This supports fixing
+metadata before unarchiving.
 
 ## Cross-Workspace Move Preconditions (service-only)
 
@@ -95,9 +93,6 @@ fixing metadata before unarchiving.
 A cross-workspace move creates a new task on the target workspace and archives the
 original. Carried over:
 
-- **Tags** — migrated by name: active tags from the original task are re-applied
-  to the new task using the target workspace's tags (created on the target workspace if
-  they don't exist yet). Archived source tags are not resurrected.
 - **Metadata** — copied verbatim via `repo.copy_task_metadata` (one-shot
   JSON-blob copy; keys retain their lowercase-normalized form).
 
@@ -108,9 +103,6 @@ NOT carried over:
 
 ## Automatic Behaviors (service-only)
 
-- **`tag_task` auto-creates the tag** on the workspace if it doesn't already exist,
-  then applies it to the task. Calling `tag_task` is the only way to tag a task;
-  it never fails with "tag not found."
 - **`assign_task_to_group` validates same-workspace** and writes `group_id`. `update_task` accepts `group_id` directly; `assign_task_to_group` and `unassign_task_from_group` are thin wrappers over `update_task` (via `_update_task_body` so they can hold their own outer transaction without tripping the nesting guard).
 
 ## Entity Metadata (service-only)
@@ -175,10 +167,8 @@ Translated error categories:
 |---|---|
 | `UNIQUE constraint failed: workspaces.name` | "a workspace with this name already exists" |
 | `UNIQUE constraint failed: statuses.*` | "a status with this name already exists on this workspace" |
-| `UNIQUE constraint failed: tags.*` | "a tag with this name already exists on this workspace" |
 | `UNIQUE constraint failed: groups.*` | "a group with this title already exists here" |
 | `UNIQUE constraint failed: tasks.*` | "a task with this title already exists on this workspace" |
 | `UNIQUE constraint failed: task_edges.*` / `group_edges.*` | "an edge already exists between these entities" |
 | `CHECK constraint failed: task_edges.*` / `group_edges.*` | "edge kind must match [a-z0-9_.-]+ and be 1-64 characters" |
-| `UNIQUE constraint failed: task_tags.*` | "task already has this tag" |
 | `FOREIGN KEY constraint failed` | context-specific or generic FK message |

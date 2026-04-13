@@ -374,22 +374,6 @@ class TestTaskCommands:
         data = json.loads(out)
         assert data["data"]["description"] is None
 
-    def test_create_json_includes_tags(self, cli):
-        out, _ = cli(
-            "--json",
-            "task",
-            "create",
-            "Tagged",
-            "-S",
-            "todo",
-            "--tag",
-            "backend",
-            "--tag",
-            "urgent",
-        )
-        data = json.loads(out)["data"]
-        assert [t["name"] for t in data["tags"]] == ["backend", "urgent"]
-
     def test_ls_grouped_by_column(self, cli):
         cli("task", "create", "Task A", "-S", "todo")
         cli("task", "create", "Task B", "-S", "in progress")
@@ -947,148 +931,6 @@ class TestGroupCLI:
         assert "Frontend" in out
 
 
-# ---- Tag ----
-
-
-class TestTagCommands:
-    @pytest.fixture(autouse=True)
-    def _setup(self, cli):
-        cli("workspace", "create", "dev")
-        cli("status", "create", "todo")
-        cli("status", "create", "done")
-
-    # -- Tag subcommands --
-
-    def test_tag_create(self, cli):
-        out, _ = cli("tag", "create", "bug")
-        assert "created tag 'bug'" in out
-
-    def test_tag_ls(self, cli):
-        cli("tag", "create", "bug")
-        cli("tag", "create", "feature")
-        out, _ = cli("tag", "ls")
-        assert "bug" in out
-        assert "feature" in out
-
-    def test_tag_ls_empty(self, cli):
-        out, _ = cli("tag", "ls")
-        assert "no tags" in out
-
-    def test_tag_show(self, cli):
-        cli("tag", "create", "bug")
-        out, _ = cli("tag", "show", "bug")
-        assert "tag  bug" in out
-        assert "Tasks:" in out
-
-    def test_tag_edit_rename(self, cli):
-        cli("tag", "create", "bug")
-        out, _ = cli("tag", "edit", "bug", "--name", "defect")
-        assert "renamed tag 'bug' -> 'defect'" in out
-        out2, _ = cli("tag", "ls")
-        assert "defect" in out2
-        assert "bug" not in out2
-
-    def test_tag_archive(self, cli):
-        cli("tag", "create", "bug")
-        out, _ = cli("tag", "archive", "bug", "--force")
-        assert "archived tag 'bug'" in out
-
-    def test_tag_archive_not_found(self, cli):
-        _, err = cli("tag", "archive", "nonexistent", "--force", expect_exit=3)
-        assert "not found" in err
-
-    def test_tag_ls_all_shows_archived(self, cli):
-        cli("tag", "create", "bug")
-        cli("tag", "create", "old")
-        cli("tag", "archive", "old", "--force")
-        out, _ = cli("tag", "ls")
-        assert "bug" in out
-        assert "old" not in out
-        out, _ = cli("tag", "ls", "--archived", "include")
-        assert "bug" in out
-        assert "old" in out
-        assert "(archived)" in out
-
-    # -- Tags on add --
-
-    def test_add_with_tag(self, cli):
-        cli("task", "create", "Fix bug", "--tag", "bug", "-S", "todo")
-        out, _ = cli("task", "show", "1")
-        assert "bug" in out
-
-    def test_add_with_multiple_tags(self, cli):
-        cli("task", "create", "Fix bug", "--tag", "bug", "--tag", "urgent", "-S", "todo")
-        out, _ = cli("task", "show", "1")
-        assert "bug" in out
-        assert "urgent" in out
-
-    def test_add_tag_auto_creates(self, cli):
-        cli("task", "create", "Fix", "--tag", "new-tag", "-S", "todo")
-        out, _ = cli("tag", "ls")
-        assert "new-tag" in out
-
-    # -- Tags on edit --
-
-    def test_edit_add_tag(self, cli):
-        cli("task", "create", "Task", "-S", "todo")
-        cli("task", "edit", "1", "--tag", "bug")
-        out, _ = cli("task", "show", "1")
-        assert "bug" in out
-
-    def test_edit_untag(self, cli):
-        cli("task", "create", "Task", "--tag", "bug", "-S", "todo")
-        cli("task", "edit", "1", "--untag", "bug")
-        out, _ = cli("task", "show", "1")
-        assert "Tags:" not in out
-
-    def test_edit_tag_only_no_field_changes(self, cli):
-        cli("task", "create", "Task", "-S", "todo")
-        out, _ = cli("task", "edit", "1", "--tag", "bug")
-        assert "updated" in out
-
-    def test_edit_untag_not_found(self, cli):
-        cli("task", "create", "Task", "-S", "todo")
-        _, err = cli("task", "edit", "1", "--untag", "nonexistent", expect_exit=3)
-        assert "not found" in err
-
-    def test_edit_nothing_is_noop(self, cli):
-        cli("task", "create", "Task", "-S", "todo")
-        out, _ = cli("task", "edit", "1")  # no-op: returns unchanged task, exit 0
-        assert "nothing to update" in out
-
-    # -- Tags on ls --
-
-    def test_ls_filter_by_tag(self, cli):
-        cli("task", "create", "Tagged", "--tag", "bug", "-S", "todo")
-        cli("task", "create", "Untagged", "-S", "todo")
-        out, _ = cli("task", "ls", "--tag", "bug")
-        assert "Tagged" in out
-        assert "Untagged" not in out
-
-    def test_ls_shows_tags(self, cli):
-        cli("task", "create", "Task", "--tag", "bug", "-S", "todo")
-        out, _ = cli("task", "ls")
-        assert "[bug]" in out
-
-    def test_ls_shows_multiple_tags(self, cli):
-        cli("task", "create", "Task", "--tag", "bug", "--tag", "urgent", "-S", "todo")
-        out, _ = cli("task", "ls")
-        assert "[bug, urgent]" in out
-
-    def test_ls_tag_filter_not_found(self, cli):
-        _, err = cli("task", "ls", "--tag", "nonexistent", expect_exit=3)
-        assert "not found" in err
-
-    # -- Tags on show --
-
-    def test_show_displays_tags(self, cli):
-        cli("task", "create", "Task", "--tag", "bug", "--tag", "feature", "-S", "todo")
-        out, _ = cli("task", "show", "1")
-        assert "Tags:" in out
-        assert "bug" in out
-        assert "feature" in out
-
-
 class TestHelp:
     def test_no_args_shows_help(self, capsys):
         try:
@@ -1104,13 +946,10 @@ class TestWorkspaceShow:
     def test_workspace_show_text_output(self, cli):
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        cli("tag", "create", "bug")
         cli("group", "create", "G1")
         out, _ = cli("workspace", "show")
         assert "== dev ==" in out
         assert "Projects:" not in out
-        assert "Tags:" in out
-        assert "bug" in out
         assert "Groups:" in out
         assert "G1" in out
 
@@ -1119,7 +958,6 @@ class TestWorkspaceShow:
         out, _ = cli("workspace", "show")
         assert "== empty ==" in out
         assert "Projects:" not in out
-        assert "Tags:" not in out
         assert "Groups:" not in out
 
     def test_workspace_show_no_active_workspace(self, cli):
@@ -1217,13 +1055,6 @@ class TestJsonOutput:
         assert data["data"]["to_id"] == 2
         assert data["data"]["kind"] == "blocks"
 
-    def test_tag_create(self, cli):
-        cli("workspace", "create", "B")
-        data = self._json(cli, "tag", "create", "bug")
-        assert data["ok"] is True
-        assert data["data"]["id"] == 1
-        assert data["data"]["name"] == "bug"
-
     # -- Lists --
 
     def test_ls(self, cli):
@@ -1276,17 +1107,6 @@ class TestJsonOutput:
         assert isinstance(payload, list)
         assert payload[0]["title"] == "G1"
 
-    def test_tag_ls(self, cli):
-        cli("workspace", "create", "B")
-        cli("tag", "create", "bug")
-        cli("tag", "create", "feature")
-        data = self._json(cli, "tag", "ls")
-        assert data["ok"] is True
-        payload = data["data"]
-        assert isinstance(payload, list)
-        assert len(payload) == 2
-        assert payload[0]["name"] == "bug"
-
     # -- Details --
 
     def test_show(self, cli):
@@ -1301,17 +1121,6 @@ class TestJsonOutput:
         assert "status" in payload
         assert payload["status"]["name"] == "Todo"
         assert "group_id" in payload
-
-    def test_show_with_tags(self, cli):
-        cli("workspace", "create", "B")
-        cli("status", "create", "Todo")
-        cli("task", "create", "Task A", "--tag", "bug", "--tag", "feature", "-S", "todo")
-        data = self._json(cli, "task", "show", "1")
-        assert data["ok"] is True
-        payload = data["data"]
-        assert len(payload["tags"]) == 2
-        assert payload["tags"][0]["name"] == "bug"
-        assert payload["tags"][1]["name"] == "feature"
 
     def test_group_show(self, cli):
         cli("workspace", "create", "B")
@@ -1435,7 +1244,6 @@ class TestJsonOutput:
     def test_workspace_show(self, cli):
         cli("workspace", "create", "B")
         cli("status", "create", "Todo")
-        cli("tag", "create", "bug")
         cli("group", "create", "G1")
         cli("task", "create", "T1", "-S", "todo")
         data = self._json(cli, "workspace", "show")
@@ -1444,8 +1252,6 @@ class TestJsonOutput:
         assert payload["view"]["workspace"]["name"] == "B"
         assert len(payload["view"]["statuses"]) == 1
         assert "projects" not in payload
-        assert len(payload["tags"]) == 1
-        assert payload["tags"][0]["name"] == "bug"
         assert len(payload["groups"]) == 1
         assert payload["groups"][0]["title"] == "G1"
 
@@ -1456,7 +1262,6 @@ class TestJsonOutput:
         payload = data["data"]
         assert payload["view"]["workspace"]["name"] == "Empty"
         assert "projects" not in payload
-        assert payload["tags"] == []
         assert payload["groups"] == []
 
     # -- Error in JSON mode --
@@ -1730,7 +1535,6 @@ class TestEditDryRun:
         cli("status", "create", "done")
         cli("group", "create", "top")
         cli("group", "create", "child", "--parent", "top")
-        cli("tag", "create", "bug")
         cli("task", "create", "T1", "-S", "todo", "--priority", "2")
 
     def test_task_edit_dry_run_text(self):
@@ -1744,11 +1548,6 @@ class TestEditDryRun:
         show, _ = self.cli("task", "show", "1")
         assert "T1 renamed" not in show
         assert "Priority:    2" in show
-
-    def test_task_edit_dry_run_tag_diff(self):
-        out, _ = self.cli("task", "edit", "1", "--tag", "bug", "--tag", "urgent", "--dry-run")
-        assert "+tag bug" in out
-        assert "+tag urgent" in out
 
     def test_task_edit_dry_run_json(self):
         out, _ = self.cli("--json", "task", "edit", "1", "--priority", "5", "--dry-run")
@@ -1899,14 +1698,13 @@ class TestArchiveConfirmation:
         assert data["data"]["archived"] is True
 
 
-class TestStatusTagDryRun:
+class TestStatusDryRun:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
         self.cli = cli
         cli("workspace", "create", "dev")
         cli("status", "create", "todo")
-        cli("tag", "create", "bug")
-        cli("task", "create", "t1", "-S", "todo", "--tag", "bug")
+        cli("task", "create", "t1", "-S", "todo")
 
     def test_status_dry_run(self):
         out, _ = self.cli("status", "archive", "todo", "--dry-run")
@@ -1915,14 +1713,6 @@ class TestStatusTagDryRun:
         # not actually archived
         out2, _ = self.cli("status", "ls")
         assert "todo" in out2
-
-    def test_tag_dry_run(self):
-        out, _ = self.cli("tag", "archive", "bug", "--dry-run")
-        assert "dry-run" in out
-        assert "tasks: 1" in out
-        # not actually archived
-        out2, _ = self.cli("tag", "ls")
-        assert "bug" in out2
 
 
 class TestStatusArchiveConfirmation:
@@ -1963,38 +1753,6 @@ class TestStatusArchiveConfirmation:
         assert "archived status 'todo'" in out
 
 
-class TestTagArchiveConfirmation:
-    @pytest.fixture(autouse=True)
-    def _setup(self, cli, monkeypatch):
-        self.cli = cli
-        monkeypatch.setattr("stx.cli._stdin_is_tty", lambda: True)
-        cli("workspace", "create", "dev")
-        cli("status", "create", "todo")
-        cli("tag", "create", "bug")
-
-    def test_confirm_yes(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "y")
-        out, _ = self.cli("tag", "archive", "bug")
-        assert "archived tag 'bug'" in out
-
-    def test_confirm_no(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda _: "n")
-        out, _ = self.cli("tag", "archive", "bug")
-        assert "aborted" in out
-        out2, _ = self.cli("tag", "ls")
-        assert "bug" in out2
-
-    def test_force_skips_confirmation(self):
-        out, _ = self.cli("tag", "archive", "bug", "--force")
-        assert "archived tag 'bug'" in out
-
-    def test_json_with_force_archives(self):
-        out, _ = self.cli("--json", "tag", "archive", "bug", "--force")
-        data = json.loads(out)
-        assert data["ok"] is True
-        assert data["data"]["archived"] is True
-
-
 class TestJsonDryRun:
     @pytest.fixture(autouse=True)
     def _setup(self, cli):
@@ -2004,8 +1762,6 @@ class TestJsonDryRun:
         cli("group", "create", "grp")
         cli("task", "create", "t1", "-S", "todo")
         cli("group", "assign", "1", "grp")
-        cli("tag", "create", "bug")
-        cli("task", "edit", "1", "--tag", "bug")
 
     def _json(self, *args):
         out, _ = self.cli("--json", *args)
@@ -2034,13 +1790,6 @@ class TestJsonDryRun:
         assert data["ok"] is True
         assert data["data"]["entity_type"] == "status"
         assert data["data"]["task_count"] == 1
-
-    def test_tag_dry_run_json(self):
-        data = self._json("tag", "archive", "bug", "--dry-run")
-        assert data["ok"] is True
-        assert data["data"]["entity_type"] == "tag"
-        assert data["data"]["task_count"] == 1
-
 
 class TestEdgeReCreation:
     @pytest.fixture(autouse=True)
@@ -2082,13 +1831,9 @@ class TestEndToEndSmoke:
         cli("group", "create", "api", "--parent", "backend")
         cli("group", "create", "endpoints", "--parent", "api")
         cli("group", "create", "db", "--parent", "backend")
-        # Tags
-        cli("tag", "create", "bug")
-        cli("tag", "create", "urgent")
-        cli("tag", "create", "tech-debt")
         # Tasks
-        cli("task", "create", "Design API", "-S", "todo", "--tag", "bug")
-        cli("task", "create", "Implement routes", "-S", "in-progress", "--tag", "urgent")
+        cli("task", "create", "Design API", "-S", "todo")
+        cli("task", "create", "Implement routes", "-S", "in-progress")
         cli("task", "create", "Write migrations", "-S", "todo")
         cli("task", "create", "Dashboard UI", "-S", "done")
         cli("task", "create", "Cleanup", "-S", "todo")
@@ -2123,11 +1868,6 @@ class TestEndToEndSmoke:
         assert "backend" in out
         assert "frontend" in out
 
-        out, _ = self.cli("tag", "ls")
-        assert "bug" in out
-        assert "urgent" in out
-        assert "tech-debt" in out
-
     def test_show_and_detail(self):
         # t2 has outgoing edge to t1 (blocks)
         out, _ = self.cli("task", "show", "2")
@@ -2142,7 +1882,6 @@ class TestEndToEndSmoke:
         assert "in-progress" in out
         assert "done" in out
         assert "Design API" in out
-        assert "bug" in out
 
     def test_export(self):
         out, _ = self.cli("export", "--md")

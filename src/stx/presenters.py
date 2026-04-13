@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from .formatting import format_group_num, format_priority, format_task_num, format_timestamp
-from .models import JournalEntry, Status, Tag, Workspace
+from .models import JournalEntry, Status, Workspace
 from .service_models import (
     ArchivePreview,
     EntityUpdatePreview,
@@ -70,16 +70,6 @@ def format_status_list(statuses: tuple[Status, ...]) -> str:
     return "\n".join(lines)
 
 
-def format_tag_list(tags: tuple[Tag, ...]) -> str:
-    if not tags:
-        return _empty("tag")
-    lines: list[str] = []
-    for t in tags:
-        archived = " (archived)" if t.archived else ""
-        lines.append(f"  {t.name}{archived}")
-    return "\n".join(lines)
-
-
 def format_status_detail(status: Status, task_count: int) -> str:
     lines = [f"status  {status.name}"]
     lines.append(f"  ID:          {status.id}")
@@ -89,23 +79,11 @@ def format_status_detail(status: Status, task_count: int) -> str:
     return "\n".join(lines)
 
 
-def format_tag_detail(tag: Tag, task_count: int) -> str:
-    lines = [f"tag  {tag.name}"]
-    lines.append(f"  ID:          {tag.id}")
-    lines.append(f"  Archived:    {tag.archived}")
-    lines.append(f"  Tasks:       {task_count}")
-    lines.append(f"  Created:     {format_timestamp(tag.created_at)}")
-    return "\n".join(lines)
-
-
 def format_task_detail(detail: TaskDetail) -> str:
     lines = [f"{format_task_num(detail.id)}  {detail.title}"]
     lines.append(f"  Status:      {detail.status.name}")
     if detail.group is not None:
         lines.append(f"  Group:       {detail.group.title} ({format_group_num(detail.group.id)})")
-    if detail.tags:
-        tag_str = ", ".join(t.name for t in detail.tags)
-        lines.append(f"  Tags:        {tag_str}")
     if detail.metadata:
         lines.append("  Metadata:")
         lines.append(format_metadata_block(detail.metadata, indent=4))
@@ -144,10 +122,9 @@ def format_workspace_list_view(view: WorkspaceListView) -> str:
             lines.append("  (empty)")
             continue
         for item in col.tasks:
-            parts = [f"  {format_task_num(item.id)}  {format_priority(item.priority)} {item.title}"]
-            if item.tag_names:
-                parts.append(f"  [{', '.join(item.tag_names)}]")
-            lines.append("".join(parts))
+            lines.append(
+                f"  {format_task_num(item.id)}  {format_priority(item.priority)} {item.title}"
+            )
     return "\n".join(lines)
 
 
@@ -159,8 +136,6 @@ def format_workspace_context(ctx: WorkspaceContext) -> str:
     view_str = format_workspace_list_view(ctx.view)
     if view_str:
         lines.append(view_str)
-    if ctx.tags:
-        lines.append(f"Tags: {', '.join(t.name for t in ctx.tags)}")
     if ctx.groups:
         group_strs = [g.title for g in ctx.groups]
         lines.append(f"Groups: {', '.join(group_strs)}")
@@ -282,12 +257,6 @@ def format_entity_update_preview(preview: EntityUpdatePreview) -> str:
         before = preview.before.get(key)
         after = preview.after[key]
         lines.append(f"  {key}: {_fmt_diff_value(before)} -> {_fmt_diff_value(after)}")
-        has_body = True
-    for tag in preview.tags_added:
-        lines.append(f"  +tag {tag}")
-        has_body = True
-    for tag in preview.tags_removed:
-        lines.append(f"  -tag {tag}")
         has_body = True
     if not has_body:
         lines.append("  (no changes)")

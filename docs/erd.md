@@ -10,9 +10,6 @@ erDiagram
     tasks ||--o{ task_edges : ""
     groups ||--o{ group_edges : ""
     groups ||--o{ group_edges : ""
-    workspaces ||--o{ tags : ""
-    tasks ||--o{ task_tags : ""
-    tags ||--o{ task_tags : ""
     workspaces ||--o{ journal : ""
 
     workspaces {
@@ -76,20 +73,6 @@ erDiagram
         INTEGER archived
         TEXT kind
         TEXT metadata
-    }
-
-    tags {
-        INTEGER id PK
-        INTEGER workspace_id FK
-        TEXT name
-        INTEGER archived
-        INTEGER created_at
-    }
-
-    task_tags {
-        INTEGER task_id FK "PK"
-        INTEGER tag_id FK "PK"
-        INTEGER workspace_id FK
     }
 
     journal {
