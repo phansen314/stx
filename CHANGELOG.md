@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-04-17
+
 ### Added
 
 - **`stx graph` command.** Generates DOT or Mermaid graph files from workspace
   edges. Flags: `--format dot|mermaid` (default: dot), `--kind` (filter by edge
   kind), `--output` (explicit path; otherwise writes a temp file). TUI: press
   `g` to generate a DOT file and display its path.
+- **TUI group filtering.** Selecting a group in the workspace tree filters the
+  kanban board to tasks under that group and its descendants.
+
+### Fixed
+
+- **TUI refresh after writes.** Modal saves and kanban status moves now
+  unconditionally refresh the UI instead of relying on the data-version gate.
 
 ## [0.15.0] — 2026-04-17
 
