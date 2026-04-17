@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-04-16
+
+### Added
+
+- **`stx:next` skill** — execution-focused Claude Code skill (invocable as
+  `/next`). Pairs the `stx:stx` management skill: picks the highest-priority
+  ready task from the dependency DAG via `stx next --rank`, hydrates it with
+  task detail, group context, and downstream gate analysis, then presents a
+  single work-order summary and offers to move the task to an in-progress
+  status. Supports configurable edge kinds (`--edge-kind`) for workspaces that
+  don't use the default `blocks` kind. Description rendering is truncated to
+  the first 10 lines; task metadata is fetched on-demand via
+  `stx --json task meta ls <task-id>` rather than rendered by default.
+
+## [0.13.0] — 2026-04-14
+
 ### Added
 
 - **`task.done` sticky completion flag.** Tasks now carry an explicit `done` boolean independent of status. `done` defaults to `false` on creation; it becomes `true` when a task is moved into a terminal status, or when created directly into one. Once set, `done` is sticky — it is not cleared by a status move (even out of a terminal status). Only `stx task undone [--force]` clears it. The flag is reflected in `task show` output, the kanban `[done]` marker, and `stx next` computation.
