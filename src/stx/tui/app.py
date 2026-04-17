@@ -402,7 +402,7 @@ class StxApp(App):
         except ValueError as e:
             self.notify(str(e), severity="error")
             return
-        self.request_refresh()
+        self.action_refresh()
 
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
@@ -645,7 +645,7 @@ class StxApp(App):
         except ValueError as e:
             self.notify(str(e), severity="error")
             return
-        self.request_refresh()
+        self.action_refresh()
 
     def action_config(self) -> None:
         self.push_screen(
