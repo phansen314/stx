@@ -22,7 +22,7 @@ src/stx/
   __main__.py        # entry point (stx command)
   cli.py             # argparse CLI — thin controllers: parse args, delegate to service, hand payloads to presenters
   presenters.py      # pure functions: structured types → text. No DB access.
-  formatting.py      # shared formatting primitives: format_task_num, format_priority, parse_date, format_timestamp
+  formatting.py      # shared formatting primitives: format_task_num, format_priority, parse_date, format_timestamp, node_display_id
   active_workspace.py# read/write active workspace ID to disk
   service.py         # business logic, transaction boundaries
   repository.py      # raw SQL queries, one function per operation
@@ -31,6 +31,7 @@ src/stx/
   service_models.py  # Ref/ListItem/Detail dataclasses + view aggregates (WorkspaceListView, WorkspaceContext)
   mappers.py         # row→model, model→ref, ref→listitem, ref→detail converters
   export.py          # full-database Markdown + Mermaid export
+  graph.py           # DOT + Mermaid graph file generation from workspace edges
   schema.sql         # DDL (current schema, used for fresh databases)
   migrations/        # numbered SQL migration files (001_*.sql ... 012_*.sql)
   tui/
@@ -78,6 +79,7 @@ tests/
   test_create_modals.py      # create modal + resource selector tests
   test_metadata_modal.py     # MetadataModal tests (all 3 entity kinds)
   test_markdown_editor.py    # markdown editor widget tests
+  test_graph.py              # DOT + Mermaid graph generation tests
 ```
 
 ## CLI
@@ -106,7 +108,7 @@ Entry point: `stx = "stx.__main__:main"`.
 - Edge subcommands: `stx edge create|archive|ls` and `stx edge meta ls|get|set|del` — polymorphic. Endpoint type is inferred from path delimiters when no explicit prefix is given: `task-NNNN`/`#N`/int → task by id; leading `/` (`/A`, `/A/B/C`) → group path; `A/B/C` (only `/`, multi-segment) → group path; `A:leaf`/`:leaf`/`A/B:leaf` (contains `:`) → task path; bare title (no delimiters) → task by title. Explicit prefixes `group:<path>`/`task:<path>`/`workspace:<name>`/`status:<name>` always override inference. Cross-type edges work (group→task, task→group, etc.) — `--source /A/B --target D:task0` is a clean group→task edge. Each edge carries a `--kind` label, a per-edge metadata blob, and an `acyclic` flag (defaults: on for `blocks`/`spawns`, off for everything else). Status edges are pure annotation — they carry no write-path semantics. The legacy `--source-parent`/`--target-parent` flags were removed in 0.15. Self-loops are rejected by DB CHECK. Cycle detection runs on the combined acyclic-edge subgraph regardless of kind.
 - Other subcommand groups: `workspace`, `status`
 - Config subcommands: `stx config ls|get|set|unset` — edit `auto_refresh_seconds` and `active_workspace` in `tui.toml`. `ls`/`get` can read any field; `set`/`unset` are gated by an editable-field allowlist.
-- Standalone commands: `export`, `info`, `backup`, `next` (topological sort of acyclic DAG to surface ready/blocked tasks; flags: `--rank`, `--include-blocked`, `--limit N`, `--edge-kind KIND`)
+- Standalone commands: `export`, `info`, `backup`, `next` (topological sort of acyclic DAG to surface ready/blocked tasks; flags: `--rank`, `--include-blocked`, `--limit N`, `--edge-kind KIND`), `graph` (generate DOT or Mermaid graph file from workspace edges; flags: `--format dot|mermaid`, `--kind KIND` (repeatable), `--output PATH`)
 - Status edit: `stx status edit <name> [--name NEW] [--terminal|--no-terminal]` — `--terminal`/`--no-terminal` marks/unmarks a status as terminal; tasks moved into a terminal status auto-set `done=True`
 
 ## TUI
@@ -127,6 +129,7 @@ Entry point: `stx tui` (or `stx tui --db path/to/db`).
 | `r` | Refresh |
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity (task/workspace/group) |
+| `g` | Generate DOT graph of workspace edges (prints temp file path) |
 | `c` | Open settings modal (theme, auto_refresh_seconds) |
 | `n` | Create new (task/group/status/workspace selector) |
 | `s` | Switch workspace |

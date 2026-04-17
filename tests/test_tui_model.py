@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from stx.models import Group
+from stx.models import Group, Task
 from stx.tui.model import (
     GroupNode,
+    collect_subtree_tasks,
+    find_group_node,
     flatten_group_tree,
     load_workspace_model,
 )
@@ -197,3 +199,89 @@ class TestFlattenGroupTree:
         result = flatten_group_tree((a, b))
         labels = [label for label, _ in result]
         assert labels == ["A", "A > A1", "A > A2", "B"]
+
+
+def _make_group(id: int, title: str = "g") -> Group:
+    return Group(
+        id=id, workspace_id=1, title=title, description=None,
+        parent_id=None, archived=False, created_at=0, metadata={},
+    )
+
+
+def _make_task(id: int, group_id: int | None = None) -> Task:
+    return Task(
+        id=id, workspace_id=1, title=f"t{id}", description=None,
+        status_id=1, priority=0, due_date=None, archived=False,
+        created_at=0, start_date=None, finish_date=None,
+        group_id=group_id, metadata={},
+    )
+
+
+def _make_node(
+    id: int,
+    tasks: tuple[Task, ...] = (),
+    children: tuple[GroupNode, ...] = (),
+) -> GroupNode:
+    return GroupNode(group=_make_group(id), tasks=tasks, children=children)
+
+
+class TestFindGroupNode:
+    def test_not_found_empty(self):
+        assert find_group_node((), 1) is None
+
+    def test_root_match(self):
+        n = _make_node(5)
+        assert find_group_node((n,), 5) is n
+
+    def test_nested_match(self):
+        child = _make_node(7)
+        root = _make_node(3, children=(child,))
+        assert find_group_node((root,), 7) is child
+
+    def test_deep_nesting(self):
+        leaf = _make_node(9)
+        mid = _make_node(5, children=(leaf,))
+        root = _make_node(1, children=(mid,))
+        assert find_group_node((root,), 9) is leaf
+
+    def test_returns_first_match_across_roots(self):
+        a = _make_node(1)
+        b = _make_node(2)
+        assert find_group_node((a, b), 2) is b
+
+    def test_not_found(self):
+        assert find_group_node((_make_node(1),), 999) is None
+
+
+class TestCollectSubtreeTasks:
+    def test_leaf_node_with_tasks(self):
+        t1, t2 = _make_task(1), _make_task(2)
+        node = _make_node(1, tasks=(t1, t2))
+        assert collect_subtree_tasks(node) == (t1, t2)
+
+    def test_empty_node(self):
+        assert collect_subtree_tasks(_make_node(1)) == ()
+
+    def test_collects_from_children(self):
+        t1 = _make_task(1)
+        t2 = _make_task(2)
+        child = _make_node(2, tasks=(t2,))
+        root = _make_node(1, tasks=(t1,), children=(child,))
+        result = collect_subtree_tasks(root)
+        assert set(t.id for t in result) == {1, 2}
+
+    def test_deep_nesting(self):
+        t1, t2, t3 = _make_task(1), _make_task(2), _make_task(3)
+        leaf = _make_node(3, tasks=(t3,))
+        mid = _make_node(2, tasks=(t2,), children=(leaf,))
+        root = _make_node(1, tasks=(t1,), children=(mid,))
+        result = collect_subtree_tasks(root)
+        assert set(t.id for t in result) == {1, 2, 3}
+
+    def test_preserves_order_parent_before_children(self):
+        t1, t2 = _make_task(1), _make_task(2)
+        child = _make_node(2, tasks=(t2,))
+        root = _make_node(1, tasks=(t1,), children=(child,))
+        result = collect_subtree_tasks(root)
+        assert result[0].id == 1
+        assert result[1].id == 2

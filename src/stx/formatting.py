@@ -28,6 +28,16 @@ def format_group_num(group_id: int) -> str:
     return f"group-{group_id:04d}"
 
 
+def node_display_id(node_type: str, node_id: int) -> str:
+    if node_type == "task":
+        return format_task_num(node_id)
+    elif node_type == "group":
+        return format_group_num(node_id)
+    elif node_type == "status":
+        return f"st{node_id}"
+    return f"ws{node_id}"
+
+
 def format_priority(priority: int) -> str:
     return f"[P{priority}]"
 

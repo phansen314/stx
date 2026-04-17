@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`stx graph` command.** Generates DOT or Mermaid graph files from workspace
+  edges. Flags: `--format dot|mermaid` (default: dot), `--kind` (filter by edge
+  kind), `--output` (explicit path; otherwise writes a temp file). TUI: press
+  `g` to generate a DOT file and display its path.
+
 ## [0.15.0] — 2026-04-17
 
 ### Added

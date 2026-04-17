@@ -16,9 +16,11 @@ from textual.widgets import Footer, Header
 from stx.active_workspace import clear_active_workspace_id, get_active_workspace_id
 from stx.connection import DEFAULT_DB_PATH, get_connection, init_db
 from stx.formatting import format_task_num
+from stx.graph import GraphFormat, write_graph
 from stx.models import Group, Status, Task, Workspace
 from stx.presenters import format_archive_preview
 from stx.service import (
+    list_edges,
     archive_task,
     cascade_archive_group,
     cascade_archive_workspace,
@@ -43,7 +45,13 @@ from stx.service import (
 )
 from stx.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from stx.tui.markup import escape_markup
-from stx.tui.model import WorkspaceModel, flatten_group_tree, load_workspace_model
+from stx.tui.model import (
+    WorkspaceModel,
+    collect_subtree_tasks,
+    find_group_node,
+    flatten_group_tree,
+    load_workspace_model,
+)
 from stx.tui.screens import (
     ArchiveConfirmModal,
     ConfigModal,
@@ -87,6 +95,7 @@ class StxApp(App):
         Binding("]", "status_right", "Status ▶", show=False),
         Binding("shift+right", "status_right", show=False),
         Binding("c", "config", "Config", show=True),
+        Binding("g", "graph", "Graph", show=True),
         Binding("n", "new", "New", show=True),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
@@ -100,6 +109,7 @@ class StxApp(App):
     _refresh_timer: object | None = None
     _rerendering: bool = False
     _last_data_version: int | None = None
+    _filter_group_id: int | None = None
 
     def _read_data_version(self) -> int | None:
         """Return SQLite's ``PRAGMA data_version`` or None if unavailable.
@@ -119,6 +129,15 @@ class StxApp(App):
         if self._active_workspace_id is None:
             return None
         return self._models.get(self._active_workspace_id)
+
+    def _filtered_tasks(self, model: WorkspaceModel) -> tuple[Task, ...] | None:
+        if self._filter_group_id is None:
+            return None
+        node = find_group_node(model.root_groups, self._filter_group_id)
+        if node is None:
+            self._filter_group_id = None
+            return None
+        return collect_subtree_tasks(node)
 
     def __init__(
         self,
@@ -265,7 +284,7 @@ class StxApp(App):
         self.call_later(self._end_rerendering)
         last = self._kanban_last_focused
         tree.load(self._models, expand_workspace_id=self._active_workspace_id)
-        await kanban.sync(model)
+        await kanban.sync(model, self._filtered_tasks(model))
         if self.active_panel == ActivePanel.KANBAN and last is not None:
             if isinstance(last, KanbanColumn):
                 try:
@@ -342,7 +361,8 @@ class StxApp(App):
         save_config(self.config, self.config_path)
         new_statuses = self._order_statuses(model.statuses, self._active_workspace_id)
         self._models[self._active_workspace_id] = replace(model, statuses=new_statuses)
-        await self.query_one(KanbanBoard).sync(self._models[self._active_workspace_id])
+        model = self._models[self._active_workspace_id]
+        await self.query_one(KanbanBoard).sync(model, self._filtered_tasks(model))
         self.set_focus(self.query_one(f"#status-col-{col.status_id}", KanbanColumn))
 
     def action_focus_tree(self) -> None:
@@ -368,6 +388,7 @@ class StxApp(App):
         if ws_id == self._active_workspace_id:
             return
         self._active_workspace_id = ws_id
+        self._filter_group_id = None
         try:
             model = load_workspace_model(self.conn, ws_id)
         except LookupError:
@@ -377,6 +398,20 @@ class StxApp(App):
         kanban = self.query_one(KanbanBoard)
         await kanban.load(model)
         self._kanban_last_focused = None
+
+    async def on_workspace_tree_tree_filter_changed(
+        self, event: WorkspaceTree.TreeFilterChanged
+    ) -> None:
+        if self._rerendering:
+            return
+        if event.group_id == self._filter_group_id:
+            return
+        model = self._active_model
+        if model is None:
+            return
+        self._filter_group_id = event.group_id
+        kanban = self.query_one(KanbanBoard)
+        await kanban.sync(model, self._filtered_tasks(model))
 
     def action_edit(self) -> None:
         if self._active_model is None:
@@ -402,7 +437,7 @@ class StxApp(App):
         except ValueError as e:
             self.notify(str(e), severity="error")
             return
-        self.request_refresh()
+        self.action_refresh()
 
     def _edit_task(self, task: Task) -> None:
         detail = get_task_detail(self.conn, task.id)
@@ -645,7 +680,7 @@ class StxApp(App):
         except ValueError as e:
             self.notify(str(e), severity="error")
             return
-        self.request_refresh()
+        self.action_refresh()
 
     def action_config(self) -> None:
         self.push_screen(
@@ -673,6 +708,19 @@ class StxApp(App):
         for key, value in changes.items():
             setattr(self.config, key, value)
         save_config(self.config, self.config_path)
+
+    def action_graph(self) -> None:
+        if self._active_model is None:
+            return
+        assert self._active_workspace_id is not None
+        edges = list_edges(self.conn, self._active_workspace_id)
+        if not edges:
+            self.notify("No edges in workspace", severity="warning")
+            return
+        ws = get_workspace(self.conn, self._active_workspace_id)
+        out = Path("/tmp/stx-graph.dot")
+        path = write_graph(edges, ws.name, GraphFormat.dot, output=out)
+        self.notify(f"Wrote {path}")
 
     def action_new(self) -> None:
         if self._active_model is None:

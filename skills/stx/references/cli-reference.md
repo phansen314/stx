@@ -544,6 +544,29 @@ stx --json export -o /tmp/snapshot.md
 
 ---
 
+## `stx graph`
+
+Generates a DOT or Mermaid graph file from the active workspace's edges. Writes to a temp file by default; use `--output` for an explicit path. The file contains source text (not a rendered image) — open it with `xdot`, paste into mermaid.live, or render via `dot -Tpng`.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--format` | `-f` | `dot` | Output format: `dot` (Graphviz) or `mermaid` |
+| `--kind` | `-k` | all | Filter edges by kind. Repeatable: `-k blocks -k spawns` |
+| `--output` | `-o` | temp file | Write to file instead of temp file |
+
+```sh
+stx graph                                    # all edges → temp .dot file
+stx graph -f mermaid -o /tmp/deps.mmd        # mermaid format, explicit path
+stx graph -k blocks -k spawns                # only blocks + spawns edges
+stx graph -o graph.dot && xdot graph.dot     # render with xdot
+```
+
+JSON `data` shape:
+- Edges found: `{"path": "/tmp/stx-graph-XXXX.dot", "format": "dot"}`
+- No edges: `{"path": null}`
+
+---
+
 ## `stx info`
 
 Read-only diagnostic. Lists the DB file, WAL/SHM sidecars, and active-workspace pointer — each with an existence marker. No flags.

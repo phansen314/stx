@@ -141,6 +141,7 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 | `stx status ...` | `create`, `ls`, `show`, `edit [--name] [--terminal\|--no-terminal]`, `order <statuses...>`, `archive [--reassign-to STATUS\|--force]`. `--terminal` marks a status so tasks moved into it auto-set `done=true`. |
 | `stx edge ...` | `create --source <t> --target <t> --kind <k>`, `archive --source <t> --target <t>`, `ls [--source <t>] [--kind <k>]`, `meta ls\|get\|set\|del --source <t> --target <t>` |
 | `stx next [--rank] [--limit N] [--include-blocked] [--edge-kind KIND]` | Topo-sort the acyclic `blocks` DAG to surface the actionable task frontier and the blocked list with pending blocker IDs |
+| `stx graph [--format dot\|mermaid] [--kind KIND ...] [--output PATH]` | Generate a DOT or Mermaid graph file from workspace edges. `--kind` is repeatable to include multiple edge kinds. Writes a temp file if no `--output` given. To view DOT files: `sudo apt install xdot && xdot graph.dot`, or render to PNG with `dot -Tpng graph.dot -o graph.png` (requires `graphviz`). For Mermaid, paste into [mermaid.live](https://mermaid.live). |
 | `stx export` | Export database as JSON (default) or Markdown with Mermaid edge graphs labelled by `kind` (`--md`) |
 | `stx info` | Show stx file locations |
 | `stx backup <dest>` | Atomic binary DB snapshot (safe pre-migration backup) |
@@ -185,6 +186,7 @@ textual run --dev stx.tui.app:StxApp
 | `r` | Refresh |
 | `e` | Edit selected entity |
 | `m` | Edit metadata on selected entity |
+| `g` | Generate DOT graph of workspace edges (prints temp file path) |
 | `c` | Open settings modal (theme, auto_refresh_seconds) |
 | `n` | Create new (task/group/status/workspace selector) |
 | `s` | Switch workspace |

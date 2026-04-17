@@ -3070,3 +3070,70 @@ class TestPathBasedRefs:
             "--status", "todo", "--group", "/a/b",
         )
         assert "leaf" in out
+
+
+class TestGraphCommand:
+    @pytest.fixture(autouse=True)
+    def _setup(self, cli):
+        cli("workspace", "create", "dev")
+        cli("status", "create", "todo")
+        cli("task", "create", "Task A", "-S", "todo")
+        cli("task", "create", "Task B", "-S", "todo")
+
+    def test_no_edges(self, cli):
+        out, _ = cli("graph")
+        assert "no edges" in out
+
+    def test_dot_output(self, cli, tmp_path):
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        dest = tmp_path / "out.dot"
+        out, _ = cli("graph", "--output", str(dest))
+        assert dest.exists()
+        content = dest.read_text()
+        assert "digraph" in content
+        assert "blocks" in content
+        assert "task_1" in content
+
+    def test_mermaid_output(self, cli, tmp_path):
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        dest = tmp_path / "out.mmd"
+        out, _ = cli("graph", "--format", "mermaid", "--output", str(dest))
+        content = dest.read_text()
+        assert "graph LR" in content
+        assert "blocks" in content
+
+    def test_kind_filter(self, cli, tmp_path):
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        cli("edge", "create", "--source", "1", "--target", "2", "--kind", "related-to", "--no-acyclic")
+        dest = tmp_path / "filtered.dot"
+        cli("graph", "--kind", "blocks", "--output", str(dest))
+        content = dest.read_text()
+        assert "blocks" in content
+        assert "related-to" not in content
+
+    def test_multi_kind_filter(self, cli, tmp_path):
+        cli("task", "create", "Task C", "-S", "todo")
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        cli("edge", "create", "--source", "1", "--target", "3", "--kind", "spawns")
+        cli("edge", "create", "--source", "3", "--target", "2", "--kind", "related-to", "--no-acyclic")
+        dest = tmp_path / "multi.dot"
+        cli("graph", "--kind", "blocks", "--kind", "spawns", "--output", str(dest))
+        content = dest.read_text()
+        assert "blocks" in content
+        assert "spawns" in content
+        assert "related-to" not in content
+
+    def test_temp_file_when_no_output(self, cli):
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        out, _ = cli("graph")
+        assert "stx-graph-" in out
+        assert ".dot" in out
+
+    def test_json_output(self, cli, monkeypatch):
+        monkeypatch.setattr("stx.cli._stdout_is_tty", lambda: False)
+        cli("edge", "create", "--source", "2", "--target", "1", "--kind", "blocks")
+        out, _ = cli("graph")
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert data["data"]["format"] == "dot"
+        assert data["data"]["path"] is not None

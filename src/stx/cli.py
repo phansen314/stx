@@ -20,6 +20,7 @@ from .active_workspace import (
 )
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from .export import export_full_json, export_markdown
+from .graph import GraphFormat, write_graph
 from .formatting import format_group_num, format_task_num, parse_date, parse_task_num
 from .models import ConflictError, Workspace
 from .service_models import ArchivePreview
@@ -1131,6 +1132,31 @@ def cmd_next(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
     return Ok(data=payload_view, text=text)
 
 
+# ---- Graph ----
+
+
+def cmd_graph(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
+    workspace = _resolve_workspace(conn, args, ctx)
+    if args.kind:
+        seen: set[tuple[str, int, str, int]] = set()
+        edge_list: list = []
+        for k in args.kind:
+            for e in service.list_edges(conn, workspace.id, kind=k):
+                key = (e.from_type, e.from_id, e.to_type, e.to_id)
+                if key not in seen:
+                    seen.add(key)
+                    edge_list.append(e)
+        edges = tuple(edge_list)
+    else:
+        edges = service.list_edges(conn, workspace.id)
+    if not edges:
+        return Ok(data={"path": None}, text="no edges in workspace")
+    fmt = GraphFormat(args.format)
+    output = Path(args.output) if args.output else None
+    path = write_graph(edges, workspace.name, fmt, output=output)
+    return Ok(data={"path": str(path), "format": fmt.value}, text=f"wrote {path}")
+
+
 # ---- Info ----
 
 
@@ -1475,6 +1501,7 @@ HANDLERS: dict[str, CommandHandler] = {
     "backup": cmd_backup,
     "info": cmd_info,
     "next": cmd_next,
+    "graph": cmd_graph,
     "tui": cmd_tui,
 }
 
@@ -1996,6 +2023,20 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: blocks). Repeatable: --edge-kind blocks --edge-kind spawns"
         ),
     )
+
+    # ---- Graph ----
+
+    p_graph = sub.add_parser("graph", help="generate a DOT or Mermaid graph of workspace edges")
+    p_graph.set_defaults(command="graph")
+    p_graph.add_argument(
+        "-f", "--format", choices=["dot", "mermaid"], default="dot",
+        help="output format (default: dot)",
+    )
+    p_graph.add_argument(
+        "-k", "--kind", action="append", metavar="KIND", default=None,
+        help="filter edges by kind (repeatable: -k blocks -k spawns)",
+    )
+    p_graph.add_argument("-o", "--output", help="write to file instead of temp file")
 
     # ---- Info ----
 

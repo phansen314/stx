@@ -10,7 +10,7 @@ import time
 from . import repository as repo
 from . import service
 from .connection import SCHEMA_VERSION, transaction
-from .formatting import format_group_num, format_task_num, format_timestamp
+from .formatting import format_group_num, format_task_num, format_timestamp, node_display_id
 
 
 def _md_escape(value: str) -> str:
@@ -188,16 +188,6 @@ def _render_edges_section(
             return node_id in status_ids
         return False
 
-    def _node_label(node_type: str, node_id: int) -> str:
-        if node_type == "task":
-            return format_task_num(node_id)
-        elif node_type == "group":
-            return format_group_num(node_id)
-        elif node_type == "status":
-            return f"st{node_id}"
-        else:
-            return f"ws{node_id}"
-
     active = [
         r for r in edge_rows
         if not r["archived"]
@@ -213,8 +203,8 @@ def _render_edges_section(
         "graph LR",
     ]
     for r in active:
-        src = _node_label(r["from_type"], r["from_id"])
-        tgt = _node_label(r["to_type"], r["to_id"])
+        src = node_display_id(r["from_type"], r["from_id"])
+        tgt = node_display_id(r["to_type"], r["to_id"])
         lines.append(f"    {src} -->|{r['kind']}| {tgt}")
     lines += [
         "```",

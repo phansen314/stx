@@ -471,6 +471,14 @@ null
 ```
 (`export` writes Markdown/JSON to stdout directly; `--json` envelope is a no-op.)
 
+### `graph`
+
+```json
+{"ok": true, "data": {"path": "/tmp/stx-graph-XXXX.dot", "format": "dot"}}
+```
+
+When no edges exist: `{"ok": true, "data": {"path": null}}`.
+
 ### `backup`
 
 ```json
