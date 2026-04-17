@@ -51,18 +51,18 @@ pip install -e .
 # Create a workspace with statuses
 stx workspace create ops --statuses "Backlog","Active","Done"
 
-# Build structure
+# Build structure (path-as-title creates nested groups in one step)
 stx group create "infra" --desc "Infrastructure work"
-stx group create "Q2 Migrations" --parent infra
-stx group create "Postgres" --parent "Q2 Migrations"
+stx group create "infra/Q2 Migrations"
+stx group create "infra/Q2 Migrations/Postgres"
 
 # Attach context as metadata
 stx group meta set "infra" owner "platform-team"
-stx group meta set "Postgres" estimate "3 sprints"
+stx group meta set "infra/Q2 Migrations/Postgres" estimate "3 sprints"
 
-# Tasks live inside the structure
-stx task create "Upgrade to PG 16" -S Backlog -g "Postgres"
-stx task create "Load test new cluster" -S Backlog -g "Postgres"
+# Tasks live inside the structure (path refs disambiguate any collision)
+stx task create "Upgrade to PG 16" -S Backlog -g "infra/Q2 Migrations/Postgres"
+stx task create "Load test new cluster" -S Backlog -g "infra/Q2 Migrations/Postgres"
 stx edge create --source task-0002 --target task-0001 --kind blocks
 
 # View it
@@ -74,16 +74,16 @@ stx tui
 stx earns its keep before any task is created. The hierarchy — workspaces, nested groups, metadata, descriptions — is where context lives.
 
 ```sh
-# Model nested structure
+# Model nested structure — `/` is the group-path delimiter, anchored at root
 stx group create "API Rewrite" --desc "Migrate from REST to GraphQL"
-stx group create "Auth" --parent "API Rewrite" --desc "Token and session handling"
-stx group create "OAuth" --parent "Auth"
-stx group create "Session" --parent "Auth"
+stx group create "API Rewrite/Auth" --desc "Token and session handling"
+stx group create "API Rewrite/Auth/OAuth"
+stx group create "API Rewrite/Auth/Session"
 
 # Attach structured metadata at each level
 stx group meta set "API Rewrite" deadline "2026-06-01"
 stx group meta set "API Rewrite" owner "backend-team"
-stx group meta set "OAuth" provider "Auth0"
+stx group meta set "API Rewrite/Auth/OAuth" provider "Auth0"
 
 # Export full context as JSON for agent consumption
 stx workspace show | jq
@@ -103,7 +103,7 @@ Entry point: `stx`
 | Command | Description |
 |---------|-------------|
 | `stx workspace ...` | `create [--statuses a,b,c]`, `ls`, `show`, `use`, `edit [--name]`, `archive [--force\|--dry-run]`, `meta ls\|get\|set\|del` |
-| `stx group ...` | `create [--parent <group>] [--desc]`, `ls`, `show`, `edit [--title] [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `meta ls\|get\|set\|del <title>` (edges live under top-level `stx edge`) |
+| `stx group ...` | `create [--parent <group-path>] [--desc]`, `ls`, `show`, `edit [--title] [--desc]`, `archive [--force\|--dry-run]`, `mv`, `assign`, `unassign`, `meta ls\|get\|set\|del <title-or-path>` (edges live under top-level `stx edge`). All group args accept path syntax (`A/B/C`); `group create A/B/new` creates `new` under the existing parent path `A/B` (mutex with `--parent`). |
 
 ### Task Commands
 
@@ -120,7 +120,7 @@ Entry point: `stx`
 | `stx task log <task>` | Show task change history |
 | `stx task meta ls\|get\|set\|del <task> ...` | Key/value metadata CRUD (workspaces and groups expose the same four verbs) |
 
-Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resolve as IDs; anything else is looked up as a title on the active workspace.
+Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resolve as IDs; bare strings are looked up as a title on the active workspace; path forms (`A/B:leaf`, `:rootleaf`) walk a group path then locate the leaf task. Group references use the same syntax: bare `A` (workspace-wide), `/A` (root group `A` — leading-slash anchor), or `A/B/C` (nested path). `/` and `:` are reserved for path syntax and forbidden in group/task titles.
 
 ### Task Filters
 
@@ -132,7 +132,7 @@ Task identifiers are auto-detected: numeric forms (`1`, `task-0001`, `#1`) resol
 | `--status` / `-S` | Filter by status name |
 | `--priority` | Filter by priority integer |
 | `--search` | Search by title substring |
-| `--group` / `-g` | Filter by group title |
+| `--group` / `-g` | Filter by group title or path (e.g. `A/B/C`); flat — does not include subgroups |
 
 ### Workflow Commands
 

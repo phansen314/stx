@@ -1145,25 +1145,25 @@ class TestGroupService:
         resolved = service.resolve_group_by_title(conn, bid, "shared", parent_id=p2.id, parent_known=True)
         assert resolved == g2
 
-    def test_resolve_group_by_parent_title(self, conn: sqlite3.Connection) -> None:
+    def test_resolve_group_by_path(self, conn: sqlite3.Connection) -> None:
         bid, _ = self._setup(conn)
         p1 = service.create_group(conn, bid, "parent-1")
         p2 = service.create_group(conn, bid, "parent-2")
         g1 = service.create_group(conn, bid, "shared", parent_id=p1.id)
         g2 = service.create_group(conn, bid, "shared", parent_id=p2.id)
-        assert service.resolve_group(conn, bid, "shared", parent_title="parent-1") == g1
-        assert service.resolve_group(conn, bid, "shared", parent_title="parent-2") == g2
+        assert service.resolve_group(conn, bid, "parent-1/shared") == g1
+        assert service.resolve_group(conn, bid, "parent-2/shared") == g2
 
     def test_resolve_group_no_parent_unambiguous(self, conn: sqlite3.Connection) -> None:
         bid, _ = self._setup(conn)
         grp = service.create_group(conn, bid, "only")
         assert service.resolve_group(conn, bid, "only") == grp
 
-    def test_resolve_group_unknown_parent_raises(self, conn: sqlite3.Connection) -> None:
+    def test_resolve_group_unknown_path_raises(self, conn: sqlite3.Connection) -> None:
         bid, _ = self._setup(conn)
         service.create_group(conn, bid, "g")
-        with pytest.raises(LookupError):
-            service.resolve_group(conn, bid, "g", parent_title="no-such-parent")
+        with pytest.raises(LookupError, match="not found"):
+            service.resolve_group(conn, bid, "no-such-parent/g")
 
     def test_get_ancestry_single(self, conn: sqlite3.Connection) -> None:
         bid, _ = self._setup(conn)
@@ -2955,3 +2955,213 @@ class TestComputeNextTasks:
         with pytest.raises(RuntimeError, match="cycle detected"):
             service.compute_next_tasks(conn, wid, include_blocked=True)
 
+
+
+# ---- Path-based ref resolution (introduced 0.15) ----
+
+
+class TestParseRef:
+    def test_bare_title(self) -> None:
+        p = service.parse_ref("foo")
+        assert p.kind == "bare"
+        assert p.segments == ("foo",)
+        assert p.task_title is None
+
+    def test_group_path(self) -> None:
+        p = service.parse_ref("a/b/c")
+        assert p.kind == "group_path"
+        assert p.segments == ("a", "b", "c")
+
+    def test_task_path_nested(self) -> None:
+        p = service.parse_ref("a/b:leaf")
+        assert p.kind == "task_path"
+        assert p.segments == ("a", "b")
+        assert p.task_title == "leaf"
+
+    def test_task_path_root(self) -> None:
+        p = service.parse_ref(":root-task")
+        assert p.kind == "task_path"
+        assert p.segments == ()
+        assert p.task_title == "root-task"
+
+    def test_last_colon_wins(self) -> None:
+        # Only the LAST colon splits group-path from task title. Earlier
+        # colons aren't legal in titles, but parse_ref is pure and just
+        # delegates to validation downstream — confirm split semantics.
+        p = service.parse_ref("a:b:c")
+        assert p.kind == "task_path"
+        assert p.task_title == "c"
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty ref"):
+            service.parse_ref("")
+
+    def test_empty_segment_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty path segment"):
+            service.parse_ref("a//b")
+        with pytest.raises(ValueError, match="empty path segment"):
+            service.parse_ref("foo/")
+        with pytest.raises(ValueError, match="empty path segment"):
+            service.parse_ref("//a")  # leading-slash anchor + empty seg
+
+    def test_empty_task_title_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty task title"):
+            service.parse_ref("a/b:")
+
+    # ---- Leading-slash anchor (introduced 0.15) ----
+
+    def test_leading_slash_single_segment_is_group_path(self) -> None:
+        # `/A` promotes a single-segment ref from `bare` to `group_path`,
+        # disambiguating root group A from a task title A.
+        p = service.parse_ref("/A")
+        assert p.kind == "group_path"
+        assert p.segments == ("A",)
+
+    def test_leading_slash_multi_segment(self) -> None:
+        p = service.parse_ref("/A/B/C")
+        assert p.kind == "group_path"
+        assert p.segments == ("A", "B", "C")
+
+    def test_leading_slash_on_task_path_prefix(self) -> None:
+        # `/A:foo` — leading slash on the group prefix is cosmetic.
+        p = service.parse_ref("/A:foo")
+        assert p.kind == "task_path"
+        assert p.segments == ("A",)
+        assert p.task_title == "foo"
+
+    def test_leading_slash_alone_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty group path"):
+            service.parse_ref("/")
+
+    def test_leading_slash_with_empty_task_prefix_raises(self) -> None:
+        # `/:foo` — root has no name; rejected.
+        with pytest.raises(ValueError, match="empty group path"):
+            service.parse_ref("/:foo")
+
+
+class TestResolveGroupPath:
+    def _setup(self, conn: sqlite3.Connection) -> int:
+        return insert_workspace(conn, "w")
+
+    def test_strict_walk(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        b = service.create_group(conn, wid, "b", parent_id=a.id)
+        c = service.create_group(conn, wid, "c", parent_id=b.id)
+        assert service.resolve_group_path(conn, wid, ("a", "b", "c")) == c
+        assert service.resolve_group_path(conn, wid, ("a", "b")) == b
+        assert service.resolve_group_path(conn, wid, ("a",)) == a
+
+    def test_does_not_match_non_root_first_segment(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        service.create_group(conn, wid, "b", parent_id=a.id)
+        with pytest.raises(LookupError, match="not found under <root>"):
+            service.resolve_group_path(conn, wid, ("b",))
+
+    def test_missing_segment_names_path_so_far(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        service.create_group(conn, wid, "b", parent_id=a.id)
+        with pytest.raises(LookupError, match="'c'.*under a/b"):
+            service.resolve_group_path(conn, wid, ("a", "b", "c"))
+
+    def test_collision_under_different_parents(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        p1 = service.create_group(conn, wid, "p1")
+        p2 = service.create_group(conn, wid, "p2")
+        s1 = service.create_group(conn, wid, "shared", parent_id=p1.id)
+        s2 = service.create_group(conn, wid, "shared", parent_id=p2.id)
+        assert service.resolve_group_path(conn, wid, ("p1", "shared")) == s1
+        assert service.resolve_group_path(conn, wid, ("p2", "shared")) == s2
+
+    def test_resolve_group_dispatches_to_path(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        b = service.create_group(conn, wid, "b", parent_id=a.id)
+        assert service.resolve_group(conn, wid, "a/b") == b
+
+    def test_resolve_group_rejects_task_path(self, conn: sqlite3.Connection) -> None:
+        wid = self._setup(conn)
+        with pytest.raises(ValueError, match="expected group ref"):
+            service.resolve_group(conn, wid, "a:foo")
+
+
+class TestResolveTaskPath:
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int]:
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        return wid, sid
+
+    def test_task_under_group(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        b = service.create_group(conn, wid, "b", parent_id=a.id)
+        t = service.create_task(conn, wid, "leaf", sid, group_id=b.id)
+        assert service.resolve_task_path(conn, wid, ("a", "b"), "leaf").id == t.id
+
+    def test_root_task(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        t = service.create_task(conn, wid, "ungrouped", sid)
+        assert service.resolve_task_path(conn, wid, (), "ungrouped").id == t.id
+
+    def test_task_under_group_misses_other_group(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        b = service.create_group(conn, wid, "b")
+        service.create_task(conn, wid, "shared", sid, group_id=a.id)
+        with pytest.raises(LookupError, match="not found in b"):
+            service.resolve_task_path(conn, wid, ("b",), "shared")
+
+    def test_resolve_task_id_dispatch(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        a = service.create_group(conn, wid, "a")
+        t1 = service.create_task(conn, wid, "leaf", sid, group_id=a.id)
+        t2 = service.create_task(conn, wid, "rootleaf", sid)
+        assert service.resolve_task_id(conn, wid, "a:leaf") == t1.id
+        assert service.resolve_task_id(conn, wid, ":rootleaf") == t2.id
+        assert service.resolve_task_id(conn, wid, str(t1.id)) == t1.id
+
+    def test_resolve_task_id_rejects_group_path(self, conn: sqlite3.Connection) -> None:
+        wid, _ = self._setup(conn)
+        with pytest.raises(ValueError, match="expected task ref"):
+            service.resolve_task_id(conn, wid, "a/b/c")
+
+
+class TestTitleValidation:
+    def _setup(self, conn: sqlite3.Connection) -> tuple[int, int]:
+        wid = insert_workspace(conn, "w")
+        sid = insert_status(conn, wid, "todo")
+        return wid, sid
+
+    def test_create_task_rejects_slash(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.create_task(conn, wid, "bad/title", sid)
+
+    def test_create_task_rejects_colon(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.create_task(conn, wid, "bad:title", sid)
+
+    def test_create_group_rejects_slash(self, conn: sqlite3.Connection) -> None:
+        wid, _ = self._setup(conn)
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.create_group(conn, wid, "bad/title")
+
+    def test_create_group_rejects_colon(self, conn: sqlite3.Connection) -> None:
+        wid, _ = self._setup(conn)
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.create_group(conn, wid, "bad:title")
+
+    def test_update_task_rejects_slash_in_title(self, conn: sqlite3.Connection) -> None:
+        wid, sid = self._setup(conn)
+        t = service.create_task(conn, wid, "ok", sid)
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.update_task(conn, t.id, {"title": "bad/title"}, "test")
+
+    def test_update_group_rejects_colon_in_title(self, conn: sqlite3.Connection) -> None:
+        wid, _ = self._setup(conn)
+        g = service.create_group(conn, wid, "ok")
+        with pytest.raises(ValueError, match="cannot contain"):
+            service.update_group(conn, g.id, {"title": "bad:title"}, "test")

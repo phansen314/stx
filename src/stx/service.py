@@ -60,6 +60,84 @@ from .service_models import (
 _UNSET: Any = object()
 
 
+# ---- Path-based ref parsing ----
+
+
+@dataclasses.dataclass(frozen=True)
+class ParsedRef:
+    """Result of parsing a CLI/TUI entity reference string.
+
+    Three shapes:
+
+    * ``kind == "bare"`` — single bare title, no path delimiters. Caller
+      decides whether to interpret as a group or a task (workspace-wide
+      ambiguous lookup, today's behavior).
+    * ``kind == "group_path"`` — segments contains the full group path,
+      anchored at root. ``len(segments) >= 1``.
+    * ``kind == "task_path"`` — segments is the group prefix (possibly
+      empty for "no group"); ``task_title`` is the leaf task title.
+    """
+
+    kind: str  # "bare" | "group_path" | "task_path"
+    segments: tuple[str, ...] = ()
+    task_title: str | None = None
+    raw: str = ""
+
+
+def parse_ref(raw: str) -> ParsedRef:
+    """Parse a ref string into ParsedRef.
+
+    Rules:
+      * A leading ``/`` is a no-op anchor that signals "this group path
+        starts at the workspace root". It promotes single-segment group
+        refs from ``bare`` to ``group_path`` so callers in polymorphic
+        contexts (edges) can disambiguate ``/A`` (root group A) from
+        ``A`` (bare title — typically a task). Multi-segment paths are
+        already absolute, so the leading slash is cosmetic there.
+      * Last ``:`` (if any) splits group prefix from task title.
+        ``:foo`` → root task ``foo``. ``A/B:foo`` → task ``foo`` in
+        group ``A/B``. A leading ``/`` on the prefix (``/A:foo``) is
+        accepted and cosmetic.
+      * Otherwise, ``/`` splits the string into group path segments.
+      * No delimiters → bare title (caller decides type).
+
+    Raises ValueError on empty input or empty segment.
+    """
+    if not raw:
+        raise ValueError("empty ref")
+    if ":" in raw:
+        prefix, _, leaf = raw.rpartition(":")
+        if not leaf:
+            raise ValueError(f"empty task title in ref {raw!r}")
+        if prefix.startswith("/"):
+            prefix = prefix[1:]
+            if not prefix:
+                # `/:foo` — leading slash with no group segments is
+                # contradictory (root has no name). Reject.
+                raise ValueError(f"empty group path in ref {raw!r}")
+        segments = tuple(prefix.split("/")) if prefix else ()
+        for seg in segments:
+            if not seg:
+                raise ValueError(f"empty path segment in ref {raw!r}")
+        return ParsedRef(kind="task_path", segments=segments, task_title=leaf, raw=raw)
+    if raw.startswith("/"):
+        body = raw[1:]
+        if not body:
+            raise ValueError(f"empty group path in ref {raw!r}")
+        segments = tuple(body.split("/"))
+        for seg in segments:
+            if not seg:
+                raise ValueError(f"empty path segment in ref {raw!r}")
+        return ParsedRef(kind="group_path", segments=segments, raw=raw)
+    if "/" in raw:
+        segments = tuple(raw.split("/"))
+        for seg in segments:
+            if not seg:
+                raise ValueError(f"empty path segment in ref {raw!r}")
+        return ParsedRef(kind="group_path", segments=segments, raw=raw)
+    return ParsedRef(kind="bare", segments=(raw,), raw=raw)
+
+
 # ---- Error translation ----
 
 _UNIQUE_MESSAGES: dict[str, str] = {
@@ -114,6 +192,26 @@ def _friendly_errors(
 
 
 # ---- Private helpers ----
+
+
+_FORBIDDEN_TITLE_CHARS = ("/", ":")
+
+
+def _validate_title(title: str | None, *, kind: str) -> None:
+    """Reject titles containing path-syntax delimiters.
+
+    `/` is the group-segment delimiter and `:` is the group→task delimiter
+    in path refs (e.g. ``A/B:my-task``). Allowing them in titles would make
+    refs ambiguous. Enforced at the service boundary so both CLI and TUI
+    write paths see the same error before any DB write.
+    """
+    if title is None:
+        return
+    for ch in _FORBIDDEN_TITLE_CHARS:
+        if ch in title:
+            raise ValueError(
+                f"{kind} title cannot contain {ch!r} (reserved for path syntax): {title!r}"
+            )
 
 
 def _validate_task_fields(
@@ -431,6 +529,7 @@ def create_task(
     finish_date: int | None = None,
     group_id: int | None = None,
 ) -> Task:
+    _validate_title(title, kind="task")
     fields: dict[str, Any] = {
         "priority": priority,
     }
@@ -485,16 +584,27 @@ def resolve_task_id(
 ) -> int:
     """Resolve a task identifier to its ID.
 
-    Numeric forms ('1', 'task-0001', '#1') are tried first; anything else
-    falls back to a title lookup on this workspace. A task whose title
-    literally matches `task-NNNN` would be resolved as an ID, not a title —
-    avoid such titles.
+    Resolution order:
+      1. Numeric forms (``1``, ``task-0001``, ``#1``).
+      2. Path forms (``A/B:leaf`` or ``:root-leaf``) via parse_ref.
+      3. Bare title — workspace-wide title lookup.
+
+    A task whose title literally matches ``task-NNNN`` would be resolved
+    as an ID, not a title — avoid such titles. Group-only path refs
+    (``A/B/C``) are rejected since the caller asked for a task.
     """
     try:
         return parse_task_num(raw)
     except ValueError:
         pass
-    return get_task_by_title(conn, workspace_id, raw).id
+    parsed = parse_ref(raw)
+    if parsed.kind == "group_path":
+        raise ValueError(f"expected task ref, got group path: {raw!r}")
+    if parsed.kind == "task_path":
+        return resolve_task_path(
+            conn, workspace_id, parsed.segments, parsed.task_title or ""
+        ).id
+    return get_task_by_title(conn, workspace_id, parsed.segments[0]).id
 
 
 def get_task_detail(conn: sqlite3.Connection, task_id: int) -> TaskDetail:
@@ -631,6 +741,8 @@ def _validate_task_update(
         merged["start_date"] = changes.get("start_date", old.start_date)
         merged["finish_date"] = changes.get("finish_date", old.finish_date)
     merged.update(changes)
+    if "title" in changes:
+        _validate_title(changes["title"], kind="task")
     _validate_task_fields(merged, workspace_id=old.workspace_id, conn=conn)
 
 
@@ -2070,6 +2182,7 @@ def create_group(
     parent_id: int | None = None,
     description: str | None = None,
 ) -> Group:
+    _validate_title(title, kind="group")
     with transaction(conn), _friendly_errors():
         get_workspace(conn, workspace_id)
         if parent_id is not None:
@@ -2135,35 +2248,82 @@ def resolve_group_by_title(
     if len(candidates) > 1:
         raise LookupError(
             f"group {title!r} is ambiguous — {len(candidates)} matches. "
-            "Use --parent to disambiguate"
+            "Use a path ref (e.g. parent/child) to disambiguate"
         )
     return candidates[0]
+
+
+def resolve_group_path(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    segments: tuple[str, ...],
+) -> Group:
+    """Walk a multi-segment group path strictly from root.
+
+    Each segment must exist as a non-archived child of the previous
+    (segment[0] anchored at ``parent_id IS NULL``). Missing segments raise
+    LookupError naming the failing segment and the path traversed so far.
+    """
+    if not segments:
+        raise ValueError("empty group path")
+    parent_id: int | None = None
+    walked: list[str] = []
+    current: Group | None = None
+    for seg in segments:
+        current = repo.get_group_by_title(conn, workspace_id, parent_id, seg)
+        if current is None:
+            so_far = "/".join(walked) or "<root>"
+            raise LookupError(
+                f"group path segment {seg!r} not found under {so_far}"
+            )
+        walked.append(seg)
+        parent_id = current.id
+    assert current is not None
+    return current
+
+
+def resolve_task_path(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    group_segments: tuple[str, ...],
+    task_title: str,
+) -> Task:
+    """Resolve a task scoped to a (possibly empty) group path.
+
+    Empty ``group_segments`` → search tasks with ``group_id IS NULL``.
+    Otherwise walk the group path and scope to that group's id.
+    """
+    if group_segments:
+        group = resolve_group_path(conn, workspace_id, group_segments)
+        scope_id: int | None = group.id
+        scope_label = "/".join(group_segments)
+    else:
+        scope_id = None
+        scope_label = "<root>"
+    task = repo.get_task_by_title_and_group(conn, workspace_id, scope_id, task_title)
+    if task is None:
+        raise LookupError(f"task {task_title!r} not found in {scope_label}")
+    return task
 
 
 def resolve_group(
     conn: sqlite3.Connection,
     workspace_id: int,
-    title: str,
-    *,
-    parent_title: str | None = None,
-    parent_root: bool = False,
+    ref: str,
 ) -> Group:
-    """Resolve a group by title.
+    """Resolve a group by ref. Accepts:
 
-    If `parent_root` is True, looks up a root-level group (parent_id IS NULL).
-    If `parent_title` is given, resolves that parent first and scopes under it.
-    Otherwise searches all groups on the workspace (ambiguity is an error).
+    * Bare title (workspace-wide; ambiguity errors).
+    * ``A/B/C`` group path (strict walk from root).
+
+    Rejects task-path refs (``A:foo``) — caller asked for a group.
     """
-    if parent_root:
-        return resolve_group_by_title(
-            conn, workspace_id, title, parent_id=None, parent_known=True
-        )
-    if parent_title is not None:
-        parent = resolve_group_by_title(conn, workspace_id, parent_title)
-        return resolve_group_by_title(
-            conn, workspace_id, title, parent_id=parent.id, parent_known=True
-        )
-    return resolve_group_by_title(conn, workspace_id, title)
+    parsed = parse_ref(ref)
+    if parsed.kind == "task_path":
+        raise ValueError(f"expected group ref, got task path: {ref!r}")
+    if parsed.kind == "bare":
+        return resolve_group_by_title(conn, workspace_id, parsed.segments[0])
+    return resolve_group_path(conn, workspace_id, parsed.segments)
 
 
 def get_group_ancestry(
@@ -2276,6 +2436,8 @@ def update_group(
     *,
     expected_version: int | None = None,
 ) -> Group:
+    if "title" in changes:
+        _validate_title(changes["title"], kind="group")
     parents: set[int] = set()
     with transaction(conn), _friendly_errors():
         if "parent_id" in changes:

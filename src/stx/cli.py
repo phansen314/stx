@@ -20,7 +20,7 @@ from .active_workspace import (
 )
 from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from .export import export_full_json, export_markdown
-from .formatting import format_group_num, format_task_num, parse_date
+from .formatting import format_group_num, format_task_num, parse_date, parse_task_num
 from .models import ConflictError, Workspace
 from .service_models import ArchivePreview
 
@@ -617,38 +617,52 @@ def _resolve_edge_node(
     conn: sqlite3.Connection,
     workspace_id: int,
     ref: str,
-    *,
-    parent_title: str | None = None,
 ) -> tuple[str, int]:
     """Parse a typed node ref and return (node_type, node_id).
 
-    Ref formats:
-      task-NNNN or #NNNN or a task title → ('task', id)
-      group:<title>                        → ('group', id)
-      workspace:<name>                     → ('workspace', id)
-      status:<name>                        → ('status', id)
+    Type inference from delimiters when no explicit ``<type>:`` prefix is
+    given:
+      * Numeric forms (``task-NNNN``, ``#N``, plain int) → task by id.
+      * Leading ``/`` (``/A``, ``/A/B/C``)               → group path
+        (the leading slash anchors single-segment refs as groups).
+      * Path with ``/`` but no ``:`` (``A/B/C``)         → group path.
+      * Path containing ``:`` (``A/B:leaf``, ``:foo``)    → task path.
+      * Bare title (no delimiters)                        → task by title.
 
-    When no prefix is given, the ref is resolved as a task (task number or title).
-    ``parent_title`` disambiguates group refs when multiple groups share a title
-    under different parents. Ignored for task, workspace, and status refs.
+    Explicit prefixes always override inference:
+      ``group:<path>``, ``task:<path>``, ``workspace:<name>``, ``status:<name>``.
     """
     if ref.startswith("group:"):
-        title = ref[len("group:"):]
-        grp = service.resolve_group(
-            conn, workspace_id, title, parent_title=parent_title
-        )
+        suffix = ref[len("group:"):]
+        if not suffix:
+            raise ValueError("empty group ref after 'group:'")
+        grp = service.resolve_group(conn, workspace_id, suffix)
         return "group", grp.id
-    elif ref.startswith("workspace:"):
+    if ref.startswith("task:"):
+        suffix = ref[len("task:"):]
+        if not suffix:
+            raise ValueError("empty task ref after 'task:'")
+        return "task", service.resolve_task_id(conn, workspace_id, suffix)
+    if ref.startswith("workspace:"):
         name = ref[len("workspace:"):]
         ws = service.get_workspace_by_name(conn, name)
         return "workspace", ws.id
-    elif ref.startswith("status:"):
+    if ref.startswith("status:"):
         name = ref[len("status:"):]
         st = service.get_status_by_name(conn, workspace_id, name)
         return "status", st.id
-    else:
-        task_id = _resolve_task(conn, service.get_workspace(conn, workspace_id), ref)
-        return "task", task_id
+    # No explicit prefix — try numeric task short-circuit first, then
+    # infer from path delimiters.
+    try:
+        return "task", parse_task_num(ref)
+    except ValueError:
+        pass
+    parsed = service.parse_ref(ref)
+    if parsed.kind == "group_path":
+        grp = service.resolve_group_path(conn, workspace_id, parsed.segments)
+        return "group", grp.id
+    # bare or task_path — both resolve as tasks.
+    return "task", service.resolve_task_id(conn, workspace_id, ref)
 
 
 def _edge_node_label(node_type: str, node_id: int, title: str) -> str:
@@ -670,11 +684,9 @@ def cmd_edge_create(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     from_type, from_id = _resolve_edge_node(
-        conn, workspace.id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace.id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace.id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace.id, args.target    )
     acyclic: bool | None = None
     if args.acyclic is not None:
         acyclic = args.acyclic
@@ -700,11 +712,9 @@ def cmd_edge_archive(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     from_type, from_id = _resolve_edge_node(
-        conn, workspace.id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace.id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace.id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace.id, args.target    )
     kind = service.archive_edge(
         conn, (from_type, from_id), (to_type, to_id), kind=args.kind
     )
@@ -725,11 +735,9 @@ def cmd_edge_show(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     from_type, from_id = _resolve_edge_node(
-        conn, workspace.id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace.id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace.id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace.id, args.target    )
     detail = service.get_edge_detail(
         conn, (from_type, from_id), (to_type, to_id), kind=args.kind
     )
@@ -741,11 +749,9 @@ def cmd_edge_edit(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     from_type, from_id = _resolve_edge_node(
-        conn, workspace.id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace.id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace.id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace.id, args.target    )
     changes: dict[str, Any] = {}
     if args.acyclic is not None:
         changes["acyclic"] = args.acyclic
@@ -773,11 +779,9 @@ def cmd_edge_log(
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     from_type, from_id = _resolve_edge_node(
-        conn, workspace.id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace.id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace.id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace.id, args.target    )
     history = service.list_journal_for_edge(
         conn, (from_type, from_id), (to_type, to_id), kind=args.kind
     )
@@ -792,12 +796,10 @@ def cmd_edge_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
     to_id: int | None = None
     if args.source:
         from_type, from_id = _resolve_edge_node(
-            conn, workspace.id, args.source, parent_title=args.source_parent
-        )
+            conn, workspace.id, args.source        )
     if args.target:
         to_type, to_id = _resolve_edge_node(
-            conn, workspace.id, args.target, parent_title=args.target_parent
-        )
+            conn, workspace.id, args.target        )
     edges = service.list_edges(
         conn,
         workspace.id,
@@ -818,11 +820,9 @@ def _resolve_edge_meta_endpoints(
     conn: sqlite3.Connection, args: argparse.Namespace, workspace_id: int
 ) -> tuple[str, int, str, int]:
     from_type, from_id = _resolve_edge_node(
-        conn, workspace_id, args.source, parent_title=args.source_parent
-    )
+        conn, workspace_id, args.source    )
     to_type, to_id = _resolve_edge_node(
-        conn, workspace_id, args.target, parent_title=args.target_parent
-    )
+        conn, workspace_id, args.target    )
     return from_type, from_id, to_type, to_id
 
 
@@ -884,13 +884,34 @@ def cmd_group_create(
     conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext
 ) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
+    title = args.title
     parent_id = None
-    if args.parent:
+    if "/" in title or ":" in title:
+        # Path-as-title: last segment is the leaf title, prefix is the parent
+        # path. Mutually exclusive with --parent (would be redundant or
+        # conflicting).
+        if ":" in title:
+            raise ValueError(
+                f"group title cannot contain ':' (reserved for path syntax): {title!r}"
+            )
+        if args.parent:
+            raise ValueError(
+                "cannot combine path-in-title with --parent; use one or the other"
+            )
+        segments = title.split("/")
+        if any(not s for s in segments):
+            raise ValueError(f"empty path segment in group title {title!r}")
+        title = segments[-1]
+        prefix = tuple(segments[:-1])
+        if prefix:
+            parent = service.resolve_group_path(conn, workspace.id, prefix)
+            parent_id = parent.id
+    elif args.parent:
         parent = service.resolve_group(conn, workspace.id, args.parent)
         parent_id = parent.id
     description = (args.desc or "").strip() or None
     grp = service.create_group(
-        conn, workspace.id, args.title, parent_id=parent_id, description=description
+        conn, workspace.id, title, parent_id=parent_id, description=description
     )
     return Ok(data=grp, text=f"created group '{grp.title}' ({format_group_num(grp.id)})")
 
@@ -972,7 +993,8 @@ def cmd_group_archive(
 def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
     workspace = _resolve_workspace(conn, args, ctx)
     grp = service.resolve_group(conn, workspace.id, args.title)
-    if args.to_top:
+    promote = args.parent == "/"
+    if promote:
         changes: dict[str, Any] = {"parent_id": None}
     else:
         parent = service.resolve_group(conn, workspace.id, args.parent)
@@ -981,13 +1003,9 @@ def cmd_group_mv(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCon
         preview = service.preview_update_group(conn, grp.id, changes)
         return Ok(data=preview, text=presenters.format_entity_update_preview(preview))
     updated = service.update_group(conn, grp.id, changes)
-    if args.to_top:
+    if promote:
         return Ok(data=updated, text=f"promoted group '{grp.title}' to top-level")
-    parent_title = (
-        service.get_group(conn, changes["parent_id"]).title
-        if changes["parent_id"] is not None
-        else None
-    )
+    parent_title = service.get_group(conn, changes["parent_id"]).title
     return Ok(data=updated, text=f"moved group '{grp.title}' under '{parent_title}'")
 
 
@@ -1727,22 +1745,18 @@ def build_parser() -> argparse.ArgumentParser:
     edge_sub = p_edge.add_subparsers()
 
     _edge_ref_help = (
-        "node ref: task-NNNN / #NNNN / <task title> for tasks; "
-        "group:<title> for groups; workspace:<name> for workspaces; "
-        "status:<name> for statuses"
-    )
-
-    _parent_help = (
-        "disambiguate a group: ref when multiple groups share a title under "
-        "different parents (parent group title)"
+        "node ref. Type inferred from delimiters: "
+        "task-NNNN/#N/int -> task by id; /A or /A/B/C (leading slash) "
+        "-> group path; A/B/C (multi-seg) -> group path; "
+        "A:leaf or :leaf -> task path; bare title -> task. "
+        "Override with explicit prefix: group:<path>, task:<path>, "
+        "workspace:<name>, status:<name>"
     )
 
     p_ea = edge_sub.add_parser("create", help="add an edge")
     p_ea.set_defaults(command="edge_create")
     p_ea.add_argument("--source", "-s", required=True, help=f"source node — {_edge_ref_help}")
     p_ea.add_argument("--target", "-t", required=True, help=f"target node — {_edge_ref_help}")
-    p_ea.add_argument("--source-parent", default=None, help=_parent_help)
-    p_ea.add_argument("--target-parent", default=None, help=_parent_help)
     p_ea.add_argument("--kind", "-k", required=True, help="edge kind (e.g. blocks, spawns, informs)")
     p_ea_acyclic = p_ea.add_mutually_exclusive_group()
     p_ea_acyclic.add_argument(
@@ -1758,16 +1772,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_er.set_defaults(command="edge_archive")
     p_er.add_argument("--source", "-s", required=True, help=f"source node — {_edge_ref_help}")
     p_er.add_argument("--target", "-t", required=True, help=f"target node — {_edge_ref_help}")
-    p_er.add_argument("--source-parent", default=None, help=_parent_help)
-    p_er.add_argument("--target-parent", default=None, help=_parent_help)
     p_er.add_argument("--kind", "-k", required=True, help="edge kind to archive")
 
     p_els = edge_sub.add_parser("ls", help="list edges in workspace")
     p_els.set_defaults(command="edge_ls")
     p_els.add_argument("--source", "-s", default=None, help=f"filter by source node — {_edge_ref_help}")
     p_els.add_argument("--target", "-t", default=None, help=f"filter by target node — {_edge_ref_help}")
-    p_els.add_argument("--source-parent", default=None, help=_parent_help)
-    p_els.add_argument("--target-parent", default=None, help=_parent_help)
     p_els.add_argument("--kind", "-k", default=None, help="filter by edge kind")
 
     p_emeta = edge_sub.add_parser("meta", help="edge metadata management")
@@ -1776,8 +1786,6 @@ def build_parser() -> argparse.ArgumentParser:
     def _add_edge_meta_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--source", "-s", required=True, help=f"source node — {_edge_ref_help}")
         p.add_argument("--target", "-t", required=True, help=f"target node — {_edge_ref_help}")
-        p.add_argument("--source-parent", default=None, help=_parent_help)
-        p.add_argument("--target-parent", default=None, help=_parent_help)
         p.add_argument("--kind", "-k", required=True, help="edge kind")
 
     p_emeta_ls = emeta_sub.add_parser("ls", help="list all edge metadata")
@@ -1872,10 +1880,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_gmv = grp_sub.add_parser("mv", help="reparent a group")
     p_gmv.set_defaults(command="group_mv")
     p_gmv.add_argument("title")
-    p_gmv_parent = p_gmv.add_mutually_exclusive_group(required=True)
-    p_gmv_parent.add_argument("--parent", help="new parent group title")
-    p_gmv_parent.add_argument(
-        "--to-top", action="store_true", help="promote to top-level (no parent)"
+    p_gmv.add_argument(
+        "--parent",
+        required=True,
+        help="new parent group ref ('/' for root, or a path like '/Backend' or 'A/B')",
     )
     p_gmv.add_argument("--dry-run", action="store_true", help="preview reparent without writing")
 

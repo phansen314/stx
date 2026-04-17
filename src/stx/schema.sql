@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS groups (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
     parent_id    INTEGER,
-    title        TEXT NOT NULL COLLATE NOCASE,
+    title        TEXT NOT NULL COLLATE NOCASE
+                     CHECK (title NOT GLOB '*[/:]*'),
     description  TEXT,
     archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS groups (
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL,
-    title TEXT NOT NULL COLLATE NOCASE,
+    title TEXT NOT NULL COLLATE NOCASE
+        CHECK (title NOT GLOB '*[/:]*'),
     description TEXT,
     status_id INTEGER NOT NULL,
     priority INTEGER NOT NULL DEFAULT 1,

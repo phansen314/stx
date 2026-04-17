@@ -1574,6 +1574,177 @@ class TestMigrations:
         conn.close()
 
 
+def _bootstrap_v21_db(conn: sqlite3.Connection) -> None:
+    """Seed a v21-equivalent schema (current schema minus the 022 CHECKs).
+
+    The 022 migration is the only thing that needs to "see" titles with `/`
+    or `:` in them. Building this directly avoids the catch-22 where init_db
+    at SCHEMA_VERSION rejects the offender rows we want to migrate.
+    """
+    conn.executescript("""
+        CREATE TABLE workspaces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE,
+            archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+            version INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE statuses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            name TEXT NOT NULL COLLATE NOCASE,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            is_terminal INTEGER NOT NULL DEFAULT 0 CHECK (is_terminal IN (0, 1)),
+            version INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (id, workspace_id)
+        );
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            parent_id INTEGER,
+            title TEXT NOT NULL COLLATE NOCASE,
+            description TEXT,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+            done INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (id, workspace_id),
+            FOREIGN KEY (parent_id, workspace_id) REFERENCES groups(id, workspace_id)
+        );
+        CREATE TABLE tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            title TEXT NOT NULL COLLATE NOCASE,
+            description TEXT,
+            status_id INTEGER NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 1,
+            due_date INTEGER,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            start_date INTEGER,
+            finish_date INTEGER,
+            group_id INTEGER,
+            metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+            done INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (status_id, workspace_id) REFERENCES statuses(id, workspace_id),
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (group_id, workspace_id) REFERENCES groups(id, workspace_id),
+            UNIQUE (id, workspace_id)
+        );
+        CREATE UNIQUE INDEX uq_groups_workspace_parent_title_active
+            ON groups(workspace_id, COALESCE(parent_id, -1), title) WHERE archived = 0;
+        CREATE UNIQUE INDEX uq_tasks_workspace_title_active
+            ON tasks(workspace_id, title) WHERE archived = 0;
+        CREATE TABLE journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK (entity_type IN (
+                'task', 'group', 'workspace', 'status', 'edge'
+            )),
+            entity_id INTEGER NOT NULL,
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            field TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            source TEXT NOT NULL,
+            changed_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+    """ + _EDGES_STUB_DDL)
+    conn.execute("PRAGMA user_version = 21")
+    conn.commit()
+
+
+class TestMigration022PathSafeTitles:
+    def test_renames_offender_titles_and_journals(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "v21.db"
+        conn = get_connection(db_path)
+        _bootstrap_v21_db(conn)
+
+        conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'w')")
+        conn.execute("INSERT INTO statuses (id, workspace_id, name) VALUES (1, 1, 'todo')")
+        # Two root groups whose names use both reserved chars.
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (1, 1, 'a/b')")
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (2, 1, 'x:y')")
+        # Task with `/` in title.
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (1, 1, 'do/it', 1)"
+        )
+        # Clean group/task that should be left alone.
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (3, 1, 'ok')")
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, title, status_id) VALUES (2, 1, 'fine', 1)"
+        )
+        conn.commit()
+
+        _run_migrations(conn)
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        rows = dict(
+            (r["id"], r["title"])
+            for r in conn.execute("SELECT id, title FROM groups").fetchall()
+        )
+        assert rows[1] == "a__b"
+        assert rows[2] == "x__y"
+        assert rows[3] == "ok"
+        trows = dict(
+            (r["id"], r["title"])
+            for r in conn.execute("SELECT id, title FROM tasks").fetchall()
+        )
+        assert trows[1] == "do__it"
+        assert trows[2] == "fine"
+        # Journal rows added with source=migration:022 for each renamed row.
+        journals = conn.execute(
+            "SELECT entity_type, entity_id, field, old_value, new_value "
+            "FROM journal WHERE source = 'migration:022' ORDER BY id"
+        ).fetchall()
+        assert len(journals) == 3
+        assert (journals[0]["entity_type"], journals[0]["old_value"], journals[0]["new_value"]) == (
+            "group", "a/b", "a__b"
+        )
+        assert (journals[1]["entity_type"], journals[1]["old_value"], journals[1]["new_value"]) == (
+            "group", "x:y", "x__y"
+        )
+        assert (journals[2]["entity_type"], journals[2]["old_value"], journals[2]["new_value"]) == (
+            "task", "do/it", "do__it"
+        )
+        conn.close()
+
+    def test_collision_suffixing(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "v21.db"
+        conn = get_connection(db_path)
+        _bootstrap_v21_db(conn)
+
+        conn.execute("INSERT INTO workspaces (id, name) VALUES (1, 'w')")
+        conn.execute("INSERT INTO statuses (id, workspace_id, name) VALUES (1, 1, 'todo')")
+        # Pre-existing 'a__b' group, plus an offender 'a/b' that would
+        # rename to 'a__b' and collide. The offender should be suffixed.
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (1, 1, 'a__b')")
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (2, 1, 'a/b')")
+        # Two offenders that both rename to the same target collide with each
+        # other. Lower id wins the un-suffixed slot.
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (3, 1, 'c/d')")
+        conn.execute("INSERT INTO groups (id, workspace_id, title) VALUES (4, 1, 'c:d')")
+        conn.commit()
+
+        _run_migrations(conn)
+
+        rows = dict(
+            (r["id"], r["title"])
+            for r in conn.execute("SELECT id, title FROM groups").fetchall()
+        )
+        assert rows[1] == "a__b"
+        # id=2 collided with the pre-existing a__b → suffix __2.
+        assert rows[2] == "a__b__2"
+        # id=3 was first to claim c__d.
+        assert rows[3] == "c__d"
+        # id=4 collided with id=3's freshly-renamed c__d → suffix __2.
+        assert rows[4] == "c__d__2"
+        conn.close()
+
+
 class TestJournalEntityTypeConstraint:
     def test_rejects_invalid_entity_type(
         self,

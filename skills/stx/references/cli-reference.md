@@ -50,6 +50,43 @@ Archives are **soft-deletes** — rows are never removed from the database; the 
 
 ---
 
+## Path-based Refs
+
+Group and task arguments accept these ref shapes:
+
+| Form | Meaning |
+|---|---|
+| `foo` | Bare title — workspace-wide lookup. Ambiguity (multi-match) errors with a hint to use a path ref. In polymorphic edge contexts, bare resolves as a task. |
+| `/A` | **Root group `A`** — leading-slash anchor (Unix-style absolute path) makes single-segment refs unambiguously group paths. Useful in polymorphic edge contexts to reference a root group without the `group:` prefix. |
+| `A/B/C` (or `/A/B/C`) | **Group path** — strict walk from root: `A` → `B` → `C`. Each segment must exist as a non-archived child of the previous. Leading slash is cosmetic for multi-segment paths. |
+| `A/B:leaf` (or `/A/B:leaf`) | **Task path** — group prefix `A/B`, then task title `leaf` scoped to that group. |
+| `:rootleaf` | **Root task** — no group prefix, task `rootleaf` with `group_id IS NULL`. |
+
+**Where paths apply:**
+- Group ref args/flags: `group show <ref>`, `group edit <ref>`, `group log <ref>`, `group archive <ref>`, `group mv <ref>`, `group assign <task> <ref>`, `group meta * <ref>`, `group create <ref>` (path-as-title), `--parent <ref>`, `task create -g <ref>`, `task ls -g <ref>`, `task edit -g <ref>`.
+- Task ref args/flags: `task show|edit|mv|transfer|archive|log|done|undone|meta * <ref>`, `group assign <ref> <group>`, `group unassign <ref>`.
+- Edge `--source` / `--target` (polymorphic): type is **inferred** from delimiters when no explicit prefix is given:
+  - `task-NNNN` / `#N` / plain int → task by id
+  - `/A` or `/A/B/C` (leading slash) → group path (single-segment included)
+  - `A/B/C` (only `/`, multi-segment) → group path
+  - `A:foo`, `:foo`, `A/B:foo` (contains `:`) → task path
+  - bare title (no delimiters) → task by title
+  - Explicit prefixes `group:`, `task:`, `workspace:`, `status:` always override inference; the suffix uses the same path syntax. E.g. `--source group:A/B/C` or `--target task:A/B:leaf`.
+  - Examples:
+    - `--source /A/B/C --target D:task0` — group→task, no prefixes needed.
+    - `--source /A --target /B` — root group A → root group B.
+    - `--source task-0001 --target /A` — task → root group A.
+
+**Title constraints:** group and task titles cannot contain `/` or `:` (reserved for path syntax). Service-layer validation rejects offending writes; a `CHECK` constraint enforces it on fresh databases. Pre-existing rows were auto-renamed by migration 022 (`/`/`:` → `__`, collisions get `__N` suffix).
+
+**Validation errors:**
+- Title with `/` or `:` → exit 4 (`validation`).
+- Path walk missing a segment → exit 3 (`not_found`), names the failing segment + path so far ("group path segment 'c' not found under a/b").
+- Bare-title ambiguity → exit 3, message hints to use a path ref.
+- Task ref passed where a group ref is expected (or vice versa) → exit 4 ("expected group ref, got task path: 'A:foo'").
+
+---
+
 ## Task Commands
 
 ### `stx task create <title> -S <status> [flags]`
@@ -62,12 +99,12 @@ Archives are **soft-deletes** — rows are never removed from the database; the 
 | `--desc` | `-d` | — | Description |
 | `--priority` | — | `1` | Priority (free-form integer; interpretation is user-defined — use metadata for labeled schemes) |
 | `--due` | — | — | Due date `YYYY-MM-DD` |
-| `--group` | `-g` | — | Group title |
+| `--group` | `-g` | — | Group title or path (e.g. `Frontend/Login`) |
 
 ```sh
 stx task create "Write README" -S "To Do"
 stx task create "Deploy to prod" -S Backlog --priority 3 --due 2026-05-01
-stx task create "Fix layout" -S "To Do" --group "Frontend"
+stx task create "Fix layout" -S "To Do" --group "Frontend/Login"
 ```
 
 The JSON response is a full `TaskDetail` (same shape as `stx task show`).
@@ -82,11 +119,12 @@ The JSON response is a full `TaskDetail` (same shape as `stx task show`).
 | `--status` | `-S` | — | Filter by status name |
 | `--priority` | — | — | Filter by priority integer |
 | `--search` | — | — | Title substring search |
-| `--group` | `-g` | — | Filter by group title |
+| `--group` | `-g` | — | Filter by group title or path (flat — no subgroup recursion) |
 
 ```sh
 stx task ls
 stx task ls --group "Sprint 1" --status "In Progress"
+stx task ls --group "Backend/Auth"             # path ref disambiguates collisions
 stx task ls --search auth --priority 3
 stx task ls --archived include
 ```
@@ -95,11 +133,13 @@ stx task ls --archived include
 
 ### `stx task show <task>`
 
-Shows full task detail: description, history, edges (`edge_sources` / `edge_targets` each carrying a `kind`), group. `<task>` accepts numeric IDs (`1`, `task-0001`, `#1`) or a title string.
+Shows full task detail: description, history, edges (`edge_sources` / `edge_targets` each carrying a `kind`), group. `<task>` accepts numeric IDs (`1`, `task-0001`, `#1`), a bare title (workspace-wide), or a path ref (`A/B:leaf` for a task in group `A/B`; `:rootleaf` for a root task with no group).
 
 ```sh
 stx task show task-0001
 stx task show "Write README"
+stx task show "Backend/Auth:apply-migrations"
+stx task show ":rootleaf"
 ```
 
 ---
@@ -114,7 +154,7 @@ All flags are optional; only provided fields are updated.
 | `--desc` | `-d` | — | New description |
 | `--priority` | `-p` | — | New priority integer |
 | `--due` | — | — | New due date `YYYY-MM-DD` |
-| `--group` | `-g` | — | Group title to assign; pass `""` to unassign |
+| `--group` | `-g` | — | Group title or path to assign (e.g. `Backend/Auth`); pass `""` to unassign |
 | `--dry-run` | — | off | Preview the field diff without writing (ignores `--group`) |
 
 ```sh
@@ -353,22 +393,22 @@ stx status archive "Old Status" --force
 
 ## `stx edge` Subcommands
 
-Edges are polymorphic directional links with a free-form `kind` label and their own metadata blob. Endpoints are typed refs: `task-NNNN` / `#NNNN` / `<task title>` for tasks, `group:<title>` for groups, `workspace:<name>` for workspaces, `status:<name>` for statuses. Cross-type edges are allowed (task→group, group→workspace, status→status, etc.); status edges are pure annotation and carry no write-path semantics. Flags are explicit: `--source X --target Y --kind blocks` means **X points to Y with kind `blocks`**. The PK is `(from_type, from_id, to_type, to_id, kind)` — multiple kinds between the same node pair coexist; re-adding the same `(source, target, kind)` tuple clears the metadata blob and flips `archived = 0`. Self-loops are rejected by a DB CHECK. Cross-workspace edges are rejected at the service layer.
+Edges are polymorphic directional links with a free-form `kind` label and their own metadata blob. Endpoints are typed refs: `task-NNNN` / `#NNNN` / `<task ref>` for tasks, `group:<title-or-path>` for groups, `task:<task-path>` for tasks, `workspace:<name>` for workspaces, `status:<name>` for statuses. Group and task suffixes accept full path syntax (`group:A/B/C`, `task:A/B:leaf`). Cross-type edges are allowed (task→group, group→workspace, status→status, etc.); status edges are pure annotation and carry no write-path semantics. Flags are explicit: `--source X --target Y --kind blocks` means **X points to Y with kind `blocks`**. Every edge subcommand accepts `-s` / `-t` / `-k` as short forms for `--source` / `--target` / `--kind`. The PK is `(from_type, from_id, to_type, to_id, kind)` — multiple kinds between the same node pair coexist; re-adding the same `(source, target, kind)` tuple clears the metadata blob and flips `archived = 0`. Self-loops are rejected by a DB CHECK. Cross-workspace edges are rejected at the service layer.
 
 **Kind constraint:** lowercase `[a-z0-9_.-]+`, 1-64 characters. Enforced by the service layer's `_normalize_edge_kind` and a DB `CHECK (kind GLOB '[a-z0-9_.-]*' AND length(kind) BETWEEN 1 AND 64)`.
 
 **Acyclic flag:** each edge carries `acyclic` (default: `1` for `kind in {blocks, spawns}`, `0` otherwise). Cycle detection runs over the union of active acyclic edges — so mixing `blocks` and `spawns` in a cycle is rejected, but `informs` / `references` / `related-to` can freely form cycles. Override with `--acyclic` / `--no-acyclic`.
 
-**Group disambiguation:** when multiple groups share a title under different parents, pass `--source-parent <parent-title>` / `--target-parent <parent-title>` on the create/archive/meta/ls surface.
+**Group disambiguation:** when multiple groups share a title under different parents, use a path ref in the suffix — e.g. `group:Backend/Auth` resolves only the `Auth` group whose parent is `Backend`. The legacy `--source-parent` / `--target-parent` flags were removed in 0.15.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `edge create` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent`, `--acyclic`/`--no-acyclic` | Add an edge from source to target with the given kind. |
-| `edge show` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent` | Show full edge detail (endpoints, kind, acyclic, archived, metadata, filtered history). |
-| `edge edit` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent`, `--acyclic`/`--no-acyclic` | Mutate the `acyclic` flag. Kind and endpoints are immutable (part of PK). Flipping off→on re-runs cycle detection and rejects the edit if a cycle would result. |
-| `edge log` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent` | Show journal history attributable to this (endpoint, kind) pair. **Caveat:** metadata events (`meta.*`) are journaled with `entity_id = from_id` only and cannot be disambiguated when multiple edges share a source — `edge log` captures endpoint/kind/acyclic/archived events but may omit metadata events for source nodes with multiple outgoing edges. |
-| `edge archive` | — | `--source REF --target REF --kind KIND` (all required), `--source-parent`, `--target-parent` | Soft-archive the active edge. Re-create via `edge create`. |
-| `edge ls` | — | `--source REF`, `--target REF`, `--kind KIND`, `--source-parent`, `--target-parent` | List active edges on the active workspace; filters are optional. Both endpoints must be active (archived endpoints are hidden). |
+| `edge create` | — | `--source REF --target REF --kind KIND` (all required), `--acyclic`/`--no-acyclic` | Add an edge from source to target with the given kind. |
+| `edge show` | — | `--source REF --target REF --kind KIND` (all required) | Show full edge detail (endpoints, kind, acyclic, archived, metadata, filtered history). |
+| `edge edit` | — | `--source REF --target REF --kind KIND` (all required), `--acyclic`/`--no-acyclic` | Mutate the `acyclic` flag. Kind and endpoints are immutable (part of PK). Flipping off→on re-runs cycle detection and rejects the edit if a cycle would result. |
+| `edge log` | — | `--source REF --target REF --kind KIND` (all required) | Show journal history attributable to this (endpoint, kind) pair. **Caveat:** metadata events (`meta.*`) are journaled with `entity_id = from_id` only and cannot be disambiguated when multiple edges share a source — `edge log` captures endpoint/kind/acyclic/archived events but may omit metadata events for source nodes with multiple outgoing edges. |
+| `edge archive` | — | `--source REF --target REF --kind KIND` (all required) | Soft-archive the active edge. Re-create via `edge create`. |
+| `edge ls` | — | `--source REF`, `--target REF`, `--kind KIND` | List active edges on the active workspace; filters are optional. Both endpoints must be active (archived endpoints are hidden). |
 | `edge meta ls` | — | `--source REF --target REF --kind KIND` | List all metadata on the edge. |
 | `edge meta get` | `key` | `--source REF --target REF --kind KIND` | Read a single metadata value. |
 | `edge meta set` | `key value` | `--source REF --target REF --kind KIND` | Write or overwrite a metadata value. Same charset/length rules as entity metadata (lowercase key, `[a-z0-9_.-]+`, 64-char key cap, 500-char value cap). |
@@ -377,6 +417,7 @@ Edges are polymorphic directional links with a free-form `kind` label and their 
 ```sh
 stx edge create --source task-0003 --target task-0001 --kind blocks
 stx edge create --source task-0002 --target "group:Auth" --kind informs
+stx edge create -s /A/B -t D:task0 -k blocks      # short forms work everywhere
 stx edge show --source task-0003 --target task-0001 --kind blocks
 stx edge edit --source task-0003 --target task-0001 --kind blocks --no-acyclic
 stx edge log --source task-0003 --target task-0001 --kind blocks
@@ -392,29 +433,34 @@ stx edge archive --source task-0003 --target task-0001 --kind blocks
 
 ## `stx group` Subcommands
 
-Groups are workspace-scoped hierarchical collections of tasks. Root groups have no parent (`parent_id IS NULL`); nested groups specify `--parent`. All group commands resolve the group title within the active workspace (or `-w`).
+Groups are workspace-scoped hierarchical collections of tasks. Root groups have no parent (`parent_id IS NULL`); nested groups specify `--parent` or use a path-as-title (`group create A/B/new`). All group commands resolve the group title within the active workspace (or `-w`); a bare title performs an ambiguous workspace-wide lookup, while a path ref (`A/B`) walks strictly from root.
+
+**Title constraints:** group and task titles cannot contain `/` or `:` — both are reserved for path syntax. Pre-existing offenders are auto-renamed to `__` equivalents by migration 022.
 
 | Command | Args | Flags | Description |
 |---|---|---|---|
-| `group create` | `title` | `--parent TITLE`, `--desc/-d` | Create group; optionally nested under a parent group |
+| `group create` | `title-or-path` | `--parent TITLE-OR-PATH`, `--desc/-d` | Create group. If `title` contains `/`, the leaf segment is the new title and the prefix is the parent path (mutually exclusive with `--parent`). |
 | `group ls` | — | `--archived {hide,include,only}` (default `hide`) | List groups (flat, root-level by default) |
-| `group show` | `title` | — | Show detail with ancestry |
-| `group edit` | `title` | `--title NEW`, `--desc/-d`, `--dry-run` | Edit group fields; `--title` renames the group; `--dry-run` previews the diff |
-| `group log` | `title` | — | Show journal / change history for the group. |
-| `group archive` | `title` | `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
-| `group mv` | `title` | `--parent TITLE` **or** `--to-top` (required), `--dry-run` | Reparent under another group, or `--to-top` to promote to root level; `--dry-run` previews the diff |
-| `group assign` | `task title` | — | Assign task to group |
+| `group show` | `title-or-path` | — | Show detail with ancestry. Path ref disambiguates collisions. |
+| `group edit` | `title-or-path` | `--title NEW`, `--desc/-d`, `--dry-run` | Edit group fields; `--title` renames the group; `--dry-run` previews the diff |
+| `group log` | `title-or-path` | — | Show journal / change history for the group. |
+| `group archive` | `title-or-path` | `--force`, `--dry-run` | Cascade-archive group and all descendant groups/tasks. Prompts y/N unless `--force`. |
+| `group mv` | `title-or-path` | `--parent TITLE-OR-PATH` (required), `--dry-run` | Reparent. Pass `--parent /` to promote to root level; otherwise resolve the new parent. `--dry-run` previews the diff. |
+| `group assign` | `task title-or-path` | — | Assign task to group |
 | `group unassign` | `task` | — | Unassign task from its group |
-Edges between groups (and any other node types) live under the top-level `stx edge` command — see the `stx edge` section. Use the typed ref form `group:<title>` with `--source-parent`/`--target-parent` when group titles collide under different parents.
+Edges between groups (and any other node types) live under the top-level `stx edge` command — see the `stx edge` section. Use the typed ref form `group:<title-or-path>` (e.g. `group:Backend/Auth`) when group titles collide under different parents.
 
 ```sh
 stx group create "Backend" --desc "Core API services"
-stx group create "Auth" --parent "Backend"
-stx group assign task-0005 "Auth"
+stx group create "Backend/Auth"             # path-as-title creates Auth under Backend
+stx group create "OAuth" --parent "Backend/Auth"
+stx group assign task-0005 "Backend/Auth"
 stx group ls
-stx group mv "Auth" --parent "Frontend"
-stx group mv "Backend" --to-top  # promote to root level
-stx edge create --source "group:Sprint 2" --target "group:Sprint 1" --kind blocks
+stx group show "Backend/Auth"               # path ref disambiguates collisions
+stx group mv "Backend/Auth" --parent "/Frontend"
+stx group mv "Backend" --parent /           # promote to root level
+stx edge create --source "group:Backend/Auth" --target "group:Frontend/Login" --kind blocks
+stx edge create --source "task:Backend:apply-migrations" --target "task:Frontend:render-form" --kind blocks
 ```
 
 ---

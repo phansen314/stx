@@ -290,6 +290,32 @@ def get_task_by_title(
     return row_to_task(row) if row else None
 
 
+def get_task_by_title_and_group(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    group_id: int | None,
+    title: str,
+) -> Task | None:
+    """Title lookup scoped to a specific group (or root, when group_id is None).
+
+    Used by path-resolution callers (`A/B:leaf-task`) where the group prefix
+    has already been resolved to a concrete id (or None for "no group").
+    """
+    if group_id is None:
+        row = conn.execute(
+            "SELECT * FROM tasks WHERE workspace_id = ? AND group_id IS NULL "
+            "AND title = ? AND archived = 0",
+            (workspace_id, title),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM tasks WHERE workspace_id = ? AND group_id = ? "
+            "AND title = ? AND archived = 0",
+            (workspace_id, group_id, title),
+        ).fetchone()
+    return row_to_task(row) if row else None
+
+
 def list_tasks(
     conn: sqlite3.Connection,
     workspace_id: int,

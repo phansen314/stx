@@ -370,8 +370,8 @@ Returns full **TaskDetail** (same as `task show`).
 `group edge ls` returns an array of the same shape (one **GroupEdgeListItem**
 per active edge). `group edge meta ls|get|set|del` follow the four-verb pattern
 documented under *Task Metadata* — same `{key, value}` shapes, with the edge
-identified via `--source`/`--target` (and optional `--source-parent` /
-`--target-parent` for disambiguation).
+identified via `--source`/`--target`. Use a path ref in the suffix
+(`group:Backend/Auth`) to disambiguate groups with colliding titles.
 
 ### Group Metadata
 

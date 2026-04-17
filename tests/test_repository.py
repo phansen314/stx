@@ -351,6 +351,33 @@ class TestTaskRepository:
         assert get_task_by_title(conn, workspace.id, "fix login") is not None
         assert get_task_by_title(conn, workspace.id, "FIX LOGIN") is not None
 
+    def test_get_task_by_title_and_group_scoped(self, conn: sqlite3.Connection) -> None:
+        from stx.repository import get_task_by_title_and_group, insert_group
+        from stx.models import NewGroup
+        workspace, col = self._setup(conn)
+        g1 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g1"))
+        g2 = insert_group(conn, NewGroup(workspace_id=workspace.id, title="g2"))
+        t1 = insert_task(
+            conn, NewTask(
+                workspace_id=workspace.id, title="only-in-g1", status_id=col.id,
+                group_id=g1.id,
+            )
+        )
+        # Lookup hits in g1, misses in g2 and at root.
+        found = get_task_by_title_and_group(conn, workspace.id, g1.id, "only-in-g1")
+        assert found is not None and found.id == t1.id
+        assert get_task_by_title_and_group(conn, workspace.id, g2.id, "only-in-g1") is None
+        assert get_task_by_title_and_group(conn, workspace.id, None, "only-in-g1") is None
+
+    def test_get_task_by_title_and_group_root_branch(self, conn: sqlite3.Connection) -> None:
+        from stx.repository import get_task_by_title_and_group
+        workspace, col = self._setup(conn)
+        t = insert_task(
+            conn, NewTask(workspace_id=workspace.id, title="rootleaf", status_id=col.id)
+        )
+        found = get_task_by_title_and_group(conn, workspace.id, None, "rootleaf")
+        assert found is not None and found.id == t.id
+
     def test_unique_title_case_insensitive(self, conn: sqlite3.Connection) -> None:
         workspace, col = self._setup(conn)
         insert_task(conn, NewTask(workspace_id=workspace.id, title="Fix Login", status_id=col.id))
