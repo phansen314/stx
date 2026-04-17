@@ -86,6 +86,16 @@ Entry point: `stx = "stx.__main__:main"`.
 
 **Active workspace:** persisted as `active_workspace` in `~/.config/stx/tui.toml`. CLI resolves workspace from `--workspace`/`-w` flag, falling back to this config field. Set via `stx workspace use <name>` or `stx config set active_workspace <name>`. The legacy `~/.local/share/stx/active-workspace` file is still read as a fallback for one release; writes no longer go there.
 
+**Path-based ref syntax (groups + tasks):** `/` separates group-path segments anchored at root; `:` separates the group prefix from a task title; a leading `/` is a no-op anchor that promotes single-segment refs to group paths (Unix-style absolute path).
+- `setup` — bare title; workspace-wide lookup, ambiguity errors. In polymorphic edge contexts, bare resolves as a task.
+- `/A` — root group `A` (leading-slash anchor disambiguates single-segment refs from bare task titles in polymorphic contexts).
+- `A/B/C` (or `/A/B/C`) — group-path walk: root `A` → `B` → `C`. Leading slash is cosmetic for multi-segment.
+- `A/B:leaf` (or `/A/B:leaf`) — task `leaf` inside group `A/B`.
+- `:rootleaf` — task `rootleaf` with no group.
+- `task:`/`group:`/`workspace:`/`status:` edge prefixes consume the leading token; the suffix uses the same path syntax. Generally unnecessary now that the leading-slash anchor disambiguates root groups; kept for explicitness.
+- `/` and `:` are forbidden in group/task titles (enforced by `service._validate_title` and a `CHECK` constraint in `schema.sql`). Migration 022 auto-renames pre-existing offenders to `__` equivalents with deterministic collision suffixing.
+- Resolvers: `service.parse_ref` (pure, no DB) → `service.resolve_group_path` / `service.resolve_task_path`. `service.resolve_group(ref)` and `service.resolve_task_id(ref)` dispatch through `parse_ref`. Group-only path passed to `resolve_task_id` (or vice versa) raises `ValueError`.
+
 **Command structure:**
 - Task subcommands: `stx task create|ls|show|edit|mv|transfer|archive|log|done|undone` (`create` accepts `--group/-g`; `done` marks done independent of status; `undone` clears done, gated by `--force`)
 - Task metadata: `stx task meta ls|get|set|del` (JSON key/value blob on each task)
@@ -93,7 +103,7 @@ Entry point: `stx = "stx.__main__:main"`.
 - Group metadata: `stx group meta ls|get|set|del <title>`
 - Group subcommands: `stx group create|ls|show|edit|archive|mv|assign|unassign` (rename via `edit --title`)
 - Workspace subcommands: `stx workspace create|ls|show|use|edit|archive` (rename via `edit --name`)
-- Edge subcommands: `stx edge create|archive|ls` and `stx edge meta ls|get|set|del` — polymorphic: endpoints are typed refs (`task-NNNN`, `group:<title>`, `workspace:<name>`, `status:<name>`) so a single edge can cross node types. Status edges are pure annotation — they carry no write-path semantics. Each edge carries a `--kind` label, a per-edge metadata blob, and an `acyclic` flag (defaults: on for `blocks`/`spawns`, off for everything else). `--source-parent`/`--target-parent` disambiguate groups with colliding titles under different parents. Self-loops are rejected by DB CHECK. Cycle detection runs on the combined acyclic-edge subgraph regardless of kind.
+- Edge subcommands: `stx edge create|archive|ls` and `stx edge meta ls|get|set|del` — polymorphic. Endpoint type is inferred from path delimiters when no explicit prefix is given: `task-NNNN`/`#N`/int → task by id; leading `/` (`/A`, `/A/B/C`) → group path; `A/B/C` (only `/`, multi-segment) → group path; `A:leaf`/`:leaf`/`A/B:leaf` (contains `:`) → task path; bare title (no delimiters) → task by title. Explicit prefixes `group:<path>`/`task:<path>`/`workspace:<name>`/`status:<name>` always override inference. Cross-type edges work (group→task, task→group, etc.) — `--source /A/B --target D:task0` is a clean group→task edge. Each edge carries a `--kind` label, a per-edge metadata blob, and an `acyclic` flag (defaults: on for `blocks`/`spawns`, off for everything else). Status edges are pure annotation — they carry no write-path semantics. The legacy `--source-parent`/`--target-parent` flags were removed in 0.15. Self-loops are rejected by DB CHECK. Cycle detection runs on the combined acyclic-edge subgraph regardless of kind.
 - Other subcommand groups: `workspace`, `status`
 - Config subcommands: `stx config ls|get|set|unset` — edit `auto_refresh_seconds` and `active_workspace` in `tui.toml`. `ls`/`get` can read any field; `set`/`unset` are gated by an editable-field allowlist.
 - Standalone commands: `export`, `info`, `backup`, `next` (topological sort of acyclic DAG to surface ready/blocked tasks; flags: `--rank`, `--include-blocked`, `--limit N`, `--edge-kind KIND`)

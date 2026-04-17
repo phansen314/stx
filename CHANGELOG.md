@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Path-based ref syntax for groups and tasks.** `/` is the group-segment
+  delimiter, `:` is the group→task split, and a leading `/` is a Unix-style
+  anchor that promotes single-segment refs to group paths. Examples:
+  - `stx group show A/B/C` — strict walk from root to the C group under A/B.
+  - `stx group show /A` — root group `A` (leading-slash anchor).
+  - `stx task show A/B:leaf` — task `leaf` inside group `A/B`.
+  - `stx task show :rootleaf` — root-level task (no group).
+  - `stx task create -g A/B leaf` — create a task under a nested group via
+    its path.
+  - `stx group create A/B/new` — create `new` under existing parent path
+    `A/B`. Mutually exclusive with `--parent`.
+  - `stx edge create --source /A/B/C --target D:task0 --kind informs` —
+    polymorphic edges infer endpoint type from delimiters: leading slash
+    or multi-seg `/` → group, contains `:` → task, numeric → task by id,
+    bare → task by title. The leading-slash anchor lets you reference a
+    root group as `/A` without a `group:` prefix. Explicit prefixes
+    `group:`/`task:`/`workspace:`/`status:` override inference.
+  Bare titles still work; ambiguity (multi-match) errors as before, with a
+  message suggesting a path ref.
+
+### Changed
+
+- **Breaking:** group and task titles can no longer contain `/` or `:` —
+  both are reserved for path syntax. Existing rows are auto-renamed by
+  migration 022 (`/` and `:` → `__`); collisions get a deterministic
+  `__N` suffix. Each rename is journaled with `source='migration:022'`.
+  Going forward the service layer rejects offending titles before any
+  write; fresh databases also enforce the rule via a `CHECK` constraint
+  in `schema.sql`.
+
+### Removed
+
+- **Breaking:** `stx edge` `--source-parent` and `--target-parent` flags
+  are gone. Use a path ref in the suffix instead — e.g.
+  `--source group:A/B` rather than `--source group:B --source-parent A`.
+- **Breaking:** `service.resolve_group()` no longer accepts
+  `parent_title=` / `parent_root=` keyword arguments. Pass a path ref as
+  the positional argument.
+
 ## [0.14.0] — 2026-04-16
 
 ### Added

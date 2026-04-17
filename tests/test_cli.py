@@ -2805,3 +2805,268 @@ class TestDoneCommands:
         assert "Terminal:" in out
         assert "True" in out
 
+
+
+# ---- Path-based ref resolution (introduced 0.15) ----
+
+
+class TestPathBasedRefs:
+    def _setup(self, cli) -> None:
+        cli("workspace", "create", "ws")
+        cli("workspace", "use", "ws")
+        cli("status", "create", "todo")
+
+    def test_group_create_path_as_title(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        out, _ = cli("group", "show", "a/b")
+        assert "b" in out
+
+    def test_group_create_path_with_explicit_parent_rejected(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        _, err = cli("group", "create", "a/b", "--parent", "a", expect_exit=4)
+        assert "cannot combine path-in-title" in err
+
+    def test_group_create_rejects_slash_in_leaf(self, cli) -> None:
+        self._setup(cli)
+        _, err = cli("group", "create", "good/bad/", expect_exit=4)
+        assert "empty path segment" in err
+
+    def test_group_create_rejects_colon(self, cli) -> None:
+        self._setup(cli)
+        _, err = cli("group", "create", "bad:thing", expect_exit=4)
+        assert "cannot contain ':'" in err
+
+    def test_group_show_resolves_collision_via_path(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "p1")
+        cli("group", "create", "p2")
+        cli("group", "create", "p1/shared")
+        cli("group", "create", "p2/shared")
+        out, _ = cli("group", "show", "p1/shared")
+        assert "p1" in out and "shared" in out
+
+    def test_group_show_ambiguous_bare_title_errors(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "p1")
+        cli("group", "create", "p2")
+        cli("group", "create", "p1/dup")
+        cli("group", "create", "p2/dup")
+        _, err = cli("group", "show", "dup", expect_exit=3)
+        assert "ambiguous" in err
+
+    def test_task_create_with_group_path(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        out, _ = cli(
+            "task", "create", "leaf",
+            "--status", "todo", "--group", "a/b",
+        )
+        assert "leaf" in out
+
+    def test_task_show_via_path(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("task", "create", "leaf", "--status", "todo", "--group", "a")
+        out, _ = cli("task", "show", "a:leaf")
+        assert "leaf" in out
+
+    def test_task_create_rejects_slash_in_title(self, cli) -> None:
+        self._setup(cli)
+        _, err = cli("task", "create", "bad/title", "--status", "todo", expect_exit=4)
+        assert "cannot contain" in err
+
+    def test_edge_create_with_group_paths(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("group", "create", "a/c")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "group:a/b",
+            "--target", "group:a/c",
+            "--kind", "blocks",
+        )
+        assert "group:" in out
+
+    def test_edge_create_with_task_path_prefix(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("task", "create", "src", "--status", "todo", "--group", "a")
+        cli("task", "create", "dst", "--status", "todo", "--group", "a")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "task:a:src",
+            "--target", "task:a:dst",
+            "--kind", "blocks",
+        )
+        assert "task:" in out
+
+    def test_edge_group_to_task_cross_type(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("task", "create", "leaf", "--status", "todo", "--group", "a/b")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "group:a/b",
+            "--target", "task:a/b:leaf",
+            "--kind", "informs",
+        )
+        assert "group:" in out and "task:" in out
+
+    def test_edge_task_to_group_cross_type(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("task", "create", "leaf", "--status", "todo", "--group", "a/b")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "task:a/b:leaf",
+            "--target", "group:a/b",
+            "--kind", "informs",
+        )
+        assert "group:" in out and "task:" in out
+
+    def test_edge_bare_group_path_inferred_as_group(self, cli) -> None:
+        # Bare ref with `/` and no `:` infers as group path; no `group:`
+        # prefix needed for polymorphic edges.
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("task", "create", "t1", "--status", "todo")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "a/b",
+            "--target", "task-0001",
+            "--kind", "blocks",
+        )
+        assert "group:" in out and "task:" in out
+
+    def test_edge_bare_task_path_inferred_as_task(self, cli) -> None:
+        # Bare ref containing `:` infers as task path.
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("task", "create", "leaf", "--status", "todo", "--group", "a")
+        cli("task", "create", "other", "--status", "todo")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "a:leaf",
+            "--target", "other",
+            "--kind", "blocks",
+        )
+        assert "task:" in out
+
+    def test_edge_inferred_group_to_task_no_prefixes(self, cli) -> None:
+        # User's expected ergonomic: `A/B/C -> D:task0` infers
+        # group→task with no `group:`/`task:` typing required.
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("group", "create", "a/b/c")
+        cli("group", "create", "d")
+        cli("task", "create", "task0", "--status", "todo", "--group", "d")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "a/b/c",
+            "--target", "d:task0",
+            "--kind", "informs",
+        )
+        assert "group:" in out and "task:" in out
+
+    def test_edge_bare_root_task_path_works(self, cli) -> None:
+        # `:rootleaf` is a valid task-path form (empty group prefix); bare
+        # dispatch resolves it as a task with no group-prefix needed.
+        self._setup(cli)
+        cli("task", "create", "rootleaf", "--status", "todo")
+        cli("task", "create", "other", "--status", "todo")
+        out, _ = cli(
+            "edge", "create",
+            "--source", ":rootleaf",
+            "--target", "other",
+            "--kind", "blocks",
+        )
+        assert "task:" in out
+
+    # ---- Leading-slash anchor (introduced 0.15) ----
+
+    def test_edge_leading_slash_root_group_source(self, cli) -> None:
+        # `/A` infers as root group A — no `group:` prefix needed.
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("task", "create", "t1", "--status", "todo")
+        out, _ = cli(
+            "edge", "create",
+            "--source", "/a",
+            "--target", "task-0001",
+            "--kind", "informs",
+        )
+        assert "group:" in out and "task:" in out
+
+    def test_edge_leading_slash_disambiguates_root_group_from_task(self, cli) -> None:
+        # A root group and a task share the name "shared". Bare `shared`
+        # → task; `/shared` → group, no `group:` prefix needed.
+        self._setup(cli)
+        cli("group", "create", "shared")
+        cli("task", "create", "shared", "--status", "todo")
+        cli("task", "create", "other", "--status", "todo")
+        # Bare → task
+        out_bare, _ = cli(
+            "edge", "create",
+            "--source", "shared",
+            "--target", "other",
+            "--kind", "informs",
+        )
+        assert "task:" in out_bare and "group:" not in out_bare
+        # Leading slash → group
+        out_anchor, _ = cli(
+            "edge", "create",
+            "--source", "/shared",
+            "--target", "task-0002",
+            "--kind", "blocks",
+        )
+        assert "group:" in out_anchor
+
+    def test_edge_leading_slash_multi_segment_equivalent(self, cli) -> None:
+        # `/A/B/C` and `A/B/C` resolve to the same group.
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        cli("group", "create", "a/b/c")
+        cli("task", "create", "t1", "--status", "todo")
+        out1, _ = cli(
+            "edge", "create",
+            "--source", "/a/b/c",
+            "--target", "task-0001",
+            "--kind", "informs",
+        )
+        out2, _ = cli(
+            "edge", "create",
+            "--source", "a/b/c",
+            "--target", "task-0001",
+            "--kind", "spawns",
+        )
+        # Both targeted the same node id.
+        import re
+        from_id1 = re.search(r"group:(\d+)", out1).group(1)
+        from_id2 = re.search(r"group:(\d+)", out2).group(1)
+        assert from_id1 == from_id2
+
+    def test_group_show_accepts_leading_slash(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        out, _ = cli("group", "show", "/a")
+        assert "a" in out
+
+    def test_task_create_group_flag_accepts_leading_slash(self, cli) -> None:
+        self._setup(cli)
+        cli("group", "create", "a")
+        cli("group", "create", "a/b")
+        out, _ = cli(
+            "task", "create", "leaf",
+            "--status", "todo", "--group", "/a/b",
+        )
+        assert "leaf" in out

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.resources
 import sqlite3
 import sys
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,7 +18,7 @@ def _migrate_data_dir() -> None:
         print(f"stx: migrated data directory {_OLD_DB_DIR} → {_NEW_DB_DIR}", file=sys.stderr)
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 def _strip_line_comment(line: str) -> str:
@@ -164,6 +164,98 @@ def _pre_migration_check(conn: sqlite3.Connection, target_version: int) -> None:
             )
 
 
+def _python_migration_022(conn: sqlite3.Connection) -> None:
+    """Rename group/task titles containing '/' or ':' to '__' equivalents.
+
+    Path syntax (introduced in 0.15) reserves both characters as delimiters.
+    Pre-existing rows are migrated in-place before the CHECK in schema.sql
+    starts applying to fresh DBs. Collisions with the renamed value (or with
+    each other) get a deterministic ``__N`` suffix; N is the lowest free
+    integer ≥ 2 within the row's uniqueness scope.
+
+    Each rename is journaled with ``source='migration:022'`` and bumps
+    ``version`` so any in-flight CAS reader observes the change.
+    """
+
+    def _suffix_until_free(
+        base: str,
+        is_taken: Callable[[str], bool],
+    ) -> str:
+        if not is_taken(base):
+            return base
+        n = 2
+        while is_taken(f"{base}__{n}"):
+            n += 1
+        return f"{base}__{n}"
+
+    # Groups: scope = (workspace_id, COALESCE(parent_id, -1)) among non-archived.
+    rows = conn.execute(
+        "SELECT id, workspace_id, parent_id, title "
+        "FROM groups WHERE archived = 0 AND (title LIKE '%/%' OR title LIKE '%:%') "
+        "ORDER BY id"
+    ).fetchall()
+    for r in rows:
+        gid, wsid, parent_id, old_title = r["id"], r["workspace_id"], r["parent_id"], r["title"]
+        base = old_title.replace("/", "__").replace(":", "__")
+        parent_clause = "parent_id IS NULL" if parent_id is None else "parent_id = ?"
+        params: tuple = (wsid, gid) if parent_id is None else (wsid, parent_id, gid)
+
+        def is_taken(candidate: str, _params=params, _clause=parent_clause) -> bool:
+            row = conn.execute(
+                f"SELECT 1 FROM groups WHERE workspace_id = ? AND {_clause} "
+                f"AND archived = 0 AND id != ? AND title = ? LIMIT 1",
+                (*_params, candidate),
+            ).fetchone()
+            return row is not None
+
+        new_title = _suffix_until_free(base, is_taken)
+        conn.execute(
+            "UPDATE groups SET title = ?, version = version + 1 WHERE id = ?",
+            (new_title, gid),
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, "
+            "field, old_value, new_value, source) "
+            "VALUES ('group', ?, ?, 'title', ?, ?, 'migration:022')",
+            (gid, wsid, old_title, new_title),
+        )
+
+    # Tasks: scope = workspace_id among non-archived.
+    rows = conn.execute(
+        "SELECT id, workspace_id, title FROM tasks "
+        "WHERE archived = 0 AND (title LIKE '%/%' OR title LIKE '%:%') "
+        "ORDER BY id"
+    ).fetchall()
+    for r in rows:
+        tid, wsid, old_title = r["id"], r["workspace_id"], r["title"]
+        base = old_title.replace("/", "__").replace(":", "__")
+
+        def is_taken(candidate: str, _wsid=wsid, _tid=tid) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE workspace_id = ? AND archived = 0 "
+                "AND id != ? AND title = ? LIMIT 1",
+                (_wsid, _tid, candidate),
+            ).fetchone()
+            return row is not None
+
+        new_title = _suffix_until_free(base, is_taken)
+        conn.execute(
+            "UPDATE tasks SET title = ?, version = version + 1 WHERE id = ?",
+            (new_title, tid),
+        )
+        conn.execute(
+            "INSERT INTO journal (entity_type, entity_id, workspace_id, "
+            "field, old_value, new_value, source) "
+            "VALUES ('task', ?, ?, 'title', ?, ?, 'migration:022')",
+            (tid, wsid, old_title, new_title),
+        )
+
+
+_PYTHON_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    22: _python_migration_022,
+}
+
+
 def _run_migrations(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     if current > SCHEMA_VERSION:
@@ -174,9 +266,12 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     for target_version in range(current + 1, SCHEMA_VERSION + 1):
         _pre_migration_check(conn, target_version)
         sql = _read_migration(target_version)
+        py_hook = _PYTHON_MIGRATIONS.get(target_version)
         conn.execute("PRAGMA foreign_keys = OFF")
         try:
             with transaction(conn):
+                if py_hook is not None:
+                    py_hook(conn)
                 for statement in _split_sql_statements(sql):
                     conn.execute(statement)
                 conn.execute(f"PRAGMA user_version = {target_version}")
