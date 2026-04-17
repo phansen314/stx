@@ -43,6 +43,25 @@ def flatten_group_tree(nodes: tuple[GroupNode, ...]) -> list[tuple[str, int]]:
     return out
 
 
+def find_group_node(
+    roots: tuple[GroupNode, ...], group_id: int
+) -> GroupNode | None:
+    for node in roots:
+        if node.group.id == group_id:
+            return node
+        found = find_group_node(node.children, group_id)
+        if found is not None:
+            return found
+    return None
+
+
+def collect_subtree_tasks(node: GroupNode) -> tuple[Task, ...]:
+    tasks: list[Task] = list(node.tasks)
+    for child in node.children:
+        tasks.extend(collect_subtree_tasks(child))
+    return tuple(tasks)
+
+
 def _build_group_tree(
     group: Group,
     children_by_parent: dict[int, list[Group]],

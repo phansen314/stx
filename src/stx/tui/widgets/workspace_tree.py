@@ -38,6 +38,13 @@ class WorkspaceTree(Tree[Workspace | Group | Task]):
             self.workspace_id = workspace_id
             super().__init__()
 
+    class TreeFilterChanged(Message):
+        """The tree cursor moved to a node that changes the kanban filter scope."""
+
+        def __init__(self, group_id: int | None) -> None:
+            self.group_id = group_id
+            super().__init__()
+
     @staticmethod
     def _count_group_tasks(gnode: GroupNode) -> int:
         count = len(gnode.tasks)
@@ -169,10 +176,17 @@ class WorkspaceTree(Tree[Workspace | Group | Task]):
         self.key_right(event)
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
-        ws_id = self._workspace_id_from_data(event.node.data)
+        data = event.node.data
+        ws_id = self._workspace_id_from_data(data)
         if ws_id is not None and ws_id != self._last_workspace_id:
             self._last_workspace_id = ws_id
             self.post_message(self.WorkspaceChanged(ws_id))
+        if isinstance(data, Workspace):
+            self.post_message(self.TreeFilterChanged(group_id=None))
+        elif isinstance(data, Group):
+            self.post_message(self.TreeFilterChanged(group_id=data.id))
+        elif isinstance(data, Task):
+            self.post_message(self.TreeFilterChanged(group_id=data.group_id))
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         event.stop()

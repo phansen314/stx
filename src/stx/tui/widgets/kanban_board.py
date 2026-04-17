@@ -83,20 +83,24 @@ class KanbanBoard(Horizontal):
             by_status.setdefault(task.status_id, []).append(task)
         return by_status
 
-    async def load(self, model: WorkspaceModel) -> None:
+    async def load(
+        self, model: WorkspaceModel, tasks: tuple[Task, ...] | None = None
+    ) -> None:
         """Full teardown and rebuild — used for initial mount and workspace switch."""
         self._grid = None
         self._status_names = {s.id: s.name for s in model.statuses}
         await self.remove_children()
-        by_status = self._tasks_by_status(model.all_tasks)
+        by_status = self._tasks_by_status(tasks if tasks is not None else model.all_tasks)
         for status in model.statuses:
             bucket = by_status.get(status.id, [])
             self.mount(self._build_column(status, bucket))
 
-    async def sync(self, model: WorkspaceModel) -> None:
+    async def sync(
+        self, model: WorkspaceModel, tasks: tuple[Task, ...] | None = None
+    ) -> None:
         """Diff-based update — moves/adds/removes cards without full teardown."""
         self._status_names = {s.id: s.name for s in model.statuses}
-        by_status = self._tasks_by_status(model.all_tasks)
+        by_status = self._tasks_by_status(tasks if tasks is not None else model.all_tasks)
 
         existing_col_ids = {col.id for col in self.query(".status-col")}
         expected_col_ids = {f"status-col-{s.id}" for s in model.statuses}

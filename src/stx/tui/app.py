@@ -43,7 +43,13 @@ from stx.service import (
 )
 from stx.tui.config import DEFAULT_CONFIG_PATH, TuiConfig, load_config, save_config
 from stx.tui.markup import escape_markup
-from stx.tui.model import WorkspaceModel, flatten_group_tree, load_workspace_model
+from stx.tui.model import (
+    WorkspaceModel,
+    collect_subtree_tasks,
+    find_group_node,
+    flatten_group_tree,
+    load_workspace_model,
+)
 from stx.tui.screens import (
     ArchiveConfirmModal,
     ConfigModal,
@@ -100,6 +106,7 @@ class StxApp(App):
     _refresh_timer: object | None = None
     _rerendering: bool = False
     _last_data_version: int | None = None
+    _filter_group_id: int | None = None
 
     def _read_data_version(self) -> int | None:
         """Return SQLite's ``PRAGMA data_version`` or None if unavailable.
@@ -119,6 +126,15 @@ class StxApp(App):
         if self._active_workspace_id is None:
             return None
         return self._models.get(self._active_workspace_id)
+
+    def _filtered_tasks(self, model: WorkspaceModel) -> tuple[Task, ...] | None:
+        if self._filter_group_id is None:
+            return None
+        node = find_group_node(model.root_groups, self._filter_group_id)
+        if node is None:
+            self._filter_group_id = None
+            return None
+        return collect_subtree_tasks(node)
 
     def __init__(
         self,
@@ -265,7 +281,7 @@ class StxApp(App):
         self.call_later(self._end_rerendering)
         last = self._kanban_last_focused
         tree.load(self._models, expand_workspace_id=self._active_workspace_id)
-        await kanban.sync(model)
+        await kanban.sync(model, self._filtered_tasks(model))
         if self.active_panel == ActivePanel.KANBAN and last is not None:
             if isinstance(last, KanbanColumn):
                 try:
@@ -342,7 +358,8 @@ class StxApp(App):
         save_config(self.config, self.config_path)
         new_statuses = self._order_statuses(model.statuses, self._active_workspace_id)
         self._models[self._active_workspace_id] = replace(model, statuses=new_statuses)
-        await self.query_one(KanbanBoard).sync(self._models[self._active_workspace_id])
+        model = self._models[self._active_workspace_id]
+        await self.query_one(KanbanBoard).sync(model, self._filtered_tasks(model))
         self.set_focus(self.query_one(f"#status-col-{col.status_id}", KanbanColumn))
 
     def action_focus_tree(self) -> None:
@@ -368,6 +385,7 @@ class StxApp(App):
         if ws_id == self._active_workspace_id:
             return
         self._active_workspace_id = ws_id
+        self._filter_group_id = None
         try:
             model = load_workspace_model(self.conn, ws_id)
         except LookupError:
@@ -377,6 +395,20 @@ class StxApp(App):
         kanban = self.query_one(KanbanBoard)
         await kanban.load(model)
         self._kanban_last_focused = None
+
+    async def on_workspace_tree_tree_filter_changed(
+        self, event: WorkspaceTree.TreeFilterChanged
+    ) -> None:
+        if self._rerendering:
+            return
+        if event.group_id == self._filter_group_id:
+            return
+        model = self._active_model
+        if model is None:
+            return
+        self._filter_group_id = event.group_id
+        kanban = self.query_one(KanbanBoard)
+        await kanban.sync(model, self._filtered_tasks(model))
 
     def action_edit(self) -> None:
         if self._active_model is None:
