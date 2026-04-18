@@ -22,7 +22,7 @@ from .connection import DEFAULT_DB_PATH, get_connection, init_db
 from .export import export_full_json, export_markdown
 from .graph import GraphFormat, write_graph
 from .formatting import format_group_num, format_task_num, parse_date, parse_task_num
-from .models import ConflictError, HookRejectionError, Workspace
+from .models import ConflictError, Workspace
 from .service_models import ArchivePreview
 
 EXIT_DB_ERROR = 2
@@ -30,7 +30,6 @@ EXIT_NOT_FOUND = 3
 EXIT_VALIDATION = 4
 EXIT_NO_ACTIVE_WS = 5
 EXIT_CONFLICT = 6
-EXIT_HOOK_REJECTED = 7
 
 
 # ---- Result type ----
@@ -2081,7 +2080,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--event", default=None, help="filter by event name (e.g. task.created)"
     )
     p_hook_ls.add_argument(
-        "--timing", choices=["pre", "post"], default=None, help="filter by timing"
+        "--timing", choices=["post"], default=None, help="filter by timing"
     )
     p_hook_ls.add_argument(
         "--path",
@@ -2243,13 +2242,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             _text_err(str(exc), code)
         raise SystemExit(EXIT_NOT_FOUND)
-    except HookRejectionError as exc:
-        code = "hook_rejected"
-        if json_mode:
-            _json_err(str(exc), code)
-        else:
-            _text_err(str(exc), code)
-        raise SystemExit(EXIT_HOOK_REJECTED)
+
     except ConflictError as exc:
         code = "conflict"
         if json_mode:

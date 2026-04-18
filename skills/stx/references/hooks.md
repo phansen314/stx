@@ -1,6 +1,6 @@
 # stx Hooks Reference
 
-Hooks run shell commands in response to stx mutations. **Pre-hooks** fire before the write transaction and can veto the operation by exiting non-zero. **Post-hooks** fire after commit and are fire-and-forget — their exit code is ignored. Both receive a JSON payload on stdin describing the event.
+Hooks are **post-commit observers** — the write always proceeds; hooks observe committed state after the transaction. Each hook is a shell command that receives a JSON payload on stdin describing the event. Exit codes are ignored; failures are silent.
 
 Config lives at `~/.config/stx/hooks.toml`. Commands execute with `shell=True`; anyone who can write that file can run arbitrary code as the stx user — the trust model matches git hooks.
 
@@ -34,7 +34,7 @@ All 29 events, grouped by entity. The **category** column determines which extra
 |---|---|---|
 | `group.created` | `create_group` | created |
 | `group.updated` | `update_group` (any change) | updated |
-| `group.archived` | `cascade_archive_group` (top-level only — bulk-archived children are silent) | archived |
+| `group.archived` | `cascade_archive_group` (top-level only; payload carries `archived_task_ids`, `archived_group_ids` for bulk-archived descendants) | archived |
 | `group.meta_set` | `set_group_meta`, `replace_group_metadata` | meta |
 | `group.meta_removed` | `remove_group_meta`, `replace_group_metadata` | meta |
 
@@ -44,7 +44,7 @@ All 29 events, grouped by entity. The **category** column determines which extra
 |---|---|---|
 | `workspace.created` | `create_workspace` | created |
 | `workspace.updated` | `update_workspace` | updated |
-| `workspace.archived` | `cascade_archive_workspace` (top-level only) | archived |
+| `workspace.archived` | `cascade_archive_workspace` (top-level only; payload carries `archived_task_ids`, `archived_group_ids`, `archived_status_ids`) | archived |
 | `workspace.meta_set` | `set_workspace_meta`, `replace_workspace_metadata` | meta |
 | `workspace.meta_removed` | `remove_workspace_meta`, `replace_workspace_metadata` | meta |
 
@@ -54,7 +54,7 @@ All 29 events, grouped by entity. The **category** column determines which extra
 |---|---|---|
 | `status.created` | `create_status` | created |
 | `status.updated` | `update_status` | updated |
-| `status.archived` | `archive_status` | archived |
+| `status.archived` | `archive_status` (bulk paths: `--force` adds `archived_task_ids`; `--reassign-to` adds `reassigned_task_ids` + `reassigned_to`) | archived |
 
 Statuses have no metadata column, so no `status.meta_*` events.
 
@@ -79,16 +79,16 @@ Every payload carries these top-level fields:
 | Field | Type | Notes |
 |---|---|---|
 | `event` | string | One of the 29 event names above. |
-| `timing` | `"pre"` \| `"post"` | |
-| `workspace_id` | int \| null | Null on pre-hooks for `workspace.created` (no id yet). |
+| `timing` | `"post"` | Always `"post"`. |
+| `workspace_id` | int \| null | |
 | `workspace_name` | string \| null | |
 | `entity_type` | `"task"` \| `"group"` \| `"workspace"` \| `"status"` \| `"edge"` | |
-| `entity_id` | int \| null | Null on pre-hooks for `created` events (id not yet assigned, except for edges which use `from_id`). |
-| `entity` | object \| null | Full entity snapshot (see `$defs` in `stx hook schema`). Null on pre-hooks for `created`. |
+| `entity_id` | int \| null | |
+| `entity` | object \| null | Full entity snapshot (see `$defs` in `stx hook schema`). |
 
 Then category-specific fields:
 
-**`created`** — adds `proposed: object | null` (the fields that will be inserted), `changes: null`.
+**`created`** — adds `proposed: object | null` (the input fields that were passed to the service; mirrors `entity` post-commit) and `changes: null`.
 
 **`updated`** — adds `changes: object` (`{field: {old, new}}` dict) and `proposed: null`.
 
@@ -111,18 +111,16 @@ Each hook is a TOML table:
 ```toml
 [[hooks]]
 event = "task.created"       # required — exact event name
-timing = "post"              # required — "pre" or "post"
+timing = "post"              # optional — only valid value; omit or set "post"
 command = "shell command"    # required — any shell; receives payload on stdin
 name = "notify-creator"      # optional — shown by `stx hook ls`; handy for logs
 workspace = "work"           # optional — restricts to one workspace; omit for global
 enabled = true               # optional — default true; set false to disable without deleting
 ```
 
-**Matching order:** for a given event/timing, global hooks fire before workspace-scoped hooks (in config-file order within each group).
+**Matching order:** global hooks fire before workspace-scoped hooks (in config-file order within each group).
 
-**Veto:** a pre-hook that exits non-zero aborts the write. The stx process raises `HookRejectionError` and exits 7 (`EXIT_HOOK_REJECTED`). Subsequent pre-hooks for the same event do not fire.
-
-**Post-hook isolation:** post-hooks run via `subprocess.Popen` in a new session (`start_new_session=True`). Stdout/stderr redirect to `DEVNULL`. Exit code is ignored; failures are silent.
+**Isolation:** hooks run via `subprocess.Popen` in a new session (`start_new_session=True`). Stdout/stderr redirect to `DEVNULL`. Exit code is ignored; failures are silent.
 
 ---
 
@@ -140,40 +138,19 @@ name = "notify-done"
 command = '''jq -r '"✓ " + .entity.title + " done"' | xargs -I{} notify-send "stx" "{}"'''
 ```
 
-### 2. Require non-empty description on task creation
+### 2. Enforce creation rules before running stx
 
-```toml
-[[hooks]]
-event = "task.created"
-timing = "pre"
-name = "require-description"
-workspace = "work"
-command = '''
-read payload
-desc=$(echo "$payload" | jq -r '.proposed.description // ""')
-if [ -z "$desc" ]; then
-  echo "blocked: description required on work workspace" >&2
-  exit 1
-fi
-'''
-```
+Hooks are post-commit observers — they cannot veto a write. For validations
+like "require a non-empty description" or "disallow certain task titles",
+implement the check as a wrapper script or alias that runs `stx task create`
+only after passing your pre-flight conditions.
 
-### 3. Block workspace archive with in-progress tasks
+### 3. Detect unwanted archives after the fact
 
-```toml
-[[hooks]]
-event = "workspace.archived"
-timing = "pre"
-name = "guard-archive"
-command = '''
-read payload
-ws=$(echo "$payload" | jq -r '.workspace_name')
-if stx -w "$ws" --json task ls --status in-progress | jq -e '.data | length > 0' >/dev/null; then
-  echo "refusing to archive '$ws': in-progress tasks remain" >&2
-  exit 1
-fi
-'''
-```
+Post-commit `workspace.archived` or `group.archived` hooks can alert when an
+archive has occurred. If you need to prevent certain archives, implement the
+guard as a wrapper that calls `stx ... archive` only after confirming
+preconditions are met.
 
 ### 4. Slack webhook on high-priority task moved to review
 
@@ -227,19 +204,22 @@ cd ~/vault && git mv "groups/$old.md" "groups/$new.md" 2>/dev/null && \
 '''
 ```
 
-### 7. Block a deprecated edge kind
+### 7. Detect and log deprecated edge kinds
+
+Hooks cannot veto edge creation. To block a deprecated `kind`, use a wrapper
+script that checks the `--kind` argument before calling `stx edge create`.
+To *observe* which deprecated kinds are being created after the fact:
 
 ```toml
 [[hooks]]
 event = "edge.created"
-timing = "pre"
-name = "no-legacy-edges"
+timing = "post"
+name = "log-legacy-edges"
 command = '''
 read payload
-kind=$(echo "$payload" | jq -r '.proposed.kind')
+kind=$(echo "$payload" | jq -r '.entity.kind')
 if [ "$kind" = "legacy-relates" ]; then
-  echo "'legacy-relates' is deprecated; use 'informs' instead" >&2
-  exit 1
+  echo "$(date -Iseconds) legacy-relates edge created" >> ~/.local/share/stx/edge-audit.log
 fi
 '''
 ```
@@ -277,7 +257,41 @@ fi
 '''
 ```
 
-### 10. Disabled hook (kept around for later)
+### 10. Clean up external resources for bulk-archived tasks
+
+`group.archived` and `workspace.archived` carry `archived_task_ids` in the payload. Use them to fan out any per-task cleanup without wiring `task.archived`:
+
+```toml
+[[hooks]]
+event = "group.archived"
+timing = "post"
+name = "cleanup-bulk-archived"
+command = '''
+read payload
+echo "$payload" | jq -r '.archived_task_ids // [] | .[]' | while read -r task_id; do
+  echo "Cleaning up task $task_id"
+  # e.g. close Linear issue, delete git worktree, etc.
+done
+'''
+```
+
+`status.archived --reassign-to X` carries `reassigned_task_ids` and `reassigned_to`:
+
+```toml
+[[hooks]]
+event = "status.archived"
+timing = "post"
+name = "notify-reassigned"
+command = '''
+read payload
+target=$(echo "$payload" | jq -r '.reassigned_to // empty')
+if [ -n "$target" ]; then
+  echo "$payload" | jq -r '.reassigned_task_ids[] | "task \(.) moved to status '"$target"'"'
+fi
+'''
+```
+
+### 11. Disabled hook (kept around for later)
 
 ```toml
 [[hooks]]
@@ -292,13 +306,11 @@ enabled = false
 
 ## Gotchas
 
-- **Pre-hook timeout: 10 seconds** (`PRE_HOOK_TIMEOUT_SECONDS` in `hooks.py`). Timeout raises `HookRejectionError` and blocks the write.
-- **Post-hook isolation:** never raises back to the caller; don't rely on post-hooks for control flow.
+- **`timing = "pre"` is a config error.** Pre-hooks were removed in 0.17. stx hooks are post-only observers. Change `timing` to `"post"` or omit it (defaults to `"post"`). `stx hook validate` exits 4 with a migration hint.
+- **Hook isolation:** hooks never raise back to the caller — don't rely on them for control flow.
 - **Description truncation at 4KB** (`DESCRIPTION_MAX_BYTES`). Truncated payloads include `"description_truncated": true` on the entity so hooks can detect it.
 - **Recursive invocation:** a hook that runs `stx ...` inside itself will recursively fire more hooks with no depth limit. Avoid self-referential hooks.
-- **Concurrency:** pre-hooks for non-meta mutations receive a snapshot of the entity read *before* the write transaction opens — under concurrent writers the snapshot may be stale by the time the write runs. Optimistic-locking (version CAS) still catches conflicts; the write either commits against fresh state or raises `ConflictError`. A pre-hook veto based on a stale snapshot is not "undone" — it vetoes what was true at read time.
-- **Edge meta and `update_edge` hooks** fire *inside* the transaction so pre/post are symmetric under races. This means the pre-hook subprocess runs while the SQLite write lock is held — acceptable in the single-writer use case.
-- **Cascade archives** on groups and workspaces emit only the top-level `*_ARCHIVED` event. Per-entity hooks for bulk-archived descendants are intentionally skipped; use the cascade event as the signal.
+- **Bulk archives** (`cascade_archive_group`, `cascade_archive_workspace`, `archive_status --force/--reassign-to`) emit only the top-level `*_ARCHIVED` event. Per-entity hooks for bulk-affected descendants are intentionally skipped. The affected IDs are included in the payload: `archived_task_ids`, `archived_group_ids`, `archived_status_ids` (cascade ops), `reassigned_task_ids` + `reassigned_to` (`archive_status --reassign-to`). These fields are absent when there are no affected entities.
 - **Statuses have no metadata**, so `status.meta_*` events don't exist.
 
 ---
@@ -319,7 +331,6 @@ stx hook ls                              # all hooks
 stx hook ls --event task.created         # by event
 stx hook ls --workspace work             # by workspace
 stx hook ls --globals-only               # hooks without a workspace scope
-stx hook ls --timing pre                 # only pre-hooks
 ```
 
 Hand-play a hook command without mutating the DB — pipe a synthetic payload into the command:

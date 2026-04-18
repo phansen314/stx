@@ -82,7 +82,6 @@ def row_to_group(row: Row) -> Group:
         archived=bool(row["archived"]),
         created_at=row["created_at"],
         metadata=json.loads(row["metadata"]),
-        done=bool(row["done"]),
         version=row["version"],
     )
 

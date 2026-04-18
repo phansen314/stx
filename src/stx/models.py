@@ -40,7 +40,6 @@ class GroupField(StrEnum):
     DESCRIPTION = "description"
     PARENT_ID = "parent_id"
     ARCHIVED = "archived"
-    DONE = "done"
 
 
 class WorkspaceField(StrEnum):
@@ -70,17 +69,6 @@ class ConflictError(ValueError):
     The typical response is to re-fetch the row and retry the operation.
     """
 
-
-class HookRejectionError(Exception):
-    """Raised when a pre-hook rejects an operation."""
-
-    def __init__(self, hook_name: str, event: str, stderr_output: str, exit_code: int):
-        self.hook_name = hook_name
-        self.event = event
-        self.stderr_output = stderr_output
-        self.exit_code = exit_code
-        reason = stderr_output.strip() or f"exit code {exit_code}"
-        super().__init__(f"pre-hook rejected {event}: {reason} (hook: {hook_name})")
 
 
 # ---- Pre-insert types (no id, no created_at) ----
@@ -118,7 +106,6 @@ class NewGroup:
     title: str
     description: str | None = None
     parent_id: int | None = None
-    done: bool = False
 
 
 @dataclass(frozen=True)
@@ -185,7 +172,6 @@ class Group:
     archived: bool
     created_at: int
     metadata: dict[str, str]
-    done: bool = False
     version: int = 0
 
 

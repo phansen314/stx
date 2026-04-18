@@ -4,12 +4,8 @@ Hook commands are executed via ``shell=True``. Anyone who can write
 ``~/.config/stx/hooks.toml`` can execute arbitrary code as the stx user;
 this is by design, matching the trust model of git hooks and Claude Code hooks.
 
-Concurrency note: pre-hooks receive a snapshot of the entity read *before* the
-write transaction opens, so the payload can be stale under concurrent writers.
-The write itself is protected by optimistic locking (expected_version / CAS), so
-conflicts still raise ConflictError — but a pre-hook veto may be silently skipped
-when the apparent delta collapses to nothing mid-flight. This is acceptable for
-the single-writer use case and documented here as a known limitation.
+Hooks are post-only observers: they fire after the write transaction commits and
+see committed state. The write always proceeds; hooks cannot veto operations.
 
 Re-entrancy warning: a hook command that itself invokes ``stx`` will recursively
 fire more hooks. There is no depth limit or cycle detection; avoid self-referential
@@ -24,8 +20,6 @@ import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-
-from .models import HookRejectionError
 
 
 class HookEvent(StrEnum):
@@ -61,7 +55,6 @@ class HookEvent(StrEnum):
 
 
 class HookTiming(StrEnum):
-    PRE = "pre"
     POST = "post"
 
 
@@ -99,7 +92,6 @@ EVENT_CATEGORIES: dict[HookEvent, str] = {
 
 DEFAULT_HOOKS_PATH = Path.home() / ".config" / "stx" / "hooks.toml"
 DESCRIPTION_MAX_BYTES = 4096
-PRE_HOOK_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -127,11 +119,16 @@ def _parse_hook_entry(raw: dict, index: int) -> HookConfig:
         ) from exc
 
     raw_timing = raw["timing"]
+    if raw_timing == "pre":
+        raise ValueError(
+            f"hooks[{index}]: timing='pre' is no longer supported — stx hooks are "
+            f"post-only observers. Change timing to 'post' or omit it (defaults to 'post')."
+        )
     try:
         timing = HookTiming(raw_timing)
     except ValueError as exc:
         raise ValueError(
-            f"hooks[{index}]: invalid timing '{raw_timing}'. Must be 'pre' or 'post'"
+            f"hooks[{index}]: invalid timing '{raw_timing}'. Must be 'post'"
         ) from exc
 
     command = raw["command"]
@@ -265,7 +262,6 @@ def _serialize_entity(entity: object) -> dict | None:
 
 def build_payload(
     event: HookEvent,
-    timing: HookTiming,
     *,
     workspace_id: int | None,
     workspace_name: str | None,
@@ -278,6 +274,11 @@ def build_payload(
     meta_value: str | None = None,
     source_workspace: dict | None = None,
     target_workspace: dict | None = None,
+    archived_task_ids: list[int] | None = None,
+    archived_group_ids: list[int] | None = None,
+    archived_status_ids: list[int] | None = None,
+    reassigned_task_ids: list[int] | None = None,
+    reassigned_to: int | None = None,
 ) -> str:
     """Build the JSON payload string to deliver on stdin to hook commands."""
     category = EVENT_CATEGORIES[event]
@@ -285,7 +286,7 @@ def build_payload(
 
     payload: dict = {
         "event": event.value,
-        "timing": timing.value,
+        "timing": "post",
         "workspace_id": workspace_id,
         "workspace_name": workspace_name,
         "entity_type": entity_type,
@@ -302,6 +303,16 @@ def build_payload(
     elif category == "archived":
         payload["changes"] = changes
         payload["proposed"] = None
+        if archived_task_ids is not None:
+            payload["archived_task_ids"] = archived_task_ids
+        if archived_group_ids is not None:
+            payload["archived_group_ids"] = archived_group_ids
+        if archived_status_ids is not None:
+            payload["archived_status_ids"] = archived_status_ids
+        if reassigned_task_ids is not None:
+            payload["reassigned_task_ids"] = reassigned_task_ids
+        if reassigned_to is not None:
+            payload["reassigned_to"] = reassigned_to
     elif category == "meta":
         payload["meta_key"] = meta_key
         payload["meta_value"] = meta_value
@@ -315,32 +326,6 @@ def build_payload(
 
     return json.dumps(payload)
 
-
-def run_pre_hooks(
-    hooks: tuple[HookConfig, ...],
-    payload_json: str,
-    timeout: int = PRE_HOOK_TIMEOUT_SECONDS,
-) -> None:
-    """Run pre-hooks sequentially. Raises HookRejectionError on non-zero exit or timeout.
-
-    On rejection, subsequent hooks in the tuple are not invoked.
-    """
-    for hook in hooks:
-        hook_name = hook.name or hook.command
-        try:
-            result = subprocess.run(
-                hook.command,
-                shell=True,
-                input=payload_json,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise HookRejectionError(hook_name, hook.event, "timed out", -1) from exc
-
-        if result.returncode != 0:
-            raise HookRejectionError(hook_name, hook.event, result.stderr, result.returncode)
 
 
 def fire_post_hooks(hooks: tuple[HookConfig, ...], payload_json: str) -> None:
@@ -374,7 +359,6 @@ def fire_post_hooks(hooks: tuple[HookConfig, ...], payload_json: str) -> None:
 
 def fire_hooks(
     event: HookEvent,
-    timing: HookTiming,
     *,
     workspace_id: int | None,
     workspace_name: str | None,
@@ -387,17 +371,21 @@ def fire_hooks(
     meta_value: str | None = None,
     source_workspace: dict | None = None,
     target_workspace: dict | None = None,
+    archived_task_ids: list[int] | None = None,
+    archived_group_ids: list[int] | None = None,
+    archived_status_ids: list[int] | None = None,
+    reassigned_task_ids: list[int] | None = None,
+    reassigned_to: int | None = None,
     hooks_path: Path | None = None,
 ) -> None:
-    """High-level entry: load → match → build payload → execute."""
+    """High-level entry: load → match → build payload → fire post-hooks."""
     hooks = load_hooks(hooks_path if hooks_path is not None else DEFAULT_HOOKS_PATH)
-    matched = match_hooks(hooks, event, timing, workspace_name)
+    matched = match_hooks(hooks, event, HookTiming.POST, workspace_name)
     if not matched:
         return
 
     payload_json = build_payload(
         event,
-        timing,
         workspace_id=workspace_id,
         workspace_name=workspace_name,
         entity_type=entity_type,
@@ -409,12 +397,14 @@ def fire_hooks(
         meta_value=meta_value,
         source_workspace=source_workspace,
         target_workspace=target_workspace,
+        archived_task_ids=archived_task_ids,
+        archived_group_ids=archived_group_ids,
+        archived_status_ids=archived_status_ids,
+        reassigned_task_ids=reassigned_task_ids,
+        reassigned_to=reassigned_to,
     )
 
-    if timing == HookTiming.PRE:
-        run_pre_hooks(matched, payload_json)
-    else:
-        fire_post_hooks(matched, payload_json)
+    fire_post_hooks(matched, payload_json)
 
 
 def load_event_schema() -> dict:

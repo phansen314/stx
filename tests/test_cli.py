@@ -3194,12 +3194,21 @@ class TestHookLs:
     def test_filter_timing(self, cli, hooks_file):
         _write_hooks_toml(
             hooks_file,
-            '[[hooks]]\nevent = "task.created"\ntiming = "pre"\ncommand = "pre-cmd"\n'
-            '[[hooks]]\nevent = "task.created"\ntiming = "post"\ncommand = "post-cmd"\n',
+            '[[hooks]]\nevent = "task.created"\ntiming = "post"\ncommand = "post-cmd"\n'
+            '[[hooks]]\nevent = "task.archived"\ntiming = "post"\ncommand = "archive-cmd"\n',
         )
-        out, _ = cli("hook", "ls", "--path", str(hooks_file), "--timing", "pre")
-        assert "pre-cmd" in out
-        assert "post-cmd" not in out
+        out, _ = cli("hook", "ls", "--path", str(hooks_file), "--timing", "post")
+        assert "post-cmd" in out
+        assert "archive-cmd" in out
+
+    def test_pre_timing_config_error(self, cli, hooks_file):
+        _write_hooks_toml(
+            hooks_file,
+            '[[hooks]]\nevent = "task.created"\ntiming = "pre"\ncommand = "x"\n',
+        )
+        out, err = cli("hook", "ls", "--path", str(hooks_file), expect_exit=4)
+        combined = out + err
+        assert "post-only" in combined
 
     def test_filter_workspace(self, cli, hooks_file):
         _write_hooks_toml(

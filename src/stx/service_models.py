@@ -77,7 +77,6 @@ class GroupRef:
     archived: bool
     created_at: int
     metadata: dict[str, str]
-    done: bool = False
     task_ids: tuple[int, ...] = ()
     child_ids: tuple[int, ...] = ()
 
@@ -185,7 +184,6 @@ class GroupDetail:
     metadata: dict[str, str]
     edge_sources: tuple[EdgeRef, ...]
     edge_targets: tuple[EdgeRef, ...]
-    done: bool = False
     version: int = 0
 
 

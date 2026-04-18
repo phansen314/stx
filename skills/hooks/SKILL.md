@@ -1,6 +1,6 @@
 ---
 name: hooks
-description: Use when the user wants to write, install, or debug a custom stx hook — e.g. "notify me when a task is done", "block task creation without a description", "send a Slack message when X", "fire a webhook on Y", "post to this endpoint when a task moves to review", "why did my hook not fire". Trigger on phrases like "hook", "pre-hook", "post-hook", "fire on …", "block …", "hooks.toml", "stx event", "audit trail", "automation rule".
+description: Use when the user wants to write, install, or debug a custom stx hook — e.g. "notify me when a task is done", "send a Slack message when X", "fire a webhook on Y", "post to this endpoint when a task moves to review", "why did my hook not fire". Trigger on phrases like "hook", "post-hook", "fire on …", "hooks.toml", "stx event", "audit trail", "automation rule".
 ---
 
 Author, install, and debug stx hooks — shell commands that fire on entity mutations.
@@ -15,11 +15,10 @@ Collect four fields. Infer from wording; ask only when ambiguous.
 - **Event** — consult the event catalog in `references/hooks.md`. Common mappings
   (e.g. "task done" → `task.done`, "rename a group" → `group.updated`) are
   obvious; for anything non-obvious read the catalog rather than guessing.
-- **Timing** — verbs drive this:
-  - "block / reject / require / enforce / prevent / guard" → **pre**.
-  - "notify / log / send / post / call / trigger" → **post**.
-  - Pre-hooks veto by exiting non-zero (write rolls back); post-hooks are
-    fire-and-forget (exit code ignored).
+- **Timing** — always `post`. Hooks are post-commit observers; the write always
+  proceeds. If the user asks to "block" or "veto" a write, note that hooks
+  cannot do this — implement the guard as a wrapper script or CLI alias that
+  checks preconditions before calling `stx`.
 - **Workspace scope** — global (all workspaces) or scoped to one by exact name?
   Default global.
 - **Action** — what the command does. Usually stated directly.
@@ -65,7 +64,7 @@ Template:
 ```toml
 [[hooks]]
 event = "<event>"
-timing = "<pre|post>"
+timing = "post"                # optional — "post" is the only valid value and the default
 name = "<short-slug>"          # optional but encouraged — shown by `stx hook ls`
 workspace = "<name>"           # OMIT for global; exact-match filter on mutation's workspace
 command = '''
@@ -80,7 +79,7 @@ resolved workspace against each hook's `workspace` field.
 
 ### Command-body pattern
 
-For both pre and post, capture the payload once, extract fields, act:
+Capture the payload once, extract fields, act:
 
 ```sh
 read payload
@@ -88,9 +87,7 @@ val=$(echo "$payload" | jq -r '<jq-path>')
 <branch or action on $val>
 ```
 
-**Pre-hook veto**: add `echo "<reason>" >&2; exit 1` in the rejection branch.
-
-**Post-hook shortcut**: if the command doesn't branch on field values (e.g. just
+**Shortcut**: if the command doesn't branch on field values (e.g. just
 pipes the payload into `notify-send`), skip `read` and go straight to
 `jq -r '<expr>' | <action>` — `jq` reads stdin directly.
 
@@ -126,16 +123,14 @@ stx --text hook ls --event <event>   # confirm registration
 ```
 
 Trigger the event once (use `references/cli-reference.md` to find the right
-mutation command) and observe the side-effect:
-
-- Post-hooks emit to their own side-channel (notification, log, webhook).
-- Pre-hooks block the mutation; stx exits 7 (`EXIT_HOOK_REJECTED`) with the
-  hook's stderr.
+mutation command) and observe the side-effect (notification, log, webhook, etc.).
+Post-hooks run in the background; stdout/stderr go to DEVNULL — use a log file
+or a side-channel to confirm firing.
 
 Archive any test entities created during smoke-testing with
 `stx task archive <id> --force`.
 
-## Debug mode — "my hook didn't fire" / "my pre-hook isn't blocking"
+## Debug mode — "my hook didn't fire"
 
 ### Pre-flight
 
@@ -160,11 +155,7 @@ Archive any test entities created during smoke-testing with
    visible error. Re-run the command against a captured payload to see its
    stderr (see "capturing a real payload" below).
 
-4. **Pre-hook timed out.** 10-second hard limit. Raises `HookRejectionError`
-   with stderr `"timed out"` and blocks the write. Confirm via the stx exit
-   code and stderr.
-
-5. **Recursive invocation.** Does the hook's command invoke `stx`? That
+4. **Recursive invocation.** Does the hook's command invoke `stx`? That
    mutation fires more hooks with no depth limit. Self-referential loops are a
    real trap.
 
@@ -206,7 +197,6 @@ Remove the throwaway hook before committing the real one.
 - **Hook needs a secret (`$SLACK_WEBHOOK_URL`, etc.)** — `shell=True` inherits
   the user's environment; document the env var requirement in a comment above
   the `[[hooks]]` block.
-- **Pre-hook subprocess holds the SQLite write lock** (for `update_edge`,
-  `set_edge_meta` — pre-hooks fire inside the tx to avoid race-asymmetry).
-  Keep those pre-hooks fast; a slow network call blocks concurrent writers for
-  up to the 10-second timeout.
+- **`timing = "pre"` is now a config error.** stx hooks are post-only since 0.17.
+  `stx hook validate` exits 4 with a migration hint. Change `timing` to `"post"`
+  or omit it entirely.

@@ -2586,9 +2586,6 @@ class TestDoneFlag:
       - is_terminal toggle on a status does NOT retro-mark existing tasks
       - moving a task into / out of a terminal status auto-flips task.done
       - manual mark_task_done / mark_task_undone overrides
-      - group rollup: parent flips to done iff all non-archived children done
-      - cascade un-done when a previously-done descendant flips back
-      - archived siblings excluded from rollup
       - journal source distinguishes auto vs manual flips
     """
 
@@ -2611,8 +2608,6 @@ class TestDoneFlag:
         gid = insert_group(conn, wid, "g_root")
         t1 = insert_task(conn, wid, "t1", todo_id)
         t2 = insert_task(conn, wid, "t2", todo_id)
-        # Assign via the service (not raw SQL) so _propagate_done_upward is
-        # exercised on the group from the start, matching the real write path.
         service.assign_task_to_group(conn, t1, gid, source="test")
         service.assign_task_to_group(conn, t2, gid, source="test")
         return {
@@ -2710,98 +2705,36 @@ class TestDoneFlag:
         v_after = service.get_task(conn, ids["t1"]).version
         assert v_before == v_after
 
-    def test_group_rollup_all_done_flips_parent(
+    def test_archive_status_reassign_to_terminal_flips_done(
         self, conn: sqlite3.Connection
     ) -> None:
         ids = self._seed(conn)
-        # Marking only one task done is not enough.
-        service.mark_task_done(conn, ids["t1"], source="cli")
-        assert service.get_group(conn, ids["gid"]).done is False
-        # Marking the second task done flips the parent.
-        service.mark_task_done(conn, ids["t2"], source="cli")
-        assert service.get_group(conn, ids["gid"]).done is True
-
-    def test_group_rollup_two_levels_deep(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        # Add a nested grandparent → parent (gid) chain.
-        gp = insert_group(conn, ids["wid"], "grandparent")
-        service.update_group(conn, ids["gid"], {"parent_id": gp}, source="test")
-        service.mark_task_done(conn, ids["t1"], source="cli")
-        service.mark_task_done(conn, ids["t2"], source="cli")
-        assert service.get_group(conn, ids["gid"]).done is True
-        assert service.get_group(conn, gp).done is True
-
-    def test_cascade_undone_two_level(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        gp = insert_group(conn, ids["wid"], "grandparent")
-        service.update_group(conn, ids["gid"], {"parent_id": gp}, source="test")
-        # Mark both tasks done via the terminal status → both groups roll up.
-        service.update_task(conn, ids["t1"], {"status_id": ids["done"]}, source="cli")
-        service.update_task(conn, ids["t2"], {"status_id": ids["done"]}, source="cli")
-        assert service.get_group(conn, ids["gid"]).done is True
-        assert service.get_group(conn, gp).done is True
-        # Move t1 back to non-terminal: parent + grandparent both flip back.
-        service.update_task(conn, ids["t1"], {"status_id": ids["todo"]}, source="cli")
-        assert service.get_group(conn, ids["gid"]).done is False
-        assert service.get_group(conn, gp).done is False
-        # The cascade flips are journaled with source="auto" on each ancestor.
-        cascade_rows = conn.execute(
-            "SELECT entity_id, source FROM journal "
-            "WHERE entity_type='group' AND field='done' ORDER BY id"
+        service.archive_status(
+            conn, ids["todo"],
+            reassign_to_status_id=ids["done"],
+            source="cli",
+        )
+        assert service.get_task(conn, ids["t1"]).done is True
+        assert service.get_task(conn, ids["t2"]).done is True
+        rows = conn.execute(
+            "SELECT field, source FROM journal WHERE entity_type='task' AND field='done' "
+            "ORDER BY id",
         ).fetchall()
-        assert any(
-            r["entity_id"] == ids["gid"] and r["source"] == "auto" for r in cascade_rows
-        )
-        assert any(
-            r["entity_id"] == gp and r["source"] == "auto" for r in cascade_rows
-        )
+        assert all(r["source"] == "auto" for r in rows)
+        assert len(rows) == 2
 
-    def test_archived_siblings_ignored_in_rollup(
+    def test_archive_status_reassign_to_nonterminal_leaves_done_false(
         self, conn: sqlite3.Connection
     ) -> None:
         ids = self._seed(conn)
-        # Mark t1 done. Archive t2. The group should now flip to done since
-        # the only remaining non-archived child (t1) is done.
-        service.mark_task_done(conn, ids["t1"], source="cli")
-        assert service.get_group(conn, ids["gid"]).done is False
-        service.archive_task(conn, ids["t2"], source="cli")
-        assert service.get_group(conn, ids["gid"]).done is True
-
-    def test_empty_group_is_not_done(self, conn: sqlite3.Connection) -> None:
-        wid = insert_workspace(conn, "w")
-        gid = insert_group(conn, wid, "empty")
-        # The repo helper uses raw SQL; trigger one rollup recompute by
-        # touching the group via a no-op service update so the propagation
-        # path is exercised. Even after recompute, an empty group must NOT
-        # be reported as done.
-        from stx import repository as repo
-
-        assert repo.compute_group_done_state(conn, gid) is False
-
-    def test_archive_group_propagates_to_parent(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        ids = self._seed(conn)
-        gp = insert_group(conn, ids["wid"], "grandparent")
-        service.update_group(conn, ids["gid"], {"parent_id": gp}, source="test")
-        # Both tasks done → parent rolled up to done.
-        service.mark_task_done(conn, ids["t1"], source="cli")
-        service.mark_task_done(conn, ids["t2"], source="cli")
-        assert service.get_group(conn, gp).done is True
-        # Add a sibling un-done group under the grandparent. Grandparent
-        # should now be not-done (rollup recomputes when the new group is
-        # created — actually creation doesn't touch parents, so we have to
-        # nudge it via an update). Update the new sibling to confirm
-        # rollup behaves on subsequent mutations.
-        sibling = insert_group(conn, ids["wid"], "sibling")
-        service.update_group(conn, sibling, {"parent_id": gp}, source="test")
-        # Sibling has zero children so it is not-done; grandparent should
-        # have flipped back to not-done via the propagation triggered by the
-        # parent_id update on `sibling`.
-        assert service.get_group(conn, gp).done is False
-        # Archiving the sibling restores grandparent done.
-        service.cascade_archive_group(conn, sibling, source="cli")
-        assert service.get_group(conn, gp).done is True
+        other = insert_status(conn, ids["wid"], "other")
+        service.archive_status(
+            conn, ids["todo"],
+            reassign_to_status_id=other,
+            source="cli",
+        )
+        assert service.get_task(conn, ids["t1"]).done is False
+        assert service.get_task(conn, ids["t2"]).done is False
 
 
 class TestComputeNextTasks:

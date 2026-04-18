@@ -73,18 +73,18 @@ assert_absent() {
 # ── Fixtures ────────────────────────────────────────────────────────
 
 cat > "$VALID" <<'EOF'
-# Global pre-hook
+# Global post-hook
 [[hooks]]
 event = "task.created"
-timing = "pre"
-command = "echo pre-global"
+timing = "post"
+command = "echo post-global"
 name = "guard"
 
 # Global post-hook, disabled
 [[hooks]]
 event = "task.created"
 timing = "post"
-command = "echo post-global"
+command = "echo post-global-disabled"
 enabled = false
 
 # Workspace-scoped post-hook
@@ -104,7 +104,7 @@ command = "x"
 
 [[hooks]]
 event = "task.created"
-timing = "sideways"
+timing = "pre"
 command = "y"
 EOF
 
@@ -130,7 +130,6 @@ section "stx hook ls — no filters, valid config"
 
 out="$($CMD hook ls --path "$VALID")"
 echo "$out" | sed 's/^/    /'
-assert_contains "\[pre\]" "$out" "pre timing shown"
 assert_contains "\[post\]" "$out" "post timing shown"
 assert_contains "\[disabled\]" "$out" "disabled marker"
 assert_contains "\[workspace=Work\]" "$out" "workspace bracket"
@@ -139,11 +138,6 @@ assert_contains "\[name='guard'\]" "$out" "name bracket"
 # ════════════════════════════════════════════════════════════════════
 section "stx hook ls — filters"
 # ════════════════════════════════════════════════════════════════════
-
-out="$($CMD hook ls --path "$VALID" --timing pre)"
-echo "$out" | sed 's/^/    /'
-assert_contains "echo pre-global" "$out" "pre filter keeps pre hook"
-assert_absent  "echo scoped"       "$out" "pre filter drops post hook"
 
 out="$($CMD hook ls --path "$VALID" --event task.archived)"
 echo "$out" | sed 's/^/    /'
@@ -184,6 +178,7 @@ else
 fi
 assert_contains "hooks config invalid" "$out" "friendly invalid-config header"
 assert_contains "stx hook validate" "$out" "points at 'stx hook validate'"
+assert_contains "post-only" "$out" "migration hint mentions post-only"
 
 run "Unparseable TOML exits non-zero" 4 \
     $CMD hook ls --path "$PARSE_BROKEN"

@@ -18,7 +18,7 @@ def _migrate_data_dir() -> None:
         print(f"stx: migrated data directory {_OLD_DB_DIR} → {_NEW_DB_DIR}", file=sys.stderr)
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 def _strip_line_comment(line: str) -> str:

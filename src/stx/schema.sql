@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS groups (
     archived     INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
-    done         INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
     version      INTEGER NOT NULL DEFAULT 0,
     UNIQUE (id, workspace_id),
     FOREIGN KEY (parent_id, workspace_id) REFERENCES groups(id, workspace_id) ON DELETE RESTRICT
@@ -132,8 +131,6 @@ CREATE INDEX IF NOT EXISTS idx_edges_acyclic_archived
 -- FK index for tasks.group_id (not covered by composites above)
 CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);
 
--- Done-flag indexes (for `stx next` and rollup queries)
+-- Done-flag index (for `stx next`)
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_done
     ON tasks(workspace_id, done, archived);
-CREATE INDEX IF NOT EXISTS idx_groups_workspace_done
-    ON groups(workspace_id, done, archived);

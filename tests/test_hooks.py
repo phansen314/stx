@@ -30,10 +30,8 @@ from stx.hooks import (
     load_event_schema,
     load_hooks,
     match_hooks,
-    run_pre_hooks,
     validate_hooks_config,
 )
-from stx.models import HookRejectionError
 
 
 # ---------------------------------------------------------------------------
@@ -104,12 +102,17 @@ class TestLoadHooks:
 
     def test_multiple_hooks_preserve_order(self, tmp_path: Path) -> None:
         content = _minimal_hook("task.created", "post", "first") + \
-                  _minimal_hook("task.updated", "pre", "second")
+                  _minimal_hook("task.updated", "post", "second")
         p = _write_hooks(tmp_path, content)
         hooks = load_hooks(p)
         assert len(hooks) == 2
         assert hooks[0].command == "first"
         assert hooks[1].command == "second"
+
+    def test_pre_timing_raises_migration_error(self, tmp_path: Path) -> None:
+        p = _write_hooks(tmp_path, _minimal_hook(timing="pre"))
+        with pytest.raises(ValueError, match="timing='pre' is no longer supported"):
+            load_hooks(p)
 
     def test_missing_event_raises(self, tmp_path: Path) -> None:
         p = _write_hooks(tmp_path, '[[hooks]]\ntiming = "post"\ncommand = "x"\n')
@@ -203,7 +206,6 @@ class TestMatchHooks:
     def _hooks(self) -> tuple[HookConfig, ...]:
         return (
             HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "global-post"),
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.PRE, "global-pre"),
             HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "ws-a-post", workspace="ws-a"),
             HookConfig(HookEvent.TASK_UPDATED, HookTiming.POST, "update-post"),
             HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "disabled", enabled=False),
@@ -213,11 +215,6 @@ class TestMatchHooks:
         result = match_hooks(self._hooks(), HookEvent.TASK_UPDATED, HookTiming.POST, None)
         assert len(result) == 1
         assert result[0].command == "update-post"
-
-    def test_filters_by_timing(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.PRE, None)
-        assert len(result) == 1
-        assert result[0].command == "global-pre"
 
     def test_workspace_scoped_matches_named_workspace(self) -> None:
         result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.POST, "ws-a")
@@ -305,7 +302,6 @@ class TestBuildPayload:
     def _created_payload(self, entity: object = None, proposed: dict | None = None) -> dict:
         raw = build_payload(
             HookEvent.TASK_CREATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="ws",
             entity_type="task",
@@ -332,7 +328,6 @@ class TestBuildPayload:
     def test_updated_has_null_proposed(self) -> None:
         raw = build_payload(
             HookEvent.TASK_UPDATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="ws",
             entity_type="task",
@@ -347,7 +342,6 @@ class TestBuildPayload:
     def test_meta_payload_fields(self) -> None:
         raw = build_payload(
             HookEvent.TASK_META_SET,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="ws",
             entity_type="task",
@@ -367,7 +361,6 @@ class TestBuildPayload:
         task = _FakeTask(id=1, title="t", description=long_desc)
         raw = build_payload(
             HookEvent.TASK_UPDATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="ws",
             entity_type="task",
@@ -383,7 +376,6 @@ class TestBuildPayload:
         task = _FakeTask(id=1, title="t", description="short")
         raw = build_payload(
             HookEvent.TASK_UPDATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="ws",
             entity_type="task",
@@ -427,84 +419,6 @@ class TestSerializeEntity:
 # Execution
 # ---------------------------------------------------------------------------
 
-class TestRunPreHooks:
-    def _hook(self, name: str = "test-hook") -> HookConfig:
-        return HookConfig(HookEvent.TASK_CREATED, HookTiming.PRE, "echo", name=name)
-
-    def test_success_does_not_raise(self) -> None:
-        fake = MagicMock()
-        fake.returncode = 0
-        fake.stderr = ""
-        with patch("stx.hooks.subprocess.run", return_value=fake):
-            run_pre_hooks((self._hook(),), "{}")
-
-    def test_nonzero_exit_raises(self) -> None:
-        fake = MagicMock()
-        fake.returncode = 1
-        fake.stderr = "not allowed"
-        with patch("stx.hooks.subprocess.run", return_value=fake):
-            with pytest.raises(HookRejectionError) as exc_info:
-                run_pre_hooks((self._hook("blocker"),), "{}")
-        err = exc_info.value
-        assert err.exit_code == 1
-        assert "not allowed" in str(err)
-        assert err.hook_name == "blocker"
-
-    def test_timeout_raises(self) -> None:
-        with patch("stx.hooks.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
-            with pytest.raises(HookRejectionError) as exc_info:
-                run_pre_hooks((self._hook(),), "{}")
-        assert exc_info.value.exit_code == -1
-        assert "timed out" in str(exc_info.value)
-
-    def test_empty_stderr_falls_back_to_exit_code(self) -> None:
-        fake = MagicMock()
-        fake.returncode = 2
-        fake.stderr = "  "
-        with patch("stx.hooks.subprocess.run", return_value=fake):
-            with pytest.raises(HookRejectionError) as exc_info:
-                run_pre_hooks((self._hook(),), "{}")
-        assert "exit code 2" in str(exc_info.value)
-
-    def test_uses_shell_true(self) -> None:
-        fake = MagicMock()
-        fake.returncode = 0
-        fake.stderr = ""
-        with patch("stx.hooks.subprocess.run", return_value=fake) as mock_run:
-            run_pre_hooks((self._hook(),), "{}")
-        _, kwargs = mock_run.call_args
-        assert kwargs.get("shell") is True
-
-    def test_hook_name_falls_back_to_command(self) -> None:
-        hook = HookConfig(HookEvent.TASK_CREATED, HookTiming.PRE, "my-script.sh")
-        fake = MagicMock()
-        fake.returncode = 1
-        fake.stderr = "err"
-        with patch("stx.hooks.subprocess.run", return_value=fake):
-            with pytest.raises(HookRejectionError) as exc_info:
-                run_pre_hooks((hook,), "{}")
-        assert exc_info.value.hook_name == "my-script.sh"
-
-    def test_rejection_aborts_subsequent_hooks(self) -> None:
-        hooks = (
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.PRE, "first"),
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.PRE, "second"),
-        )
-        calls: list[str] = []
-
-        def fake_run(cmd: str, **kwargs: object) -> MagicMock:
-            calls.append(cmd)
-            result = MagicMock()
-            result.returncode = 1 if cmd == "first" else 0
-            result.stderr = "rejected" if cmd == "first" else ""
-            return result
-
-        with patch("stx.hooks.subprocess.run", side_effect=fake_run):
-            with pytest.raises(HookRejectionError):
-                run_pre_hooks(hooks, "{}")
-
-        assert calls == ["first"]
-
 
 class TestFirePostHooks:
     def _hook(self) -> HookConfig:
@@ -538,42 +452,25 @@ class TestFirePostHooks:
 
 class TestFireHooks:
     def test_no_config_file_is_noop(self, tmp_path: Path) -> None:
-        with patch("stx.hooks.run_pre_hooks") as mock_pre, \
-             patch("stx.hooks.fire_post_hooks") as mock_post:
+        with patch("stx.hooks.fire_post_hooks") as mock_post:
             fire_hooks(
-                HookEvent.TASK_CREATED, HookTiming.PRE,
+                HookEvent.TASK_CREATED,
                 workspace_id=1, workspace_name="ws",
                 entity_type="task", entity_id=1, entity=None,
                 hooks_path=tmp_path / "nonexistent.toml",
             )
-        mock_pre.assert_not_called()
-        mock_post.assert_not_called()
-
-    def test_matching_pre_hooks_calls_run_pre_hooks(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, _minimal_hook(timing="pre"))
-        with patch("stx.hooks.run_pre_hooks") as mock_pre, \
-             patch("stx.hooks.fire_post_hooks") as mock_post:
-            fire_hooks(
-                HookEvent.TASK_CREATED, HookTiming.PRE,
-                workspace_id=1, workspace_name="ws",
-                entity_type="task", entity_id=1, entity=None,
-                hooks_path=p,
-            )
-        mock_pre.assert_called_once()
         mock_post.assert_not_called()
 
     def test_matching_post_hooks_calls_fire_post_hooks(self, tmp_path: Path) -> None:
         p = _write_hooks(tmp_path, _minimal_hook(timing="post"))
-        with patch("stx.hooks.run_pre_hooks") as mock_pre, \
-             patch("stx.hooks.fire_post_hooks") as mock_post:
+        with patch("stx.hooks.fire_post_hooks") as mock_post:
             fire_hooks(
-                HookEvent.TASK_CREATED, HookTiming.POST,
+                HookEvent.TASK_CREATED,
                 workspace_id=1, workspace_name="ws",
                 entity_type="task", entity_id=1, entity=None,
                 hooks_path=p,
             )
         mock_post.assert_called_once()
-        mock_pre.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +563,29 @@ _ARCHIVED_CASES = [
     (HookEvent.EDGE_ARCHIVED, "edge", _full_edge_entity),
 ]
 
+_BULK_ARCHIVED_CASES = [
+    (
+        HookEvent.STATUS_ARCHIVED, "status", _full_status_entity,
+        {"archived_task_ids": [1, 2, 3]},
+        "status_force",
+    ),
+    (
+        HookEvent.STATUS_ARCHIVED, "status", _full_status_entity,
+        {"reassigned_task_ids": [4, 5], "reassigned_to": 7},
+        "status_reassign",
+    ),
+    (
+        HookEvent.GROUP_ARCHIVED, "group", _full_group_entity,
+        {"archived_task_ids": [1, 2], "archived_group_ids": [10, 11]},
+        "group_cascade",
+    ),
+    (
+        HookEvent.WORKSPACE_ARCHIVED, "workspace", _full_workspace_entity,
+        {"archived_task_ids": [1], "archived_group_ids": [2], "archived_status_ids": [3]},
+        "workspace_cascade",
+    ),
+]
+
 _META_CASES = [
     (HookEvent.TASK_META_SET, "task", _full_task_entity),
     (HookEvent.GROUP_META_SET, "group", _full_group_entity),
@@ -694,7 +614,6 @@ class TestSchemaConformance:
         schema = load_event_schema()
         payload = json.loads(build_payload(
             HookEvent.TASK_CREATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="test",
             entity_type="task",
@@ -708,7 +627,6 @@ class TestSchemaConformance:
         schema = load_event_schema()
         payload = json.loads(build_payload(
             HookEvent.TASK_UPDATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="test",
             entity_type="task",
@@ -722,7 +640,6 @@ class TestSchemaConformance:
         schema = load_event_schema()
         payload = json.loads(build_payload(
             HookEvent.TASK_META_SET,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="test",
             entity_type="task",
@@ -743,7 +660,7 @@ class TestSchemaConformance:
     ) -> None:
         schema = load_event_schema()
         payload = json.loads(build_payload(
-            event, HookTiming.POST,
+            event,
             workspace_id=1, workspace_name="ws",
             entity_type=entity_type, entity_id=1,
             entity=entity_factory(),  # type: ignore[misc]
@@ -762,7 +679,7 @@ class TestSchemaConformance:
     ) -> None:
         schema = load_event_schema()
         payload = json.loads(build_payload(
-            event, HookTiming.POST,
+            event,
             workspace_id=1, workspace_name="ws",
             entity_type=entity_type, entity_id=1,
             entity=entity_factory(),  # type: ignore[misc]
@@ -780,7 +697,7 @@ class TestSchemaConformance:
     ) -> None:
         schema = load_event_schema()
         payload = json.loads(build_payload(
-            event, HookTiming.POST,
+            event,
             workspace_id=1, workspace_name="ws",
             entity_type=entity_type, entity_id=1,
             entity=entity_factory(),  # type: ignore[misc]
@@ -798,7 +715,7 @@ class TestSchemaConformance:
     ) -> None:
         schema = load_event_schema()
         payload = json.loads(build_payload(
-            event, HookTiming.POST,
+            event,
             workspace_id=1, workspace_name="ws",
             entity_type=entity_type, entity_id=1,
             entity=entity_factory(),  # type: ignore[misc]
@@ -806,11 +723,36 @@ class TestSchemaConformance:
         ))
         _validate_payload(schema, payload)
 
+    @pytest.mark.parametrize(
+        "event,entity_type,entity_factory,extras,_id",
+        _BULK_ARCHIVED_CASES,
+        ids=[c[4] for c in _BULK_ARCHIVED_CASES],
+    )
+    def test_bulk_archived_payload_schema(
+        self,
+        event: HookEvent,
+        entity_type: str,
+        entity_factory: object,
+        extras: dict,
+        _id: str,
+    ) -> None:
+        schema = load_event_schema()
+        payload = json.loads(build_payload(
+            event,
+            workspace_id=1, workspace_name="ws",
+            entity_type=entity_type, entity_id=1,
+            entity=entity_factory(),  # type: ignore[misc]
+            changes={"archived": {"old": False, "new": True}},
+            **extras,
+        ))
+        _validate_payload(schema, payload)
+        for key, val in extras.items():
+            assert payload[key] == val
+
     def test_schema_rejects_garbage_entity(self) -> None:
         schema = load_event_schema()
         payload = json.loads(build_payload(
             HookEvent.TASK_UPDATED,
-            HookTiming.POST,
             workspace_id=1,
             workspace_name="test",
             entity_type="task",

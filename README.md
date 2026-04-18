@@ -160,34 +160,26 @@ stx task transfer task-0001 --to ops --status Backlog --dry-run
 
 ## Hooks
 
-Run shell commands on any stx mutation. Pre-hooks can veto writes by exiting non-zero; post-hooks are fire-and-forget. Hooks receive a JSON payload on stdin describing the event.
+Run shell commands on any stx mutation. Hooks are post-commit observers — the write always proceeds; hooks observe committed state and are fire-and-forget. Each hook receives a JSON payload on stdin describing the event.
 
 Config lives at `~/.config/stx/hooks.toml`. Commands execute via `shell=True` — trust model matches git hooks (anyone who can write the file can run arbitrary code as you).
 
 ```toml
 # ~/.config/stx/hooks.toml
 
-# Pre-hook: block task creation without a description on the "work" workspace.
-[[hooks]]
-event = "task.created"
-timing = "pre"
-workspace = "work"
-name = "require-description"
-command = '''
-read payload
-desc=$(echo "$payload" | jq -r '.proposed.description // ""')
-if [ -z "$desc" ]; then
-  echo "description required" >&2
-  exit 1
-fi
-'''
-
-# Post-hook: desktop notification when any task is marked done.
+# Desktop notification when a task is marked done.
 [[hooks]]
 event = "task.done"
 timing = "post"
 name = "notify-done"
 command = '''jq -r '"✓ " + .entity.title + " done"' | xargs -I{} notify-send "stx" "{}"'''
+
+# JSONL audit log for every task update.
+[[hooks]]
+event = "task.updated"
+timing = "post"
+name = "audit-log"
+command = "jq -c '{ts: now|strftime(\"%FT%T\"), event, entity: .entity.title, changes}' >> ~/.local/share/stx/activity.jsonl"
 ```
 
 Discoverability:

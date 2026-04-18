@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **Pre-hooks.** stx hooks are now post-only observers — the write always
+  proceeds; hooks observe committed state after the transaction. Pre-hook
+  veto semantics, `HookRejectionError`, `EXIT_HOOK_REJECTED` (exit code 7),
+  and `PRE_HOOK_TIMEOUT_SECONDS` have been removed. `timing = "pre"` in
+  `hooks.toml` now raises a config error with a migration hint: change
+  `timing` to `"post"` or omit it (defaults to `"post"`).
+
+- **`group.done` field and rollup propagation.** The `groups.done` column,
+  `compute_group_done_state`, and `_propagate_done_upward` have been removed.
+  The field was never rendered in the CLI or TUI, was not consulted by
+  `stx next`, and the planned `stx group done/undone` CLI was never built.
+  `group.done` no longer appears in JSON output or hook payloads.
+  Migration 023 drops the column from existing databases.
+
 ### Added
 
 - **`stx hook` commands.** Read-only hook management: `ls` (with `--workspace`,
@@ -20,11 +36,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   emits `group.*` / `workspace.*` / `status.*` / `edge.*` events at pre + post
   timings, matching the task-event wiring already in place. Cascade-archive
   of a group or workspace emits only the top-level `*_ARCHIVED` event —
-  per-entity hooks for bulk-archived descendants are intentionally skipped.
+  per-entity hooks for bulk-affected descendants are intentionally skipped;
+  affected IDs are included in the payload instead (see Changed section).
   Full event catalog, payload shapes, and recipe library in
   `skills/stx/references/hooks.md`.
 
+### Fixed
+
+- **Bulk archive TOCTOU regression.** ID reads for
+  `cascade_archive_group`, `cascade_archive_workspace`, and `archive_status`
+  bulk paths are now inside the transaction before the bulk writes, restoring
+  journal and payload consistency under concurrent writers.
+- **`archive_status --reassign-to` done-flip now uses a single bulk `UPDATE`**
+  instead of N per-task `repo.update_task` calls. Behavior unchanged; each
+  flip is still journaled individually.
+
 ### Changed
+
+- **Bulk archive events carry affected ID lists.** `status.archived`,
+  `group.archived`, and `workspace.archived` payloads now include optional
+  fields when the event was triggered by a bulk operation:
+  `archived_task_ids` (`archive_status --force`, cascade group/workspace),
+  `archived_group_ids` (cascade group/workspace),
+  `archived_status_ids` (cascade workspace),
+  `reassigned_task_ids` + `reassigned_to` (`archive_status --reassign-to`).
+  Fields are absent for single-entity archives. Fixes `task.archived` /
+  `task.moved` hooks silently missing bulk-affected tasks.
+- **`archive_status --reassign-to` into a terminal status now auto-sets
+  `done=True`** on all moved tasks, matching the per-task done-flip that
+  `update_task` applies. Each flip is journaled with `source="auto"`.
 
 - **Metadata hook firing centralized.** `_set_entity_meta` /
   `_remove_entity_meta` / `_replace_entity_metadata` now fire `*.meta_set` /

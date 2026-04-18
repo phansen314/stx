@@ -55,7 +55,6 @@ _GROUP_UPDATABLE: frozenset[str] = frozenset(
         "description",
         "parent_id",
         "archived",
-        "done",
     }
 )
 _EDGE_UPDATABLE: frozenset[str] = frozenset({"acyclic"})
@@ -1116,8 +1115,8 @@ def list_journal_for_edge(
 def insert_group(conn: sqlite3.Connection, new: NewGroup) -> Group:
     d = _asdict_for_insert(new)
     cur = conn.execute(
-        "INSERT INTO groups (workspace_id, title, description, parent_id, done) "
-        "VALUES (:workspace_id, :title, :description, :parent_id, :done)",
+        "INSERT INTO groups (workspace_id, title, description, parent_id) "
+        "VALUES (:workspace_id, :title, :description, :parent_id)",
         d,
     )
     row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -1206,30 +1205,6 @@ def update_group(
         _raise_on_zero_rowcount(conn, "groups", "group", group_id, expected_version)
     row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
     return row_to_group(row)
-
-
-def compute_group_done_state(conn: sqlite3.Connection, group_id: int) -> bool:
-    """Return True iff the group has at least one non-archived child (task or
-    subgroup) and *every* such child has done=1. Empty groups are not done.
-    Archived children are ignored entirely.
-    """
-    row = conn.execute(
-        """
-        SELECT
-            (
-                (SELECT COUNT(*) FROM tasks  WHERE group_id  = ? AND archived = 0) +
-                (SELECT COUNT(*) FROM groups WHERE parent_id = ? AND archived = 0)
-            ) > 0
-            AND NOT EXISTS (
-                SELECT 1 FROM tasks  WHERE group_id  = ? AND archived = 0 AND done = 0
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM groups WHERE parent_id = ? AND archived = 0 AND done = 0
-            ) AS done_state
-        """,
-        (group_id, group_id, group_id, group_id),
-    ).fetchone()
-    return bool(row["done_state"])
 
 
 # ---- Task-group functions ----
@@ -1400,12 +1375,12 @@ def get_group_ancestry(
     """Return groups from root to the given group, inclusive."""
     rows = conn.execute(
         "WITH RECURSIVE ancestry AS ("
-        "  SELECT id, workspace_id, title, description, metadata, parent_id, archived, created_at, done, version, 0 AS depth "
+        "  SELECT id, workspace_id, title, description, metadata, parent_id, archived, created_at, version, 0 AS depth "
         "  FROM groups WHERE id = ? "
         "  UNION ALL "
-        "  SELECT g.id, g.workspace_id, g.title, g.description, g.metadata, g.parent_id, g.archived, g.created_at, g.done, g.version, a.depth + 1 "
+        "  SELECT g.id, g.workspace_id, g.title, g.description, g.metadata, g.parent_id, g.archived, g.created_at, g.version, a.depth + 1 "
         "  FROM groups g JOIN ancestry a ON g.id = a.parent_id"
-        ") SELECT id, workspace_id, title, description, metadata, parent_id, archived, created_at, done, version "
+        ") SELECT id, workspace_id, title, description, metadata, parent_id, archived, created_at, version "
         "FROM ancestry ORDER BY depth DESC",
         (group_id,),
     ).fetchall()

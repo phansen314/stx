@@ -28,7 +28,7 @@
     },
     "groupEntity": {
       "type": "object",
-      "required": ["id", "workspace_id", "title", "archived", "created_at", "done", "version"],
+      "required": ["id", "workspace_id", "title", "archived", "created_at", "version"],
       "properties": {
         "id": { "type": "integer" },
         "workspace_id": { "type": "integer" },
@@ -39,7 +39,6 @@
         "archived": { "type": "boolean" },
         "created_at": { "type": "integer" },
         "metadata": { "type": "object" },
-        "done": { "type": "boolean" },
         "version": { "type": "integer" }
       }
     },
@@ -120,7 +119,7 @@
   "required": ["event", "timing", "workspace_id", "workspace_name", "entity_type", "entity_id"],
   "properties": {
     "event": { "$ref": "#/$defs/eventEnum" },
-    "timing": { "type": "string", "enum": ["pre", "post"] },
+    "timing": { "type": "string", "enum": ["post"] },
     "workspace_id": { "type": ["integer", "null"] },
     "workspace_name": { "type": ["string", "null"] },
     "entity_type": { "type": "string", "enum": ["task", "group", "workspace", "status", "edge"] },
@@ -211,7 +210,12 @@
               { "$ref": "#/$defs/statusEntity" },
               { "$ref": "#/$defs/edgeEntity" }
             ]
-          }
+          },
+          "archived_task_ids": { "type": "array", "items": { "type": "integer" } },
+          "archived_group_ids": { "type": "array", "items": { "type": "integer" } },
+          "archived_status_ids": { "type": "array", "items": { "type": "integer" } },
+          "reassigned_task_ids": { "type": "array", "items": { "type": "integer" } },
+          "reassigned_to": { "type": "integer" }
         }
       }
     },
