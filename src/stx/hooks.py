@@ -54,10 +54,6 @@ class HookEvent(StrEnum):
     EDGE_META_REMOVED = "edge.meta_removed"
 
 
-class HookTiming(StrEnum):
-    POST = "post"
-
-
 EVENT_CATEGORIES: dict[HookEvent, str] = {
     HookEvent.TASK_CREATED: "created",
     HookEvent.GROUP_CREATED: "created",
@@ -97,7 +93,6 @@ DESCRIPTION_MAX_BYTES = 4096
 @dataclass(frozen=True)
 class HookConfig:
     event: HookEvent
-    timing: HookTiming
     command: str
     workspace: str | None = None
     name: str | None = None
@@ -105,7 +100,7 @@ class HookConfig:
 
 
 def _parse_hook_entry(raw: dict, index: int) -> HookConfig:
-    for field in ("event", "timing", "command"):
+    for field in ("event", "command"):
         if field not in raw:
             raise ValueError(f"hooks[{index}]: missing required field '{field}'")
 
@@ -118,18 +113,11 @@ def _parse_hook_entry(raw: dict, index: int) -> HookConfig:
             f"hooks[{index}]: invalid event '{raw_event}'. Valid values: {valid}"
         ) from exc
 
-    raw_timing = raw["timing"]
-    if raw_timing == "pre":
+    if raw.get("timing") == "pre":
         raise ValueError(
             f"hooks[{index}]: timing='pre' is no longer supported — stx hooks are "
-            f"post-only observers. Change timing to 'post' or omit it (defaults to 'post')."
+            f"post-only observers. Remove the timing field (all hooks are post)."
         )
-    try:
-        timing = HookTiming(raw_timing)
-    except ValueError as exc:
-        raise ValueError(
-            f"hooks[{index}]: invalid timing '{raw_timing}'. Must be 'post'"
-        ) from exc
 
     command = raw["command"]
     if not isinstance(command, str) or not command.strip():
@@ -149,7 +137,6 @@ def _parse_hook_entry(raw: dict, index: int) -> HookConfig:
 
     return HookConfig(
         event=event,
-        timing=timing,
         command=command,
         workspace=workspace,
         name=name,
@@ -196,6 +183,8 @@ def validate_hooks_config(path: Path = DEFAULT_HOOKS_PATH) -> list[str]:
             data = tomllib.load(f)
     except tomllib.TOMLDecodeError as exc:
         return [f"TOML parse error: {exc}"]
+    except OSError as exc:
+        return [f"cannot read hooks config: {exc}"]
 
     raw_hooks = data.get("hooks", [])
     errors: list[str] = []
@@ -211,10 +200,9 @@ def validate_hooks_config(path: Path = DEFAULT_HOOKS_PATH) -> list[str]:
 def match_hooks(
     hooks: tuple[HookConfig, ...],
     event: HookEvent,
-    timing: HookTiming,
     workspace_name: str | None,
 ) -> tuple[HookConfig, ...]:
-    """Filter hooks matching event/timing/workspace. Globals before workspace-scoped."""
+    """Filter hooks matching event/workspace. Globals before workspace-scoped."""
     globals_: list[HookConfig] = []
     scoped: list[HookConfig] = []
 
@@ -222,8 +210,6 @@ def match_hooks(
         if not h.enabled:
             continue
         if h.event != event:
-            continue
-        if h.timing != timing:
             continue
         if h.workspace is None:
             globals_.append(h)
@@ -286,7 +272,6 @@ def build_payload(
 
     payload: dict = {
         "event": event.value,
-        "timing": "post",
         "workspace_id": workspace_id,
         "workspace_name": workspace_name,
         "entity_type": entity_type,
@@ -380,7 +365,7 @@ def fire_hooks(
 ) -> None:
     """High-level entry: load → match → build payload → fire post-hooks."""
     hooks = load_hooks(hooks_path if hooks_path is not None else DEFAULT_HOOKS_PATH)
-    matched = match_hooks(hooks, event, HookTiming.POST, workspace_name)
+    matched = match_hooks(hooks, event, workspace_name)
     if not matched:
         return
 

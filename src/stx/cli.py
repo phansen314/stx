@@ -1445,19 +1445,17 @@ def cmd_config_del(
 
 
 def cmd_hook_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunContext) -> CmdResult:
-    from .hooks import DEFAULT_HOOKS_PATH, HookEvent, HookTiming, load_hooks, validate_hooks_config
+    from .hooks import DEFAULT_HOOKS_PATH, HookEvent, load_hooks, validate_hooks_config
 
     hooks_path = Path(args.path) if args.path else DEFAULT_HOOKS_PATH
     try:
         hooks = load_hooks(hooks_path)
     except ValueError as exc:
         errors = validate_hooks_config(hooks_path)
-        if errors:
-            detail = "\n".join(f"  {e}" for e in errors)
-            raise ValueError(
-                f"hooks config invalid ({len(errors)} error(s)) — run 'stx hook validate' for details:\n{detail}"
-            ) from exc
-        raise
+        detail = "\n".join(f"  {e}" for e in errors) if errors else f"  {exc}"
+        raise ValueError(
+            f"hooks config invalid ({len(errors)} error(s)) — run 'stx hook validate' for details:\n{detail}"
+        ) from exc
 
     if args.event is not None:
         try:
@@ -1468,9 +1466,6 @@ def cmd_hook_ls(conn: sqlite3.Connection, args: argparse.Namespace, ctx: RunCont
                 f"invalid event '{args.event}'. Valid values: {valid}"
             ) from exc
         hooks = tuple(h for h in hooks if h.event == event)
-    if args.timing is not None:
-        timing = HookTiming(args.timing)
-        hooks = tuple(h for h in hooks if h.timing == timing)
     if args.workspace_filter is not None:
         hooks = tuple(h for h in hooks if h.workspace == args.workspace_filter)
     if args.globals_only:
@@ -2078,9 +2073,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_hook_ls.add_argument(
         "--event", default=None, help="filter by event name (e.g. task.created)"
-    )
-    p_hook_ls.add_argument(
-        "--timing", choices=["post"], default=None, help="filter by timing"
     )
     p_hook_ls.add_argument(
         "--path",

@@ -3168,7 +3168,6 @@ class TestHookLs:
         )
         out, _ = cli("hook", "ls", "--path", str(hooks_file))
         assert "[task.created]" in out
-        assert "[post]" in out
         assert "[name='greet']" in out
         assert "echo hi" in out
 
@@ -3190,16 +3189,6 @@ class TestHookLs:
         assert "command=\"a\"" not in out  # raw toml not echoed
         assert "[task.created]" in out
         assert "[task.archived]" not in out
-
-    def test_filter_timing(self, cli, hooks_file):
-        _write_hooks_toml(
-            hooks_file,
-            '[[hooks]]\nevent = "task.created"\ntiming = "post"\ncommand = "post-cmd"\n'
-            '[[hooks]]\nevent = "task.archived"\ntiming = "post"\ncommand = "archive-cmd"\n',
-        )
-        out, _ = cli("hook", "ls", "--path", str(hooks_file), "--timing", "post")
-        assert "post-cmd" in out
-        assert "archive-cmd" in out
 
     def test_pre_timing_config_error(self, cli, hooks_file):
         _write_hooks_toml(
@@ -3271,7 +3260,7 @@ class TestHookLs:
         assert data["ok"] is True
         assert len(data["data"]) == 1
         assert data["data"][0]["event"] == "task.created"
-        assert data["data"][0]["timing"] == "post"
+        assert "timing" not in data["data"][0]
 
 
 class TestHookEvents:

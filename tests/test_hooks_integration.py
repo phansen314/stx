@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from stx import service
-from stx.hooks import HookEvent, HookTiming
+from stx.hooks import HookEvent
 from stx.service import _determine_task_events
 
 
@@ -391,7 +391,7 @@ class TestIdempotencySkips:
 
 def _capture(calls: list) -> object:
     def fake(event, **kw):
-        calls.append((event, HookTiming.POST, kw))
+        calls.append((event, kw))
     return fake
 
 
@@ -400,18 +400,18 @@ class TestWorkspaceHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             ws = service.create_workspace(conn, "ws1")
-        post = [c for c in calls if c[0] == HookEvent.WORKSPACE_CREATED and c[1] == HookTiming.POST]
-        assert len(post) == 1 and post[0][2]["entity"] == ws
-        assert post[0][2]["proposed"]["name"] == "ws1"
+        post = [c for c in calls if c[0] == HookEvent.WORKSPACE_CREATED]
+        assert len(post) == 1 and post[0][1]["entity"] == ws
+        assert post[0][1]["proposed"]["name"] == "ws1"
 
     def test_update_fires_updated_with_changes(self, conn: sqlite3.Connection) -> None:
         ws = service.create_workspace(conn, "ws1")
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.update_workspace(conn, ws.id, {"name": "ws2"}, "test")
-        post = [c for c in calls if c[0] == HookEvent.WORKSPACE_UPDATED and c[1] == HookTiming.POST]
+        post = [c for c in calls if c[0] == HookEvent.WORKSPACE_UPDATED]
         assert len(post) == 1
-        assert post[0][2]["changes"]["name"] == {"old": "ws1", "new": "ws2"}
+        assert post[0][1]["changes"]["name"] == {"old": "ws1", "new": "ws2"}
 
     def test_update_no_op_fires_nothing(self, conn: sqlite3.Connection) -> None:
         ws = service.create_workspace(conn, "ws1")
@@ -425,7 +425,7 @@ class TestWorkspaceHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_workspace(conn, ws.id, source="test")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.WORKSPACE_ARCHIVED) == 1
 
 
@@ -435,25 +435,25 @@ class TestStatusHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             st = service.create_status(conn, ws.id, "todo")
-        post = [c for c in calls if c[0] == HookEvent.STATUS_CREATED and c[1] == HookTiming.POST]
-        assert len(post) == 1 and post[0][2]["entity"].id == st.id
-        assert post[0][2]["proposed"]["name"] == "todo"
+        post = [c for c in calls if c[0] == HookEvent.STATUS_CREATED]
+        assert len(post) == 1 and post[0][1]["entity"].id == st.id
+        assert post[0][1]["proposed"]["name"] == "todo"
 
     def test_update_fires_with_changes(self, conn: sqlite3.Connection) -> None:
         ws, st = _ws_status(conn)
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.update_status(conn, st.id, {"name": "backlog"}, "test")
-        post = [c for c in calls if c[0] == HookEvent.STATUS_UPDATED and c[1] == HookTiming.POST]
+        post = [c for c in calls if c[0] == HookEvent.STATUS_UPDATED]
         assert len(post) == 1
-        assert post[0][2]["changes"]["name"]["new"] == "backlog"
+        assert post[0][1]["changes"]["name"]["new"] == "backlog"
 
     def test_archive_fires(self, conn: sqlite3.Connection) -> None:
         ws, st = _ws_status(conn)
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.archive_status(conn, st.id, source="test")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.STATUS_ARCHIVED) == 1
 
 
@@ -463,9 +463,9 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             g = service.create_group(conn, ws.id, "grp", description="d")
-        post = [c for c in calls if c[0] == HookEvent.GROUP_CREATED and c[1] == HookTiming.POST]
-        assert len(post) == 1 and post[0][2]["entity"].id == g.id
-        assert post[0][2]["proposed"]["title"] == "grp"
+        post = [c for c in calls if c[0] == HookEvent.GROUP_CREATED]
+        assert len(post) == 1 and post[0][1]["entity"].id == g.id
+        assert post[0][1]["proposed"]["title"] == "grp"
 
     def test_update_fires_with_changes(self, conn: sqlite3.Connection) -> None:
         ws, _ = _ws_status(conn)
@@ -473,9 +473,9 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.update_group(conn, g.id, {"title": "grp2"}, "test")
-        post = [c for c in calls if c[0] == HookEvent.GROUP_UPDATED and c[1] == HookTiming.POST]
+        post = [c for c in calls if c[0] == HookEvent.GROUP_UPDATED]
         assert len(post) == 1
-        assert post[0][2]["changes"]["title"]["new"] == "grp2"
+        assert post[0][1]["changes"]["title"]["new"] == "grp2"
 
     def test_cascade_archive_fires(self, conn: sqlite3.Connection) -> None:
         ws, _ = _ws_status(conn)
@@ -483,7 +483,7 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_group(conn, g.id, source="test")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.GROUP_ARCHIVED) == 1
 
     def test_cascade_archive_skips_per_task_hooks(self, conn: sqlite3.Connection) -> None:
@@ -495,7 +495,7 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_group(conn, g.id, source="test")
-        assert not any(e == HookEvent.TASK_ARCHIVED for e, _, _ in calls)
+        assert not any(e == HookEvent.TASK_ARCHIVED for e, _ in calls)
 
     def test_meta_set_fires(self, conn: sqlite3.Connection) -> None:
         ws, _ = _ws_status(conn)
@@ -503,7 +503,7 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.set_group_meta(conn, g.id, "tag", "v")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.GROUP_META_SET) == 1
 
     def test_meta_remove_fires(self, conn: sqlite3.Connection) -> None:
@@ -513,7 +513,7 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.remove_group_meta(conn, g.id, "tag")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.GROUP_META_REMOVED) == 1
 
     def test_replace_metadata_fires_per_key(self, conn: sqlite3.Connection) -> None:
@@ -524,7 +524,7 @@ class TestGroupHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.replace_group_metadata(conn, g.id, {"a": "new", "c": "added"}, source="test")
-        events_by_key = {(e, kw.get("meta_key")) for e, t, kw in calls if t == HookTiming.POST}
+        events_by_key = {(e, kw.get("meta_key")) for e, kw in calls}
         assert (HookEvent.GROUP_META_SET, "a") in events_by_key
         assert (HookEvent.GROUP_META_SET, "c") in events_by_key
         assert (HookEvent.GROUP_META_REMOVED, "b") in events_by_key
@@ -536,7 +536,7 @@ class TestWorkspaceMetaHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.set_workspace_meta(conn, ws.id, "tag", "v")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.WORKSPACE_META_SET) == 1
 
     def test_remove_meta_fires(self, conn: sqlite3.Connection) -> None:
@@ -545,7 +545,7 @@ class TestWorkspaceMetaHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.remove_workspace_meta(conn, ws.id, "tag")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.WORKSPACE_META_REMOVED) == 1
 
 
@@ -557,11 +557,11 @@ class TestEdgeHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.add_edge(conn, ("task", t1.id), ("task", t2.id), kind="blocks")
-        post = [c for c in calls if c[0] == HookEvent.EDGE_CREATED and c[1] == HookTiming.POST]
+        post = [c for c in calls if c[0] == HookEvent.EDGE_CREATED]
         assert len(post) == 1
-        assert post[0][2]["entity"]["from_id"] == t1.id
-        assert post[0][2]["entity"]["to_id"] == t2.id
-        assert post[0][2]["entity"]["archived"] is False
+        assert post[0][1]["entity"]["from_id"] == t1.id
+        assert post[0][1]["entity"]["to_id"] == t2.id
+        assert post[0][1]["entity"]["archived"] is False
 
     def test_archive_fires(self, conn: sqlite3.Connection) -> None:
         ws, st = _ws_status(conn)
@@ -571,7 +571,7 @@ class TestEdgeHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.archive_edge(conn, ("task", t1.id), ("task", t2.id), kind="blocks")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.EDGE_ARCHIVED) == 1
 
     def test_update_fires_on_acyclic_flip(self, conn: sqlite3.Connection) -> None:
@@ -585,7 +585,7 @@ class TestEdgeHooks:
                 conn, ("task", t1.id), ("task", t2.id),
                 kind="informs", changes={"acyclic": True}, source="test",
             )
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.EDGE_UPDATED) == 1
 
     def test_update_noop_skips_hooks(self, conn: sqlite3.Connection) -> None:
@@ -609,7 +609,7 @@ class TestEdgeHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.set_edge_meta(conn, "task", t1.id, "task", t2.id, "blocks", "tag", "v")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.EDGE_META_SET) == 1
 
     def test_meta_remove_fires(self, conn: sqlite3.Connection) -> None:
@@ -621,7 +621,7 @@ class TestEdgeHooks:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.remove_edge_meta(conn, "task", t1.id, "task", t2.id, "blocks", "tag")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         assert events.count(HookEvent.EDGE_META_REMOVED) == 1
 
     def test_replace_metadata_fires_per_key(self, conn: sqlite3.Connection) -> None:
@@ -637,10 +637,25 @@ class TestEdgeHooks:
                 conn, "task", t1.id, "task", t2.id, "blocks",
                 {"a": "new", "c": "added"}, source="test",
             )
-        events_by_key = {(e, kw.get("meta_key")) for e, t, kw in calls if t == HookTiming.POST}
+        events_by_key = {(e, kw.get("meta_key")) for e, kw in calls}
         assert (HookEvent.EDGE_META_SET, "a") in events_by_key
         assert (HookEvent.EDGE_META_SET, "c") in events_by_key
         assert (HookEvent.EDGE_META_REMOVED, "b") in events_by_key
+
+    def test_revival_fires_edge_updated_not_created(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        t1 = _task(conn, ws.id, st.id, "t1")
+        t2 = _task(conn, ws.id, st.id, "t2")
+        service.add_edge(conn, ("task", t1.id), ("task", t2.id), kind="blocks")
+        service.archive_edge(conn, ("task", t1.id), ("task", t2.id), kind="blocks")
+        calls: list = []
+        with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
+            service.add_edge(conn, ("task", t1.id), ("task", t2.id), kind="blocks")
+        events = [e for e, _ in calls]
+        assert HookEvent.EDGE_UPDATED in events
+        assert HookEvent.EDGE_CREATED not in events
+        updated = [kw for e, kw in calls if e == HookEvent.EDGE_UPDATED]
+        assert updated[0]["changes"]["archived"] == {"old": True, "new": False}
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +673,7 @@ class TestCascadeArchiveWorkspaceCarveOut:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_workspace(conn, ws.id, source="test")
-        events = [e for e, _, _ in calls]
+        events = [e for e, _ in calls]
         # Only WORKSPACE_ARCHIVED (post only); no per-entity cascade hooks.
         assert HookEvent.TASK_ARCHIVED not in events
         assert HookEvent.GROUP_ARCHIVED not in events
@@ -675,9 +690,9 @@ class TestIdempotentArchivePayload:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_workspace(conn, ws.id, source="test")
-        post_calls = [c for c in calls if c[0] == HookEvent.WORKSPACE_ARCHIVED and c[1] == HookTiming.POST]
+        post_calls = [c for c in calls if c[0] == HookEvent.WORKSPACE_ARCHIVED]
         assert post_calls, "expected POST hook on repeat archive"
-        assert post_calls[0][2]["changes"]["archived"]["old"] is True
+        assert post_calls[0][1]["changes"]["archived"]["old"] is True
 
     def test_group_second_archive_reports_old_true(
         self, conn: sqlite3.Connection
@@ -688,9 +703,9 @@ class TestIdempotentArchivePayload:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.cascade_archive_group(conn, g.id, source="test")
-        post_calls = [c for c in calls if c[0] == HookEvent.GROUP_ARCHIVED and c[1] == HookTiming.POST]
+        post_calls = [c for c in calls if c[0] == HookEvent.GROUP_ARCHIVED]
         assert post_calls
-        assert post_calls[0][2]["changes"]["archived"]["old"] is True
+        assert post_calls[0][1]["changes"]["archived"]["old"] is True
 
     def test_status_second_archive_reports_old_true(
         self, conn: sqlite3.Connection
@@ -700,9 +715,9 @@ class TestIdempotentArchivePayload:
         calls: list = []
         with patch("stx.service.fire_hooks", side_effect=_capture(calls)):
             service.archive_status(conn, st.id, source="test")
-        post_calls = [c for c in calls if c[0] == HookEvent.STATUS_ARCHIVED and c[1] == HookTiming.POST]
+        post_calls = [c for c in calls if c[0] == HookEvent.STATUS_ARCHIVED]
         assert post_calls
-        assert post_calls[0][2]["changes"]["archived"]["old"] is True
+        assert post_calls[0][1]["changes"]["archived"]["old"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -722,16 +737,16 @@ class TestBulkArchivePayloads:
         calls: list[tuple] = []
 
         def fake_fire(event, **kwargs):
-            calls.append((event, HookTiming.POST, kwargs))
+            calls.append((event, kwargs))
 
         with patch("stx.service.fire_hooks", side_effect=fake_fire):
             service.archive_status(conn, st.id, force=True, source="test")
 
-        status_calls = [(e, t, k) for e, t, k in calls if e == HookEvent.STATUS_ARCHIVED]
+        status_calls = [(e, k) for e, k in calls if e == HookEvent.STATUS_ARCHIVED]
         assert len(status_calls) == 1
-        for _, _, kwargs in status_calls:
+        for _, kwargs in status_calls:
             assert sorted(kwargs["archived_task_ids"]) == sorted([t1.id, t2.id])
-        task_archived = [e for e, _, _ in calls if e == HookEvent.TASK_ARCHIVED]
+        task_archived = [e for e, _ in calls if e == HookEvent.TASK_ARCHIVED]
         assert task_archived == []
 
     def test_archive_status_reassign_carries_reassigned_task_ids(
@@ -745,17 +760,17 @@ class TestBulkArchivePayloads:
         calls: list[tuple] = []
 
         def fake_fire(event, **kwargs):
-            calls.append((event, HookTiming.POST, kwargs))
+            calls.append((event, kwargs))
 
         with patch("stx.service.fire_hooks", side_effect=fake_fire):
             service.archive_status(conn, src.id, reassign_to_status_id=dst.id, source="test")
 
-        status_calls = [(e, t, k) for e, t, k in calls if e == HookEvent.STATUS_ARCHIVED]
+        status_calls = [(e, k) for e, k in calls if e == HookEvent.STATUS_ARCHIVED]
         assert len(status_calls) == 1
-        for _, _, kwargs in status_calls:
+        for _, kwargs in status_calls:
             assert sorted(kwargs["reassigned_task_ids"]) == sorted([t1.id, t2.id])
             assert kwargs["reassigned_to"] == dst.id
-        task_moved = [e for e, _, _ in calls if e == HookEvent.TASK_MOVED]
+        task_moved = [e for e, _ in calls if e == HookEvent.TASK_MOVED]
         assert task_moved == []
 
     def test_cascade_archive_group_carries_id_arrays(
@@ -771,17 +786,17 @@ class TestBulkArchivePayloads:
         calls: list[tuple] = []
 
         def fake_fire(event, **kwargs):
-            calls.append((event, HookTiming.POST, kwargs))
+            calls.append((event, kwargs))
 
         with patch("stx.service.fire_hooks", side_effect=fake_fire):
             service.cascade_archive_group(conn, parent.id, source="test")
 
-        group_calls = [(e, t, k) for e, t, k in calls if e == HookEvent.GROUP_ARCHIVED]
+        group_calls = [(e, k) for e, k in calls if e == HookEvent.GROUP_ARCHIVED]
         assert len(group_calls) == 1
-        for _, _, kwargs in group_calls:
+        for _, kwargs in group_calls:
             assert sorted(kwargs["archived_task_ids"]) == sorted([t1.id, t2.id])
             assert kwargs["archived_group_ids"] == [child.id]
-        task_archived = [e for e, _, _ in calls if e == HookEvent.TASK_ARCHIVED]
+        task_archived = [e for e, _ in calls if e == HookEvent.TASK_ARCHIVED]
         assert task_archived == []
 
     def test_cascade_archive_workspace_carries_id_arrays(
@@ -794,18 +809,18 @@ class TestBulkArchivePayloads:
         calls: list[tuple] = []
 
         def fake_fire(event, **kwargs):
-            calls.append((event, HookTiming.POST, kwargs))
+            calls.append((event, kwargs))
 
         with patch("stx.service.fire_hooks", side_effect=fake_fire):
             service.cascade_archive_workspace(conn, ws.id, source="test")
 
-        ws_calls = [(e, t, k) for e, t, k in calls if e == HookEvent.WORKSPACE_ARCHIVED]
+        ws_calls = [(e, k) for e, k in calls if e == HookEvent.WORKSPACE_ARCHIVED]
         assert len(ws_calls) == 1
-        for _, _, kwargs in ws_calls:
+        for _, kwargs in ws_calls:
             assert kwargs["archived_task_ids"] == [t1.id]
             assert kwargs["archived_group_ids"] == [grp.id]
             assert kwargs["archived_status_ids"] == [st.id]
-        task_archived = [e for e, _, _ in calls if e == HookEvent.TASK_ARCHIVED]
+        task_archived = [e for e, _ in calls if e == HookEvent.TASK_ARCHIVED]
         assert task_archived == []
 
     def test_archive_status_no_tasks_has_no_extras(
@@ -815,11 +830,11 @@ class TestBulkArchivePayloads:
         calls: list[tuple] = []
 
         def fake_fire(event, **kwargs):
-            calls.append((event, HookTiming.POST, kwargs))
+            calls.append((event, kwargs))
 
         with patch("stx.service.fire_hooks", side_effect=fake_fire):
             service.archive_status(conn, st.id, force=True, source="test")
 
-        for _, _, kwargs in calls:
+        for _, kwargs in calls:
             assert "archived_task_ids" not in kwargs
             assert "reassigned_task_ids" not in kwargs

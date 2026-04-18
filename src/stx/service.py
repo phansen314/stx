@@ -1986,13 +1986,27 @@ def add_edge(
         "acyclic": bool(acyclic_int), "metadata": {},
         "archived": False, "version": 0,
     }
-    fire_hooks(
-        HookEvent.EDGE_CREATED,
-        workspace_id=from_ws, workspace_name=_workspace_name(conn, from_ws),
-        entity_type="edge", entity_id=from_id,
-        entity=post_entity,
-        proposed=proposed_edge,
-    )
+    if archived_row is not None:
+        # Revival of an archived edge — not a creation, emit an update.
+        revival_changes: dict = {"archived": {"old": True, "new": False}}
+        old_acyclic = archived_row[1]
+        if old_acyclic != acyclic_int:
+            revival_changes["acyclic"] = {"old": bool(old_acyclic), "new": bool(acyclic_int)}
+        fire_hooks(
+            HookEvent.EDGE_UPDATED,
+            workspace_id=from_ws, workspace_name=_workspace_name(conn, from_ws),
+            entity_type="edge", entity_id=from_id,
+            entity=post_entity,
+            changes=revival_changes,
+        )
+    else:
+        fire_hooks(
+            HookEvent.EDGE_CREATED,
+            workspace_id=from_ws, workspace_name=_workspace_name(conn, from_ws),
+            entity_type="edge", entity_id=from_id,
+            entity=post_entity,
+            proposed=proposed_edge,
+        )
     return kind
 
 

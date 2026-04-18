@@ -79,7 +79,6 @@ Every payload carries these top-level fields:
 | Field | Type | Notes |
 |---|---|---|
 | `event` | string | One of the 29 event names above. |
-| `timing` | `"post"` | Always `"post"`. |
 | `workspace_id` | int \| null | |
 | `workspace_name` | string \| null | |
 | `entity_type` | `"task"` \| `"group"` \| `"workspace"` \| `"status"` \| `"edge"` | |
@@ -111,7 +110,6 @@ Each hook is a TOML table:
 ```toml
 [[hooks]]
 event = "task.created"       # required — exact event name
-timing = "post"              # optional — only valid value; omit or set "post"
 command = "shell command"    # required — any shell; receives payload on stdin
 name = "notify-creator"      # optional — shown by `stx hook ls`; handy for logs
 workspace = "work"           # optional — restricts to one workspace; omit for global
@@ -133,7 +131,6 @@ Polished, working examples. Copy-paste into `~/.config/stx/hooks.toml` and run `
 ```toml
 [[hooks]]
 event = "task.done"
-timing = "post"
 name = "notify-done"
 command = '''jq -r '"✓ " + .entity.title + " done"' | xargs -I{} notify-send "stx" "{}"'''
 ```
@@ -157,7 +154,6 @@ preconditions are met.
 ```toml
 [[hooks]]
 event = "task.moved"
-timing = "post"
 name = "slack-review"
 command = '''
 read payload
@@ -176,13 +172,11 @@ fi
 ```toml
 [[hooks]]
 event = "task.updated"
-timing = "post"
 name = "audit-log"
 command = "jq -c '{ts: now|strftime(\"%FT%T\"), event, entity: .entity.title, changes}' >> ~/.local/share/stx/activity.jsonl"
 
 [[hooks]]
 event = "task.archived"
-timing = "post"
 name = "audit-log"
 command = "jq -c '{ts: now|strftime(\"%FT%T\"), event, entity: .entity.title}' >> ~/.local/share/stx/activity.jsonl"
 ```
@@ -192,7 +186,6 @@ command = "jq -c '{ts: now|strftime(\"%FT%T\"), event, entity: .entity.title}' >
 ```toml
 [[hooks]]
 event = "group.updated"
-timing = "post"
 name = "vault-sync"
 command = '''
 read payload
@@ -213,7 +206,6 @@ To *observe* which deprecated kinds are being created after the fact:
 ```toml
 [[hooks]]
 event = "edge.created"
-timing = "post"
 name = "log-legacy-edges"
 command = '''
 read payload
@@ -229,7 +221,6 @@ fi
 ```toml
 [[hooks]]
 event = "task.transferred"
-timing = "post"
 name = "transfer-notify"
 command = '''
 read payload
@@ -245,7 +236,6 @@ notify-send "stx" "$title: $src → $tgt"
 ```toml
 [[hooks]]
 event = "task.meta_set"
-timing = "post"
 name = "pr-link-notify"
 command = '''
 read payload
@@ -264,7 +254,6 @@ fi
 ```toml
 [[hooks]]
 event = "group.archived"
-timing = "post"
 name = "cleanup-bulk-archived"
 command = '''
 read payload
@@ -280,7 +269,6 @@ done
 ```toml
 [[hooks]]
 event = "status.archived"
-timing = "post"
 name = "notify-reassigned"
 command = '''
 read payload
@@ -296,7 +284,6 @@ fi
 ```toml
 [[hooks]]
 event = "task.done"
-timing = "post"
 name = "confetti"
 command = "echo 🎉"
 enabled = false
@@ -306,7 +293,7 @@ enabled = false
 
 ## Gotchas
 
-- **`timing = "pre"` is a config error.** Pre-hooks were removed in 0.17. stx hooks are post-only observers. Change `timing` to `"post"` or omit it (defaults to `"post"`). `stx hook validate` exits 4 with a migration hint.
+- **`timing` field is gone.** stx hooks are post-only observers — the `timing` field is no longer used and should be removed from your hooks.toml. `timing = "pre"` is still a config error with a migration hint; any other `timing` value is silently ignored.
 - **Hook isolation:** hooks never raise back to the caller — don't rely on them for control flow.
 - **Description truncation at 4KB** (`DESCRIPTION_MAX_BYTES`). Truncated payloads include `"description_truncated": true` on the entity so hooks can detect it.
 - **Recursive invocation:** a hook that runs `stx ...` inside itself will recursively fire more hooks with no depth limit. Avoid self-referential hooks.
@@ -336,7 +323,7 @@ stx hook ls --globals-only               # hooks without a workspace scope
 Hand-play a hook command without mutating the DB — pipe a synthetic payload into the command:
 
 ```bash
-echo '{"event":"task.done","timing":"post","entity":{"title":"test"}}' | \
+echo '{"event":"task.done","entity":{"title":"test"}}' | \
   jq -r '"✓ " + .entity.title + " done"'
 ```
 

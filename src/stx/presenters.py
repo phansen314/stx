@@ -339,7 +339,7 @@ def format_hook_list(hooks: tuple[HookConfig, ...]) -> str:
         return "no hooks"
     lines: list[str] = []
     for h in hooks:
-        parts = [f"[{h.event.value}]", f"[{h.timing.value}]"]
+        parts = [f"[{h.event.value}]"]
         if h.workspace is not None:
             parts.append(f"[workspace={h.workspace}]")
         if h.name is not None:

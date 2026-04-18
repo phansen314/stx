@@ -21,7 +21,6 @@ from stx.hooks import (
     EVENT_CATEGORIES,
     HookConfig,
     HookEvent,
-    HookTiming,
     _parse_hook_entry,
     _serialize_entity,
     build_payload,
@@ -46,7 +45,6 @@ def _write_hooks(tmp_path: Path, content: str) -> Path:
 
 def _minimal_hook(
     event: str = "task.created",
-    timing: str = "post",
     command: str = "echo hi",
     **kwargs: object,
 ) -> str:
@@ -56,7 +54,7 @@ def _minimal_hook(
             extra += f'\n{k} = "{v}"'
         elif isinstance(v, bool):
             extra += f"\n{k} = {str(v).lower()}"
-    return f'[[hooks]]\nevent = "{event}"\ntiming = "{timing}"\ncommand = "{command}"{extra}\n'
+    return f'[[hooks]]\nevent = "{event}"\ncommand = "{command}"{extra}\n'
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +79,6 @@ class TestLoadHooks:
         hooks = load_hooks(p)
         assert len(hooks) == 1
         assert hooks[0].event == HookEvent.TASK_CREATED
-        assert hooks[0].timing == HookTiming.POST
         assert hooks[0].command == "echo hi"
 
     def test_defaults_applied(self, tmp_path: Path) -> None:
@@ -101,8 +98,8 @@ class TestLoadHooks:
         assert h.enabled is False
 
     def test_multiple_hooks_preserve_order(self, tmp_path: Path) -> None:
-        content = _minimal_hook("task.created", "post", "first") + \
-                  _minimal_hook("task.updated", "post", "second")
+        content = _minimal_hook("task.created", "first") + \
+                  _minimal_hook("task.updated", "second")
         p = _write_hooks(tmp_path, content)
         hooks = load_hooks(p)
         assert len(hooks) == 2
@@ -110,33 +107,33 @@ class TestLoadHooks:
         assert hooks[1].command == "second"
 
     def test_pre_timing_raises_migration_error(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, _minimal_hook(timing="pre"))
+        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ntiming = "pre"\ncommand = "x"\n')
         with pytest.raises(ValueError, match="timing='pre' is no longer supported"):
             load_hooks(p)
 
+    def test_timing_absent_is_valid(self, tmp_path: Path) -> None:
+        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ncommand = "x"\n')
+        hooks = load_hooks(p)
+        assert len(hooks) == 1
+
+    def test_timing_post_silently_ignored(self, tmp_path: Path) -> None:
+        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ntiming = "post"\ncommand = "x"\n')
+        hooks = load_hooks(p)
+        assert len(hooks) == 1
+
     def test_missing_event_raises(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, '[[hooks]]\ntiming = "post"\ncommand = "x"\n')
+        p = _write_hooks(tmp_path, '[[hooks]]\ncommand = "x"\n')
         with pytest.raises(ValueError, match="missing required field 'event'"):
             load_hooks(p)
 
-    def test_missing_timing_raises(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ncommand = "x"\n')
-        with pytest.raises(ValueError, match="missing required field 'timing'"):
-            load_hooks(p)
-
     def test_missing_command_raises(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ntiming = "post"\n')
+        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\n')
         with pytest.raises(ValueError, match="missing required field 'command'"):
             load_hooks(p)
 
     def test_invalid_event_raises(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "bogus.event"\ntiming = "post"\ncommand = "x"\n')
+        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "bogus.event"\ncommand = "x"\n')
         with pytest.raises(ValueError, match="invalid event 'bogus.event'"):
-            load_hooks(p)
-
-    def test_invalid_timing_raises(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, '[[hooks]]\nevent = "task.created"\ntiming = "maybe"\ncommand = "x"\n')
-        with pytest.raises(ValueError, match="invalid timing 'maybe'"):
             load_hooks(p)
 
     def test_explicit_path_arg(self, tmp_path: Path) -> None:
@@ -147,7 +144,7 @@ class TestLoadHooks:
 
     def test_aggregates_multiple_errors(self, tmp_path: Path) -> None:
         content = (
-            '[[hooks]]\ntiming = "post"\ncommand = "x"\n'
+            '[[hooks]]\ncommand = "x"\n'
             '[[hooks]]\nevent = "task.created"\ncommand = "x"\n'
         )
         p = _write_hooks(tmp_path, content)
@@ -166,7 +163,7 @@ class TestLoadHooks:
         self, tmp_path: Path, toml_line: str, field_name: str
     ) -> None:
         content = (
-            f'[[hooks]]\nevent = "task.created"\ntiming = "post"\n'
+            f'[[hooks]]\nevent = "task.created"\n'
             f'command = "x"\n{toml_line}\n'
         )
         p = _write_hooks(tmp_path, content)
@@ -190,8 +187,8 @@ class TestValidateHooksConfig:
 
     def test_multiple_errors_all_returned(self, tmp_path: Path) -> None:
         content = (
-            '[[hooks]]\ntiming = "post"\ncommand = "x"\n'
-            '[[hooks]]\nevent = "task.created"\ncommand = "x"\n'
+            '[[hooks]]\ncommand = "x"\n'
+            '[[hooks]]\nevent = "bogus.event"\ncommand = "x"\n'
         )
         p = _write_hooks(tmp_path, content)
         errors = validate_hooks_config(p)
@@ -205,39 +202,39 @@ class TestValidateHooksConfig:
 class TestMatchHooks:
     def _hooks(self) -> tuple[HookConfig, ...]:
         return (
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "global-post"),
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "ws-a-post", workspace="ws-a"),
-            HookConfig(HookEvent.TASK_UPDATED, HookTiming.POST, "update-post"),
-            HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "disabled", enabled=False),
+            HookConfig(HookEvent.TASK_CREATED, "global-post"),
+            HookConfig(HookEvent.TASK_CREATED, "ws-a-post", workspace="ws-a"),
+            HookConfig(HookEvent.TASK_UPDATED, "update-post"),
+            HookConfig(HookEvent.TASK_CREATED, "disabled", enabled=False),
         )
 
     def test_filters_by_event(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_UPDATED, HookTiming.POST, None)
+        result = match_hooks(self._hooks(), HookEvent.TASK_UPDATED, None)
         assert len(result) == 1
         assert result[0].command == "update-post"
 
     def test_workspace_scoped_matches_named_workspace(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.POST, "ws-a")
+        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, "ws-a")
         commands = [h.command for h in result]
         assert "ws-a-post" in commands
 
     def test_global_matches_any_workspace(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.POST, "other-ws")
+        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, "other-ws")
         commands = [h.command for h in result]
         assert "global-post" in commands
         assert "ws-a-post" not in commands
 
     def test_disabled_hooks_skipped(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.POST, None)
+        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, None)
         assert all(h.command != "disabled" for h in result)
 
     def test_globals_before_workspace_scoped(self) -> None:
-        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, HookTiming.POST, "ws-a")
+        result = match_hooks(self._hooks(), HookEvent.TASK_CREATED, "ws-a")
         commands = [h.command for h in result]
         assert commands.index("global-post") < commands.index("ws-a-post")
 
     def test_empty_hooks_returns_empty(self) -> None:
-        assert match_hooks((), HookEvent.TASK_CREATED, HookTiming.POST, None) == ()
+        assert match_hooks((), HookEvent.TASK_CREATED, None) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +311,7 @@ class TestBuildPayload:
     def test_created_envelope(self) -> None:
         p = self._created_payload()
         assert p["event"] == "task.created"
-        assert p["timing"] == "post"
+        assert "timing" not in p
         assert p["workspace_id"] == 1
         assert p["workspace_name"] == "ws"
         assert p["entity_type"] == "task"
@@ -422,7 +419,7 @@ class TestSerializeEntity:
 
 class TestFirePostHooks:
     def _hook(self) -> HookConfig:
-        return HookConfig(HookEvent.TASK_CREATED, HookTiming.POST, "echo")
+        return HookConfig(HookEvent.TASK_CREATED, "echo")
 
     def test_popen_called_with_shell_true(self) -> None:
         mock_proc = MagicMock()
@@ -462,7 +459,7 @@ class TestFireHooks:
         mock_post.assert_not_called()
 
     def test_matching_post_hooks_calls_fire_post_hooks(self, tmp_path: Path) -> None:
-        p = _write_hooks(tmp_path, _minimal_hook(timing="post"))
+        p = _write_hooks(tmp_path, _minimal_hook())
         with patch("stx.hooks.fire_post_hooks") as mock_post:
             fire_hooks(
                 HookEvent.TASK_CREATED,

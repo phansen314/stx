@@ -116,10 +116,9 @@
     }
   },
   "type": "object",
-  "required": ["event", "timing", "workspace_id", "workspace_name", "entity_type", "entity_id"],
+  "required": ["event", "workspace_id", "workspace_name", "entity_type", "entity_id"],
   "properties": {
     "event": { "$ref": "#/$defs/eventEnum" },
-    "timing": { "type": "string", "enum": ["post"] },
     "workspace_id": { "type": ["integer", "null"] },
     "workspace_name": { "type": ["string", "null"] },
     "entity_type": { "type": "string", "enum": ["task", "group", "workspace", "status", "edge"] },
