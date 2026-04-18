@@ -64,12 +64,14 @@ _EDGE_UPDATABLE: frozenset[str] = frozenset({"acyclic"})
 _TASK_COLUMNS_NO_DESC = (
     "id, workspace_id, title, status_id, priority, due_date, "
     "archived, created_at, start_date, finish_date, group_id, "
-    "metadata, done, version"
+    "metadata, done, version, "
+    "(description IS NOT NULL) AS has_description"
 )
 
 _GROUP_COLUMNS_NO_DESC = (
     "id, workspace_id, title, parent_id, archived, created_at, "
-    "metadata, version"
+    "metadata, version, "
+    "(description IS NOT NULL) AS has_description"
 )
 
 

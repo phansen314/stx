@@ -15,6 +15,7 @@ from helpers import (
 
 from stx.connection import read_schema, transaction
 from stx.mappers import (
+    DESCRIPTION_NOT_LOADED,
     group_to_detail,
     group_to_ref,
     row_to_journal_entry,
@@ -25,6 +26,7 @@ from stx.mappers import (
     task_to_detail,
     task_to_list_item,
 )
+from stx.repository import _TASK_COLUMNS_NO_DESC, _GROUP_COLUMNS_NO_DESC
 from stx.models import (
     EntityType,
     Group,
@@ -615,3 +617,67 @@ class TestRowToTaskMetadata:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone()
         task = row_to_task(row)
         assert task.metadata == {}
+
+
+# ---- Bulk column constant drift tests ----
+
+
+def _parse_column_constant(constant: str) -> set[str]:
+    """Extract real column names from a column constant, ignoring computed expressions."""
+    cols = set()
+    for part in constant.split(","):
+        part = part.strip()
+        if not part or " AS " in part or "(" in part:
+            continue
+        cols.add(part)
+    return cols
+
+
+class TestBulkColumnConstants:
+    def test_task_columns_no_desc_matches_schema(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "tasks")
+        expected = schema_cols - {"description"}
+        actual = _parse_column_constant(_TASK_COLUMNS_NO_DESC)
+        assert actual == expected
+
+    def test_group_columns_no_desc_matches_schema(self, conn: sqlite3.Connection) -> None:
+        schema_cols = _schema_columns(conn, "groups")
+        expected = schema_cols - {"description"}
+        actual = _parse_column_constant(_GROUP_COLUMNS_NO_DESC)
+        assert actual == expected
+
+
+# ---- Sentinel description tests ----
+
+
+class TestDescriptionSentinel:
+    def test_task_with_description_gets_sentinel(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            wid = insert_workspace(conn)
+            sid = insert_status(conn, wid)
+            tid = insert_task(conn, wid, "t", sid, description="hello")
+        row = conn.execute(
+            f"SELECT {_TASK_COLUMNS_NO_DESC} FROM tasks WHERE id = ?", (tid,)
+        ).fetchone()
+        task = row_to_task(row)
+        assert task.description == DESCRIPTION_NOT_LOADED
+
+    def test_task_without_description_gets_none(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            wid = insert_workspace(conn)
+            sid = insert_status(conn, wid)
+            tid = insert_task(conn, wid, "t", sid)
+        row = conn.execute(
+            f"SELECT {_TASK_COLUMNS_NO_DESC} FROM tasks WHERE id = ?", (tid,)
+        ).fetchone()
+        task = row_to_task(row)
+        assert task.description is None
+
+    def test_task_full_select_gets_real_description(self, conn: sqlite3.Connection) -> None:
+        with transaction(conn):
+            wid = insert_workspace(conn)
+            sid = insert_status(conn, wid)
+            tid = insert_task(conn, wid, "t", sid, description="hello")
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone()
+        task = row_to_task(row)
+        assert task.description == "hello"

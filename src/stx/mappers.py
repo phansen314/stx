@@ -25,6 +25,8 @@ from .service_models import (
 
 type Row = sqlite3.Row
 
+DESCRIPTION_NOT_LOADED = "--description not loaded--"
+
 
 # ---- DB row -> persisted model ----
 
@@ -52,13 +54,21 @@ def row_to_status(row: Row) -> Status:
     )
 
 
+def _resolve_description(row: Row, keys: list[str]) -> str | None:
+    if "description" in keys:
+        return row["description"]
+    if row["has_description"]:
+        return DESCRIPTION_NOT_LOADED
+    return None
+
+
 def row_to_task(row: Row) -> Task:
     keys = row.keys()
     return Task(
         id=row["id"],
         workspace_id=row["workspace_id"],
         title=row["title"],
-        description=row["description"] if "description" in keys else None,
+        description=_resolve_description(row, keys),
         status_id=row["status_id"],
         priority=row["priority"],
         due_date=row["due_date"],
@@ -79,7 +89,7 @@ def row_to_group(row: Row) -> Group:
         id=row["id"],
         workspace_id=row["workspace_id"],
         title=row["title"],
-        description=row["description"] if "description" in keys else None,
+        description=_resolve_description(row, keys),
         parent_id=row["parent_id"],
         archived=bool(row["archived"]),
         created_at=row["created_at"],

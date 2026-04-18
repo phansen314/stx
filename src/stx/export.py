@@ -41,19 +41,16 @@ def _render_statuses_section(
 def _render_groups_section(
     conn: sqlite3.Connection,
     workspace_id: int,
+    groups: tuple,
+    group_desc_map: dict[int, str],
 ) -> list[str]:
-    all_refs = service.list_groups_for_workspace(conn, workspace_id)
-    if not all_refs:
+    if not groups:
         return []
 
-    group_by_id = {g.id: g for g in all_refs}
+    group_by_id = {g.id: g for g in groups}
     children_map: dict[int | None, list] = {}
-    for g in all_refs:
+    for g in groups:
         children_map.setdefault(g.parent_id, []).append(g)
-
-    group_desc_map = repo.get_group_descriptions(
-        conn, workspace_id, include_archived=True,
-    )
 
     # Build group_id → task list from workspace tasks
     all_tasks_flat = service.list_tasks(conn, workspace_id, include_archived=True)
@@ -302,9 +299,10 @@ def export_markdown(conn: sqlite3.Connection) -> str:
             tasks_by_status.setdefault(t.status_id, []).append(t)
 
         task_desc_map = repo.get_task_descriptions(conn, bid)
+        group_desc_map = repo.get_group_descriptions(conn, bid)
 
         lines += _render_statuses_section(statuses, tasks_by_status)
-        lines += _render_groups_section(conn, bid)
+        lines += _render_groups_section(conn, bid, groups, group_desc_map)
         lines += _render_tasks_section(statuses, tasks_by_status)
         lines += _render_descriptions_section(tasks, task_desc_map)
         lines += _render_group_metadata_section(conn, bid)
