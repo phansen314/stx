@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Bulk queries exclude description column.** `list_tasks`, `list_tasks_filtered`,
+  `list_groups`, and other bulk repository functions now use explicit column lists
+  that omit the `description` TEXT column, reducing memory and I/O for `ls`, `next`,
+  kanban, and workspace context operations. Detail views (`show`, TUI edit modals)
+  and export still load descriptions on demand. Tasks/groups with descriptions but
+  loaded via bulk queries carry the sentinel `"--description not loaded--"` instead
+  of `null`, distinguishing "not loaded" from "no description" in JSON output.
+
 ## [0.16.0] — 2026-04-18
 
 ### Removed
