@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -335,3 +335,156 @@ class TestCliExitCode:
         with pytest.raises(SystemExit) as exc_info:
             main(["task", "create", "blocked-task", "--status", "todo"])
         assert exc_info.value.code == EXIT_HOOK_REJECTED
+
+
+# ---------------------------------------------------------------------------
+# Review-158 fix tests
+# ---------------------------------------------------------------------------
+
+class TestCreateTaskTerminalStatus:
+    """H2 fix: create into terminal status fires TASK_DONE post-hook."""
+
+    def test_terminal_status_create_fires_task_done_post(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        service.update_status(conn, st.id, {"is_terminal": True})
+        fired_post = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: (
+            fired_post.append(e) if t == HookTiming.POST else None
+        )):
+            service.create_task(conn, ws.id, "done-on-arrival", st.id)
+        assert HookEvent.TASK_CREATED in fired_post
+        assert HookEvent.TASK_DONE in fired_post
+
+    def test_non_terminal_status_create_no_task_done(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        fired_post = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: (
+            fired_post.append(e) if t == HookTiming.POST else None
+        )):
+            service.create_task(conn, ws.id, "normal", st.id)
+        assert HookEvent.TASK_CREATED in fired_post
+        assert HookEvent.TASK_DONE not in fired_post
+
+
+class TestUpdateTaskNoOpShortCircuit:
+    """H3 fix: update_task with no real delta skips hooks and DB write."""
+
+    def test_no_change_fires_no_hooks(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.update_task(conn, task.id, {"title": task.title}, "test")
+        assert fired == []
+
+    def test_no_change_preserves_version(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        result = service.update_task(conn, task.id, {"title": task.title}, "test")
+        assert result.version == task.version
+
+
+class TestReplaceMetadataNormalization:
+    """C1 fix: replace_task_metadata passes normalized keys into _replace_entity_metadata."""
+
+    def test_uppercase_input_keys_normalized_in_hook_events(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        fired_keys = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired_keys.append(kw["meta_key"])):
+            service.replace_task_metadata(conn, task.id, {"FOO": "bar"}, source="test")
+        assert "foo" in fired_keys
+        assert "FOO" not in fired_keys
+
+
+class TestWrapperEntryPoints:
+    """M3: thin wrapper functions still fire the expected hook events."""
+
+    def test_move_task_fires_moved(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        st2 = service.create_status(conn, ws.id, "done")
+        task = _task(conn, ws.id, st.id)
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.move_task(conn, task.id, st2.id, "test")
+        assert HookEvent.TASK_MOVED in fired
+
+    def test_mark_task_done_fires_done(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.mark_task_done(conn, task.id, source="test")
+        assert HookEvent.TASK_DONE in fired
+
+    def test_mark_task_undone_fires_undone(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        service.mark_task_done(conn, task.id, source="test")
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.mark_task_undone(conn, task.id, source="test")
+        assert HookEvent.TASK_UNDONE in fired
+
+    def test_assign_task_to_group_fires_assigned(self, conn: sqlite3.Connection) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        grp = service.create_group(conn, ws.id, "grp")
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.assign_task_to_group(conn, task.id, grp.id, source="test")
+        assert HookEvent.TASK_ASSIGNED in fired
+
+    def test_unassign_task_from_group_fires_unassigned(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        grp = service.create_group(conn, ws.id, "grp")
+        service.assign_task_to_group(conn, task.id, grp.id, source="test")
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.unassign_task_from_group(conn, task.id, source="test")
+        assert HookEvent.TASK_UNASSIGNED in fired
+
+
+class TestIdempotencySkips:
+    """M4: idempotent paths must not fire hooks."""
+
+    def test_mark_done_already_done_fires_no_hooks(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        service.mark_task_done(conn, task.id, source="test")
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.mark_task_done(conn, task.id, source="test")
+        assert fired == []
+
+    def test_mark_undone_not_done_fires_no_hooks(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            service.mark_task_undone(conn, task.id, source="test")
+        assert fired == []
+
+    def test_remove_meta_absent_key_fires_no_hooks(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ws, st = _ws_status(conn)
+        task = _task(conn, ws.id, st.id)
+        fired = []
+        with patch("stx.service.fire_hooks", side_effect=lambda e, t, **kw: fired.append(e)):
+            with pytest.raises(LookupError):
+                service.remove_task_meta(conn, task.id, "nonexistent")
+        assert fired == []

@@ -3,6 +3,17 @@
 Hook commands are executed via ``shell=True``. Anyone who can write
 ``~/.config/stx/hooks.toml`` can execute arbitrary code as the stx user;
 this is by design, matching the trust model of git hooks and Claude Code hooks.
+
+Concurrency note: pre-hooks receive a snapshot of the entity read *before* the
+write transaction opens, so the payload can be stale under concurrent writers.
+The write itself is protected by optimistic locking (expected_version / CAS), so
+conflicts still raise ConflictError — but a pre-hook veto may be silently skipped
+when the apparent delta collapses to nothing mid-flight. This is acceptable for
+the single-writer use case and documented here as a known limitation.
+
+Re-entrancy warning: a hook command that itself invokes ``stx`` will recursively
+fire more hooks. There is no depth limit or cycle detection; avoid self-referential
+hooks.
 """
 from __future__ import annotations
 

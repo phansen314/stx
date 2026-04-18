@@ -621,6 +621,13 @@ def create_task(
         entity_type="task", entity_id=task.id, entity=task,
         proposed=proposed,
     )
+    if task.done:
+        fire_hooks(
+            HookEvent.TASK_DONE, HookTiming.POST,
+            workspace_id=workspace_id, workspace_name=ws_name,
+            entity_type="task", entity_id=task.id, entity=task,
+            changes={"done": {"old": False, "new": True}},
+        )
     return task
 
 
@@ -774,6 +781,8 @@ def update_task(
     old = get_task(conn, task_id)
     ws_name = _workspace_name(conn, old.workspace_id)
     pre_changes = _build_change_dict(old, changes)
+    if not pre_changes:
+        return old
     pre_events = _determine_task_events(pre_changes)
     for event in pre_events:
         fire_hooks(
@@ -1609,7 +1618,13 @@ def replace_task_metadata(
     """
     task = get_task(conn, task_id)
     ws_name = _workspace_name(conn, task.workspace_id)
-    normalized_new = {_normalize_meta_key(k): v for k, v in new_metadata.items()}
+    # Detect duplicate keys after normalization before hooks fire (fail fast).
+    normalized_new: dict[str, str] = {}
+    for raw_k, v in new_metadata.items():
+        nk = _normalize_meta_key(raw_k)
+        if nk in normalized_new:
+            raise ValueError(f"duplicate metadata key after normalization: {nk!r}")
+        normalized_new[nk] = v
     key_events: list[tuple[str, str | None, HookEvent]] = []
     for k in set(task.metadata) | set(normalized_new):
         old_v = task.metadata.get(k)
@@ -2941,6 +2956,9 @@ def cascade_archive_group(
     *,
     source: str,
 ) -> Group:
+    # Design carve-out: bulk-archived tasks here do NOT fire TASK_ARCHIVED hooks.
+    # Per-task post-hooks on a large subtree would be expensive and the GROUP_ARCHIVED
+    # event (task 160) is the correct signal for this operation.
     parent_group: int | None = None
     with transaction(conn), _friendly_errors():
         group = get_group(conn, group_id)
@@ -2969,6 +2987,8 @@ def cascade_archive_workspace(
     *,
     source: str,
 ) -> Workspace:
+    # Design carve-out: bulk-archived tasks/groups here do NOT fire per-entity hooks.
+    # WORKSPACE_ARCHIVED (task 160) is the correct signal for consumers.
     with transaction(conn), _friendly_errors():
         task_ids = repo.list_active_task_ids_in_workspace(conn, workspace_id)
         group_ids = repo.list_active_group_ids_in_workspace(conn, workspace_id)
