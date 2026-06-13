@@ -1,5 +1,7 @@
 # Service Layer Business Rules
 
+> **v2 (legacy).** Describes the Python app's workspace→group→task model. The v3 Kotlin daemon uses a different model — see [v3-architecture.md](v3-architecture.md).
+
 Business rules enforced by the service layer (`service.py`). These complement the
 database-enforced rules in `db-enforced-semantics.md`. Rules marked **defense-in-depth**
 are also enforced by the schema; the service layer re-validates them to produce

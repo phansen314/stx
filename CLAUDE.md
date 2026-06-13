@@ -2,6 +2,93 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Status: v2 → v3 transition
+
+This repo currently holds **two implementations**:
+
+- **v3 — Kotlin daemon (`daemon/`), the direction going forward.** A long-lived, single-writer
+  daemon that stores and serves work items for the developer and their local agents over loopback
+  HTTP. Model: workspace → track → segment → task, with `blocks`/`relates_to` edges and a `next`
+  frontier. New architecture work happens here. See **[v3 Kotlin Daemon](#v3-kotlin-daemon-daemon)** below.
+- **v2 — Python CLI + TUI (`src/stx`), the current shipping implementation.** Runs on the legacy
+  workspace → group → task model and is **not yet wired to the daemon** (rewiring the TUI to talk to
+  the daemon over HTTP is a later pass). The detailed Python sections further down describe this
+  still-running code and remain accurate for it.
+
+Where the two differ, **v3 is authoritative for direction**; the v2 sections describe present behavior.
+
+## v3 Kotlin Daemon (`daemon/`)
+
+A greenfield Kotlin daemon — the v3 datastore + frontier server. Authoritative design lives in
+`daemon/docs/stx-v3-{design,next,implementation-brief}.md` and the schema in
+`daemon/src/main/resources/schema.sql` (mirrored at `daemon/docs/stx-v3-schema.sql`).
+
+**Stack:** Kotlin 2.3 / JDK 21, Gradle (Kotlin DSL), **http4k bound to 127.0.0.1 only**,
+kotlinx.serialization, **plain JDBC + `xerial/sqlite-jdbc` (WAL, no ORM)**, kotlinx.coroutines.
+No Spring, no gRPC, no DI framework, no auth — loopback binding is the entire security model.
+
+**Data model (v3):** workspace → track → segment\* → task.
+- **track** — root-only anchor (never nests, no parent); carries description + metadata.
+- **segment** — nestable PURE FILING node under a track (no metadata, no context, no inheritance);
+  `parent_segment_id` forms a tree; denormalized immutable `track_id`. Each track auto-gets exactly
+  one root segment (`is_root=1`); "add a task to the track" routes to it.
+- **task** — the only first-class node: `status_id`, optional single-valued `kind`, description,
+  metadata, priority, dates. Edges are task↔task only: **`blocks`** (the spine; directed, acyclic;
+  drives `next`) and **`relates_to`** (decorative, cyclic OK, never affects `next`).
+- **status / status_transition** — per-workspace state machine; `terminal=1` IS "done" (no separate
+  done flag); transitions define legal moves (cycles allowed, no guards). No `journal` table —
+  history is a non-authoritative append-only sidecar log.
+
+**Package layout (`daemon/src/main/kotlin/stx/`):**
+- `Main.kt` — parse args, open DB (WAL), wire write-actor + reads + http4k on 127.0.0.1.
+- `command/Command.kt` — `@Serializable sealed interface Command`, one data class per mutation verb.
+- `service/Service.kt` — exhaustive `when(command)` (no `else` — compiler forces handling of every verb).
+- `service/Invariants.kt` — the graph invariants SQLite can't express.
+- `service/Frontier.kt` — `next()`; `service/Reads.kt` — read-side queries.
+- `service/WriteActor.kt` — single coroutine draining `Channel<Command>`, one tx per command.
+- `repo/Db.kt` + `*Repo.kt` + `Rows.kt` — thin hand-written-SQL repositories.
+- `transport/HttpApi.kt` + `Dtos.kt` + `Json.kt` + `LoopbackServer.kt` — the HTTP façade.
+- `log/Sidecar.kt` — append-only seq-numbered event log.
+
+**The 5 daemon-enforced invariants** (`service/Invariants.kt` + `service/Service.kt`):
+1. `blocks` forms a **DAG** (reject an edge that would close a cycle).
+2. `segment.parent_segment_id` is **acyclic within a track** (reject a reparent that creates a cycle).
+3. **Exactly one root segment per track**, auto-created with the track.
+4. **Archive cascade:** archiving a task archives its incident `blocks`/`relates_to` in the same tx
+   (so a live edge always joins two live tasks — lets `next` skip checking blocker archived-state).
+5. `segment.track_id` is **immutable** (a reparent may not cross tracks).
+
+**`next` (the frontier):** a FILTER, not a recommender. A task is in the frontier iff `archived=0`,
+status not terminal, and no live `blocks` from a non-terminal task. In-progress stays in. Order
+`priority DESC, id ASC` (presentation only). Scopes: workspace (required), `--track` (flat filter via
+the denormalized `segment.track_id`), `--segment` subtree (recursive), `--kind` (orthogonal).
+**Recompute-on-read — no incremental caching** (so rework re-derives correctly).
+
+**Concurrency:** WAL + FKs on. All mutations flow through ONE write-actor coroutine (serialized, one
+tx each, in order); reads run concurrently against WAL, bypassing the actor.
+
+**Build / test / run:**
+```sh
+cd daemon
+./gradlew test            # 28 tests (schema, 5 invariants, frontier+rework, write-actor, sidecar, HTTP e2e)
+./gradlew installDist && ./build/install/stx-daemon/bin/stx-daemon --port=8473 --db=/path/to/stx.db
+```
+
+**HTTP surface (loopback):** reads `GET /next?workspace=&track=&segment=&kind=&limit=`,
+`GET /workspaces`, `/workspaces/{id}/{statuses,tracks}`, `/tracks/{id}/{segments,tasks}`, `/tasks/{id}`;
+mutations `POST /workspaces`, `/workspaces/{id}/{statuses,transitions,tracks}`, `/tracks/{id}/{segments,tasks}`,
+`/segments/{id}/{move,tasks,archive}`, `/tasks/{id}/{status,archive}`, `/blocks`, `/relates`, `PATCH /tasks/{id}`, …
+Every response is JSON, including a structured error envelope (`{error, kind}`; Validation→400,
+NotFound→404, Conflict→409).
+
+---
+
+# v2 Python Implementation (current CLI/TUI — legacy model)
+
+The remainder of this document describes the **v2** Python app under `src/stx`. It is the interface
+users run today and has **not** been migrated to the daemon; its workspace → group → task model
+differs from v3's track/segment model.
+
 ## Project Overview
 
 A structured context and task management app (`stx` CLI) with two interfaces: CLI (argparse) and TUI (Textual), backed by SQLite storage. All layers are fully implemented. CLI auto-emits JSON when piped and text at a terminal (`--json`/`--text` override). See `skills/stx/references/cli-reference.md` for the full CLI reference and `skills/stx/references/json-schema.md` for JSON shapes.

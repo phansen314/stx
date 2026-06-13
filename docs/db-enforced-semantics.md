@@ -1,5 +1,7 @@
 # Database Business Rules
 
+> **v2 (legacy).** Describes the Python app's workspace→group→task model. The v3 Kotlin daemon uses a different model — see [v3-architecture.md](v3-architecture.md).
+
 Business rules enforced by the schema. These hold regardless of which
 interface (CLI, TUI) or code path is used.
 

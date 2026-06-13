@@ -1,46 +1,86 @@
 # stx
 
-Organize context into nestable hierarchies of workspaces and groups. Track tasks across them. CLI speaks JSON for agents; TUI shows a kanban board for humans.
+A local **datastore + frontier server** for a developer and their local agents. You curate the
+structure and context; an agent reads `next` for *what to work on* and reads task/track context for
+*what to know*. The bar is "faster and more structured than a TODO.md" — not a JIRA replacement.
 
-## What it is
+> **Status: v2 → v3 transition.** The **v3 Kotlin daemon** (`daemon/`) is the architecture going
+> forward — a single-writer server clients reach over loopback HTTP. The **v2 Python CLI + TUI**
+> (`src/stx`) is the current shipping interface; it still runs on the legacy workspace→group→task
+> model and is **not yet wired to the daemon**. This README leads with v3; the v2 sections below
+> document the Python app as it runs today.
 
-- **Structured context, not just tasks** — the primary unit is the hierarchy itself: workspaces and recursively nestable groups (Group → Group → … via `parent_id`).
-- **Metadata everywhere** — every node (workspace, group, task) carries a JSON key/value blob (`stx {entity} meta set/get/del`) and an optional long-form description on groups and tasks (rendered as Markdown in the TUI).
-- **Task management** — tasks have statuses, priorities, dates, and kinded edges. Statuses are user-defined per workspace — kanban columns are just one interpretation.
-- **Kinded polymorphic edges** — labelled directional links with typed endpoints (`stx edge create --source task-0001 --target group:foo --kind blocks`). Tasks, groups, workspaces, and statuses can all be edge endpoints, and cross-type edges are supported. Each edge carries a `kind` label, its own metadata blob, and an `acyclic` flag (on by default for `blocks`/`spawns`). Mermaid diagrams generated on export.
-- **Agent-first CLI** — output auto-switches to JSON when piped (`stx task ls | jq`). Every command is composable without screen-scraping.
-- **Human-friendly TUI** — renders the hierarchy as a kanban board. The left panel shows the full workspace tree; the right panel shows one column per status.
-- **Full audit trail** — field changes across all entities (tasks, groups, workspaces, statuses), edge link/unlink events, and per-key metadata diffs are recorded in a unified `journal` table with old/new values and a source tag. Cross-entity timeline queries work without JOINs.
-- **SQLite-backed** — WAL journal mode, XDG paths, atomic backups, numbered migrations.
+## What it is (v3)
 
-## Data Model
+- **Datastore + frontier server** — a long-lived Kotlin daemon is the single writer; clients talk to
+  it over loopback HTTP rather than opening SQLite directly.
+- **Three-tier structure** — workspace → **track** (root-only line of work, carries context) →
+  **segment** (pure-filing nesting) → **task** (the only first-class node).
+- **Two edge graphs** — `blocks` (the spine: directed, acyclic, drives `next`) and `relates_to`
+  (decorative association, cyclic OK, never affects the frontier).
+- **`next` frontier** — a *filter*, not a recommender: returns the tasks you can act on now and makes
+  no prioritization decision for you.
+- **Self-defending store** — invariants enforced in SQLite + the daemon, so an agent writing to it
+  cannot corrupt it.
+- **No journal** — history is a non-authoritative append-only sidecar log; SQLite is the source of truth.
+
+## Data Model (v3)
 
 ```
 Workspace
-├── Status  (workflow stages, user-defined)
-├── Group
-│   ├── Group  (nested, no depth limit)
-│   │   └── Task
-│   └── Task
-└── Task  (ungrouped)
+├── Status            (per-workspace; status_transition defines legal moves; terminal == done)
+└── Track             (root-only line of work; carries description + metadata)
+    └── Segment       (pure filing; nests via parent_segment_id; one auto root segment per track)
+        └── Task      (status, optional kind, description, metadata, priority, dates)
+                      edges: blocks (DAG) / relates_to (decorative) — task↔task only
 ```
 
-All entities support an `archived` flag (nothing is deleted).
+All entities support an `archived` flag (nothing is deleted; FKs never cascade).
 
-Workspaces, groups, and tasks additionally carry a JSON `metadata` key/value blob (keys normalized to lowercase). Statuses do not.
-
-Groups and tasks additionally support `description` (free-text, Markdown).
-
-Tasks additionally have: priority, due/start/finish dates, kinded edges (`edge_sources` / `edge_targets`, each carrying a `kind` label and its own metadata blob), and change history.
-
-Groups additionally have: `parent_id` (recursive nesting) and kinded edges.
-
-## Architecture
+## Architecture (v3)
 
 ```
-CLI commands ────────┐
-TUI event handlers ──┤──▶ Service ──▶ Repository ──▶ Connection ──▶ SQLite
+clients ──▶ HTTP (127.0.0.1) ──▶ write-actor ──▶ Service ──▶ JDBC ──▶ SQLite (WAL)
+                                       │
+                                       └─▶ sidecar event log (append-only, non-authoritative)
 ```
+
+Mutations are serialized through one write-actor coroutine; reads run concurrently against WAL.
+
+## Daemon (v3) — Build & Run
+
+```sh
+cd daemon
+./gradlew test            # 28 tests
+./gradlew installDist
+./build/install/stx-daemon/bin/stx-daemon --port=8473 --db=~/.local/share/stx/stx.db
+```
+
+Loopback-only is the security model — the daemon binds `127.0.0.1` and never an external interface.
+
+**HTTP surface** (JSON responses; structured error envelope `{error, kind}` — Validation→400, NotFound→404, Conflict→409):
+
+| Method & path | Purpose |
+|---|---|
+| `GET /next?workspace=&track=&segment=&kind=&limit=` | the frontier (ready set) |
+| `GET /workspaces`, `/workspaces/{id}/statuses`, `/workspaces/{id}/tracks` | list |
+| `GET /tracks/{id}/segments`, `/tracks/{id}/tasks?status=`, `/tasks/{id}` | list / detail |
+| `POST /workspaces`, `/workspaces/{id}/statuses`, `/workspaces/{id}/transitions` | create |
+| `POST /workspaces/{id}/tracks`, `/tracks/{id}/segments`, `/tracks/{id}/tasks` | create (track tasks route to the root segment) |
+| `POST /tasks/{id}/status` | move status (rejects illegal transitions) |
+| `PATCH /tasks/{id}` | edit title/desc/priority/kind/dates/metadata |
+| `POST /blocks`, `/relates` | add edges (`blocks` is DAG-checked) |
+| `POST /{tasks,tracks,segments,statuses,workspaces}/{id}/archive` | archive (cascades incident edges) |
+
+Authoritative design: `daemon/docs/stx-v3-{design,next,implementation-brief}.md`; schema:
+`daemon/src/main/resources/schema.sql`. One-page overview + ERD: [`docs/v3-architecture.md`](docs/v3-architecture.md).
+
+---
+
+# v2 Python CLI & TUI (current implementation)
+
+The sections below document the **v2** Python app under `src/stx` — the interface users run today.
+It uses the legacy workspace → group → task model and is **not yet wired to the v3 daemon**.
 
 ## Quick Start
 
@@ -292,6 +332,7 @@ All work lives on the **"claude" workspace** which has three statuses: Backlog, 
 
 ## Requirements
 
+**v2 Python CLI/TUI:**
 - Python 3.12+
 - [Textual](https://textual.textualize.io/) (TUI)
 
@@ -300,6 +341,8 @@ Dev dependencies: pytest, pytest-cov
 ```sh
 pip install -e ".[dev]"
 ```
+
+**v3 daemon:** JDK 21+ and Gradle (via the wrapper in `daemon/`). No Python needed for the daemon.
 
 ## Data Storage
 
@@ -313,12 +356,20 @@ python scripts/generate_erd.py
 
 ## Testing
 
+**v2 Python:**
+
 ```sh
 pytest
 pytest --cov
 ```
 
 Fresh in-memory DB per test — no cross-test pollution. TUI tests use Textual's `app.run_test()` pilot API.
+
+**v3 daemon:**
+
+```sh
+cd daemon && ./gradlew test    # 28 tests: schema, the 5 invariants, frontier + rework, write-actor, sidecar, HTTP e2e
+```
 
 For manual TUI testing with seeded data:
 
