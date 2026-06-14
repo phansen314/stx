@@ -129,13 +129,21 @@ api POST /blocks  "{\"source\":$T1,\"target\":$T2}" >/dev/null
 api POST /relates "{\"kind\":\"duplicates\",\"source\":$T2,\"target\":$T3}" >/dev/null
 
 # ── read / interact phase ───────────────────────────────────────────────────
-step "8. List everything back"
+step "8. List everything back (collections + single-entity reads)"
 api GET /workspaces >/dev/null
+api GET "/workspaces/$WS" >/dev/null
 api GET "/workspaces/$WS/statuses" >/dev/null
+api GET "/workspaces/$WS/transitions" >/dev/null
 api GET "/workspaces/$WS/tracks" >/dev/null
+api GET "/tracks/$TRACK" >/dev/null
+api GET "/statuses/$BACKLOG" >/dev/null
+api GET "/segments/$SEG_AUTH" >/dev/null
 api GET "/tracks/$TRACK/segments" >/dev/null
 api GET "/tracks/$TRACK/tasks" >/dev/null
 api GET "/tasks/$T1" >/dev/null
+note "segment tasks: direct vs. recursive subtree (T2,T3 live in API/Auth, under API)"
+api GET "/segments/$SEG_API/tasks" >/dev/null
+api GET "/segments/$SEG_API/tasks?recursive=true" >/dev/null
 
 step "9. Frontier BEFORE unblocking — T2 should be ABSENT (blocked by T1)"
 note "expect: T1 ($T1) and T3 ($T3) present; T2 ($T2) blocked and missing"
@@ -165,6 +173,38 @@ expect_err GET "/tasks/999999"
 step "15. Archive T3 (cascades its incident edges), then confirm it's gone from next"
 api POST "/tasks/$T3/archive" >/dev/null
 note "T3 ($T3) should no longer appear in the frontier"
+api GET "/next?workspace=$WS" >/dev/null
+
+# ── per-key metadata ──────────────────────────────────────────────────────────
+step "16. Per-key metadata: set then delete a single key on T2 (blob stays intact)"
+api PUT "/tasks/$T2/meta/jira_key" '{"value":"PAY-42"}' >/dev/null
+note "key is normalized to lowercase; sibling keys (provider) are untouched"
+api DELETE "/tasks/$T2/meta/jira_key" >/dev/null
+
+# ── optimistic locking (CAS) ────────────────────────────────────────────────────
+step "17. CAS: a stale ?expectedVersion is a 409; the current version succeeds"
+VER=$(_call GET "/tasks/$T2" 2>/dev/null | jq -r '.version')
+note "T2 current version = $VER"
+expect_err PATCH "/tasks/$T2?expectedVersion=0" '{"priority":9}'   # 0 is stale after the meta writes
+api PATCH "/tasks/$T2?expectedVersion=$VER" '{"priority":9}' >/dev/null
+
+# ── refile a task under a different segment ──────────────────────────────────────
+step "18. Refile T2 from API/Auth into the API segment"
+api POST "/tasks/$T2/segment" "{\"toSegmentId\":$SEG_API}" >/dev/null
+note "incident edge reads: T2's blocks/relates, and the whole-workspace edge list"
+api GET "/tasks/$T2/blocks" >/dev/null
+api GET "/workspaces/$WS/relates" >/dev/null
+
+# ── rename a (pure-filing) segment ───────────────────────────────────────────────
+step "19. Rename a segment (pure-filing nodes carry only a name)"
+api PATCH "/segments/$SEG_API" '{"name":"API Layer"}' >/dev/null
+note "the rename is reflected on the segment read-back"
+api GET "/segments/$SEG_API" >/dev/null
+
+# ── archive cascade ─────────────────────────────────────────────────────────────
+step "20. Archive the whole track — cascades segments + tasks + edges; frontier empties"
+api POST "/tracks/$TRACK/archive" >/dev/null
+note "every task under the track is now archived → frontier should be empty"
 api GET "/next?workspace=$WS" >/dev/null
 
 step "Done."

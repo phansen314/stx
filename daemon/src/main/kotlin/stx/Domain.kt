@@ -16,6 +16,7 @@ data class Workspace(
     val id: Long,
     val name: String,
     val metadata: Metadata,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
     val updatedAt: String,
@@ -28,6 +29,7 @@ data class Status(
     val name: String,
     val kanbanOrder: Int,
     val terminal: Boolean,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
 )
@@ -38,6 +40,7 @@ data class StatusTransition(
     val workspaceId: Long,
     val fromStatusId: Long,
     val toStatusId: Long,
+    val version: Long,
     val archived: Boolean,
 )
 
@@ -48,6 +51,7 @@ data class Track(
     val name: String,
     val description: String,
     val metadata: Metadata,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
     val updatedAt: String,
@@ -61,6 +65,7 @@ data class Segment(
     val parentSegmentId: Long?,
     val name: String,
     val isRoot: Boolean,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
 )
@@ -79,6 +84,7 @@ data class Task(
     val startDate: String?,
     val finishDate: String?,
     val metadata: Metadata,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
     val updatedAt: String,
@@ -91,6 +97,7 @@ data class Blocks(
     val sourceTaskId: Long,
     val targetTaskId: Long,
     val metadata: Metadata,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
 )
@@ -103,6 +110,7 @@ data class RelatesTo(
     val sourceTaskId: Long,
     val targetTaskId: Long,
     val metadata: Metadata,
+    val version: Long,
     val archived: Boolean,
     val createdAt: String,
 )

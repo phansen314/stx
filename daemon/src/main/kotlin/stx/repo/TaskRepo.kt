@@ -53,8 +53,8 @@ object TaskRepo {
             statusId,
         ) { it.toTask() }
 
-    /** Apply a partial edit. A null patch field leaves the column unchanged. */
-    fun applyPatch(conn: Connection, id: Long, patch: TaskPatch): Int {
+    /** Apply a partial edit. A null patch field leaves the column unchanged. Always bumps version. */
+    fun applyPatch(conn: Connection, id: Long, patch: TaskPatch, expectedVersion: Long? = null): Int {
         val sets = mutableListOf<String>()
         val binders = mutableListOf<(java.sql.PreparedStatement, Int) -> Unit>()
         fun str(col: String, v: String) { sets += "$col=?"; binders += { ps, i -> ps.setString(i, v) } }
@@ -68,21 +68,64 @@ object TaskRepo {
         if (patch.startDate != null) strN("start_date", patch.startDate)
         if (patch.finishDate != null) strN("finish_date", patch.finishDate)
         patch.metadata?.let { m -> str("metadata_json", MetadataCodec.encode(m)) }
-        if (sets.isEmpty()) return 0
+        sets += "version=version+1"
         sets += "updated_at=datetime('now')"
-        return conn.prepareStatement("UPDATE task SET ${sets.joinToString(", ")} WHERE id=?").use { ps ->
+        return conn.prepareStatement(
+            "UPDATE task SET ${sets.joinToString(", ")} WHERE id=?${versionClause(expectedVersion)}",
+        ).use { ps ->
             var i = 1
             binders.forEach { it(ps, i++) }
-            ps.setLong(i, id)
+            ps.setLong(i++, id)
+            if (expectedVersion != null) ps.setLong(i, expectedVersion)
             ps.executeUpdate()
         }
     }
 
-    fun moveStatus(conn: Connection, id: Long, toStatusId: Long): Int =
-        conn.exec("UPDATE task SET status_id=?, updated_at=datetime('now') WHERE id=?", toStatusId, id)
+    fun moveStatus(conn: Connection, id: Long, toStatusId: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE task SET status_id=?, version=version+1, updated_at=datetime('now') " +
+                "WHERE id=?${versionClause(expectedVersion)}",
+            toStatusId, id, *versionArg(expectedVersion),
+        )
 
-    fun archive(conn: Connection, id: Long): Int =
-        conn.exec("UPDATE task SET archived=1, updated_at=datetime('now') WHERE id=?", id)
+    fun moveSegment(conn: Connection, id: Long, toSegmentId: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE task SET segment_id=?, version=version+1, updated_at=datetime('now') " +
+                "WHERE id=?${versionClause(expectedVersion)}",
+            toSegmentId, id, *versionArg(expectedVersion),
+        )
+
+    fun archive(conn: Connection, id: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE task SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE id=?${versionClause(expectedVersion)}",
+            id, *versionArg(expectedVersion),
+        )
+
+    // ── cascade helpers (bulk; no CAS) ───────────────────────────────────────────
+    fun liveIdsInSegments(conn: Connection, segmentIds: List<Long>): List<Long> {
+        if (segmentIds.isEmpty()) return emptyList()
+        return conn.queryAll(
+            "SELECT id FROM task WHERE archived=0 AND segment_id IN (${inPlaceholders(segmentIds.size)})",
+            *segmentIds.toTypedArray(),
+        ) { it.getLong("id") }
+    }
+
+    fun archiveByIds(conn: Connection, ids: List<Long>): Int {
+        if (ids.isEmpty()) return 0
+        return conn.exec(
+            "UPDATE task SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE archived=0 AND id IN (${inPlaceholders(ids.size)})",
+            *ids.toTypedArray(),
+        )
+    }
+
+    fun archiveByWorkspace(conn: Connection, workspaceId: Long): Int =
+        conn.exec(
+            "UPDATE task SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE workspace_id=? AND archived=0",
+            workspaceId,
+        )
 }
 
 internal fun java.sql.PreparedStatement.setStringOrNull(index: Int, value: String?) {

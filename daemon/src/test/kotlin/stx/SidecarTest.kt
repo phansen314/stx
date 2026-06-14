@@ -49,8 +49,8 @@ class SidecarTest {
     }
 
     private fun sampleWorkspace(id: Long) =
-        Workspace(id, "ws", emptyMap(), false, "now", "now")
+        Workspace(id, "ws", emptyMap(), 0, false, "now", "now")
 
     private fun sampleTask(id: Long, workspaceId: Long) =
-        Task(id, workspaceId, 1, 1, null, "t", "", 0, null, null, null, emptyMap(), false, "now", "now")
+        Task(id, workspaceId, 1, 1, null, "t", "", 0, null, null, null, emptyMap(), 0, false, "now", "now")
 }

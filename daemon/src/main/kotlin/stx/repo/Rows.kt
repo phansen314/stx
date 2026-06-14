@@ -35,6 +35,7 @@ internal fun ResultSet.toWorkspace() = Workspace(
     id = getLong("id"),
     name = getString("name"),
     metadata = MetadataCodec.decode(getString("metadata_json")),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
     updatedAt = getString("updated_at"),
@@ -46,6 +47,7 @@ internal fun ResultSet.toStatus() = Status(
     name = getString("name"),
     kanbanOrder = getInt("kanban_order"),
     terminal = bool("terminal"),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
 )
@@ -55,6 +57,7 @@ internal fun ResultSet.toTransition() = StatusTransition(
     workspaceId = getLong("workspace_id"),
     fromStatusId = getLong("from_status_id"),
     toStatusId = getLong("to_status_id"),
+    version = getLong("version"),
     archived = bool("archived"),
 )
 
@@ -64,6 +67,7 @@ internal fun ResultSet.toTrack() = Track(
     name = getString("name"),
     description = getString("description"),
     metadata = MetadataCodec.decode(getString("metadata_json")),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
     updatedAt = getString("updated_at"),
@@ -76,6 +80,7 @@ internal fun ResultSet.toSegment() = Segment(
     parentSegmentId = longOrNull("parent_segment_id"),
     name = getString("name"),
     isRoot = bool("is_root"),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
 )
@@ -93,6 +98,7 @@ internal fun ResultSet.toTask() = Task(
     startDate = getString("start_date"),
     finishDate = getString("finish_date"),
     metadata = MetadataCodec.decode(getString("metadata_json")),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
     updatedAt = getString("updated_at"),
@@ -104,6 +110,7 @@ internal fun ResultSet.toBlocks() = Blocks(
     sourceTaskId = getLong("source_task_id"),
     targetTaskId = getLong("target_task_id"),
     metadata = MetadataCodec.decode(getString("metadata_json")),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
 )
@@ -115,6 +122,7 @@ internal fun ResultSet.toRelatesTo() = RelatesTo(
     sourceTaskId = getLong("source_task_id"),
     targetTaskId = getLong("target_task_id"),
     metadata = MetadataCodec.decode(getString("metadata_json")),
+    version = getLong("version"),
     archived = bool("archived"),
     createdAt = getString("created_at"),
 )
@@ -138,6 +146,18 @@ internal fun <T> Connection.queryAll(sql: String, vararg args: Any?, map: (Resul
         }
     }
 }
+
+/**
+ * Optimistic-lock helpers. When a caller passes a non-null `expectedVersion`, write SQL appends
+ * `AND version=?` and binds the expected value; null means "no CAS guard" (unconditional write).
+ * Every versioned write also does `version=version+1` in its SET clause (callers add that).
+ */
+internal fun versionClause(expectedVersion: Long?): String = if (expectedVersion != null) " AND version=?" else ""
+internal fun versionArg(expectedVersion: Long?): Array<Any?> =
+    if (expectedVersion != null) arrayOf(expectedVersion) else emptyArray()
+
+/** `?,?,?` placeholders for an `IN (...)` clause of [n] elements. */
+internal fun inPlaceholders(n: Int): String = List(n) { "?" }.joinToString(",")
 
 /** Run an UPDATE/DELETE-style statement and return affected row count. */
 internal fun Connection.exec(sql: String, vararg args: Any?): Int {

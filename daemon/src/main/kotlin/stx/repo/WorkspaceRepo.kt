@@ -19,15 +19,24 @@ object WorkspaceRepo {
                 " ORDER BY id ASC",
         ) { it.toWorkspace() }
 
-    fun updateName(conn: Connection, id: Long, name: String): Int =
-        conn.exec("UPDATE workspace SET name=?, updated_at=datetime('now') WHERE id=?", name, id)
-
-    fun updateMetadata(conn: Connection, id: Long, metadataJson: String): Int =
-        conn.exec(
-            "UPDATE workspace SET metadata_json=?, updated_at=datetime('now') WHERE id=?",
-            metadataJson, id,
+    /** Update name and/or metadata in one statement. Bumps version; CAS-guarded when [expectedVersion] set. */
+    fun update(conn: Connection, id: Long, name: String?, metadataJson: String?, expectedVersion: Long?): Int {
+        val sets = mutableListOf<String>()
+        val args = mutableListOf<Any?>()
+        if (name != null) { sets += "name=?"; args += name }
+        if (metadataJson != null) { sets += "metadata_json=?"; args += metadataJson }
+        sets += "version=version+1"
+        sets += "updated_at=datetime('now')"
+        return conn.exec(
+            "UPDATE workspace SET ${sets.joinToString(", ")} WHERE id=?${versionClause(expectedVersion)}",
+            *args.toTypedArray(), id, *versionArg(expectedVersion),
         )
+    }
 
-    fun archive(conn: Connection, id: Long): Int =
-        conn.exec("UPDATE workspace SET archived=1, updated_at=datetime('now') WHERE id=?", id)
+    fun archive(conn: Connection, id: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE workspace SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE id=?${versionClause(expectedVersion)}",
+            id, *versionArg(expectedVersion),
+        )
 }

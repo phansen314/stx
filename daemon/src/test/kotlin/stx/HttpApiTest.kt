@@ -58,6 +58,8 @@ class HttpApiTest {
 
     private fun post(path: String, body: String = "{}"): Resp = send("POST", path, body)
     private fun patch(path: String, body: String): Resp = send("PATCH", path, body)
+    private fun put(path: String, body: String): Resp = send("PUT", path, body)
+    private fun delete(path: String): Resp = send("DELETE", path, null)
     private fun get(path: String): Resp = send("GET", path, null)
 
     private fun send(method: String, path: String, body: String?): Resp {
@@ -65,7 +67,9 @@ class HttpApiTest {
             .header("Content-Type", "application/json")
         when (method) {
             "GET" -> builder.GET()
+            "DELETE" -> builder.DELETE()
             "PATCH" -> builder.method("PATCH", BodyPublishers.ofString(body ?: ""))
+            "PUT" -> builder.PUT(BodyPublishers.ofString(body ?: ""))
             else -> builder.POST(BodyPublishers.ofString(body ?: ""))
         }
         val r = http.send(builder.build(), BodyHandlers.ofString())
@@ -110,6 +114,56 @@ class HttpApiTest {
         val illegal = post("/tasks/$task/status", """{"toStatusId":$todo}""")
         assertEquals(400, illegal.status)
         assertEquals("Validation", illegal.json()["kind"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `stale expectedVersion over http is a 409`() {
+        val ws = post("/workspaces", """{"name":"demo"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"auth"}""").id()
+        val task = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"t"}""").id()
+
+        // version starts at 0; a matching CAS write succeeds.
+        assertEquals(0L, get("/tasks/$task").json()["version"]!!.jsonPrimitive.long)
+        assertEquals(200, patch("/tasks/$task?expectedVersion=0", """{"title":"t1"}""").status)
+        // The now-stale token is rejected with a structured 409.
+        val stale = patch("/tasks/$task?expectedVersion=0", """{"title":"t2"}""")
+        assertEquals(409, stale.status)
+        assertEquals("Conflict", stale.json()["kind"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `per-key metadata set and delete over http`() {
+        val ws = post("/workspaces", """{"name":"demo"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"auth"}""").id()
+        val task = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"t"}""").id()
+
+        val set = put("/tasks/$task/meta/jira_key", """{"value":"AUTH-1"}""")
+        assertEquals(200, set.status)
+        assertEquals("AUTH-1", set.json()["metadata"]!!.jsonObject["jira_key"]!!.jsonPrimitive.content)
+
+        val del = delete("/tasks/$task/meta/jira_key")
+        assertEquals(200, del.status)
+        assertTrue(del.json()["metadata"]!!.jsonObject["jira_key"] == null, "key removed")
+    }
+
+    @Test fun `task refile and edge reads over http`() {
+        val ws = post("/workspaces", """{"name":"demo"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"auth"}""").id()
+        val root = get("/tracks/$track/segments").array()[0].jsonObject["id"]!!.jsonPrimitive.long
+        val seg = post("/tracks/$track/segments", """{"name":"child","parentSegmentId":$root}""").id()
+        val a = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"a"}""").id()
+        val b = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"b"}""").id()
+
+        // Refile task a under the child segment.
+        assertEquals(200, post("/tasks/$a/segment", """{"toSegmentId":$seg}""").status)
+        assertEquals(seg, get("/tasks/$a").json()["segmentId"]!!.jsonPrimitive.long)
+
+        // Add a blocks edge and read it back from both incident endpoints.
+        post("/blocks", """{"source":$a,"target":$b}""")
+        assertEquals(1, get("/tasks/$a/blocks").array().size)
+        assertEquals(1, get("/tasks/$b/blocks").array().size)
+        assertEquals(1, get("/workspaces/$ws/blocks").array().size)
     }
 
     @Test fun `unknown task is a structured 404`() {

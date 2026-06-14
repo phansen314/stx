@@ -1,6 +1,7 @@
 package stx.service
 
 import stx.Blocks
+import stx.Metadata
 import stx.RelatesTo
 import stx.Segment
 import stx.Status
@@ -26,8 +27,14 @@ import stx.command.CreateTask
 import stx.command.CreateTrack
 import stx.command.CreateTransition
 import stx.command.CreateWorkspace
+import stx.command.DeleteMetaKey
+import stx.command.MetaEntity
 import stx.command.MoveSegment
 import stx.command.MoveTask
+import stx.command.MoveTaskToSegment
+import stx.command.RenameSegment
+import stx.command.SetMetaKey
+import stx.command.TaskPatch
 import stx.command.UpdateStatus
 import stx.command.UpdateTask
 import stx.command.UpdateTrack
@@ -66,16 +73,20 @@ class Service {
         is UpdateTrack -> updateTrack(conn, command)
         is ArchiveTrack -> archiveTrack(conn, command)
         is CreateSegment -> createSegment(conn, command)
+        is RenameSegment -> renameSegment(conn, command)
         is MoveSegment -> moveSegment(conn, command)
         is ArchiveSegment -> archiveSegment(conn, command)
         is CreateTask -> createTask(conn, command)
         is UpdateTask -> updateTask(conn, command)
         is MoveTask -> moveTask(conn, command)
+        is MoveTaskToSegment -> moveTaskToSegment(conn, command)
         is ArchiveTask -> archiveTask(conn, command)
         is AddBlocks -> addBlocks(conn, command)
         is ArchiveBlocks -> archiveBlocks(conn, command)
         is AddRelatesTo -> addRelatesTo(conn, command)
         is ArchiveRelatesTo -> archiveRelatesTo(conn, command)
+        is SetMetaKey -> setMetaKey(conn, command)
+        is DeleteMetaKey -> deleteMetaKey(conn, command)
     }
 
     // ── workspace ──────────────────────────────────────────────────────────────
@@ -87,14 +98,25 @@ class Service {
 
     private fun updateWorkspace(conn: Connection, c: UpdateWorkspace): Workspace {
         liveWorkspace(conn, c.workspaceId)
-        c.name?.let { requireName(it, "workspace"); mapConstraints { WorkspaceRepo.updateName(conn, c.workspaceId, it) } }
-        c.metadata?.let { WorkspaceRepo.updateMetadata(conn, c.workspaceId, MetadataCodec.encode(it)) }
+        c.name?.let { requireName(it, "workspace") }
+        val metaJson = c.metadata?.let { MetadataCodec.encode(it) }
+        val rows = mapConstraints { WorkspaceRepo.update(conn, c.workspaceId, c.name, metaJson, c.expectedVersion) }
+        requireWritten(rows, c.expectedVersion)
         return WorkspaceRepo.get(conn, c.workspaceId)!!
     }
 
     private fun archiveWorkspace(conn: Connection, c: ArchiveWorkspace): Workspace {
         liveWorkspace(conn, c.workspaceId)
-        WorkspaceRepo.archive(conn, c.workspaceId)
+        val rows = WorkspaceRepo.archive(conn, c.workspaceId, c.expectedVersion)
+        requireWritten(rows, c.expectedVersion)
+        // Cascade: archive every child of the workspace so nothing is left dangling-live.
+        StatusRepo.archiveByWorkspace(conn, c.workspaceId)
+        TransitionRepo.archiveByWorkspace(conn, c.workspaceId)
+        TrackRepo.archiveByWorkspace(conn, c.workspaceId)
+        SegmentRepo.archiveByWorkspace(conn, c.workspaceId)
+        TaskRepo.archiveByWorkspace(conn, c.workspaceId)
+        BlocksRepo.archiveByWorkspace(conn, c.workspaceId)
+        RelatesRepo.archiveByWorkspace(conn, c.workspaceId)
         return WorkspaceRepo.get(conn, c.workspaceId)!!
     }
 
@@ -111,13 +133,16 @@ class Service {
     private fun updateStatus(conn: Connection, c: UpdateStatus): Status {
         liveStatus(conn, c.statusId)
         c.name?.let { requireName(it, "status") }
-        mapConstraints { StatusRepo.update(conn, c.statusId, c.name, c.terminal, c.kanbanOrder) }
+        val rows = mapConstraints {
+            StatusRepo.update(conn, c.statusId, c.name, c.terminal, c.kanbanOrder, c.expectedVersion)
+        }
+        requireWritten(rows, c.expectedVersion)
         return StatusRepo.get(conn, c.statusId)!!
     }
 
     private fun archiveStatus(conn: Connection, c: ArchiveStatus): Status {
         liveStatus(conn, c.statusId)
-        StatusRepo.archive(conn, c.statusId)
+        requireWritten(StatusRepo.archive(conn, c.statusId, c.expectedVersion), c.expectedVersion)
         return StatusRepo.get(conn, c.statusId)!!
     }
 
@@ -135,9 +160,9 @@ class Service {
     }
 
     private fun archiveTransition(conn: Connection, c: ArchiveTransition): StatusTransition {
-        val t = TransitionRepo.get(conn, c.transitionId) ?: throw StxException.NotFound("transition ${c.transitionId}")
-        TransitionRepo.archive(conn, c.transitionId)
-        return t.copy(archived = true)
+        TransitionRepo.get(conn, c.transitionId) ?: throw StxException.NotFound("transition ${c.transitionId}")
+        requireWritten(TransitionRepo.archive(conn, c.transitionId, c.expectedVersion), c.expectedVersion)
+        return TransitionRepo.get(conn, c.transitionId)!!
     }
 
     // ── track ──────────────────────────────────────────────────────────────────
@@ -156,13 +181,19 @@ class Service {
         liveTrack(conn, c.trackId)
         c.name?.let { requireName(it, "track") }
         val metaJson = c.metadata?.let { MetadataCodec.encode(it) }
-        mapConstraints { TrackRepo.update(conn, c.trackId, c.name, c.description, metaJson) }
+        val rows = mapConstraints {
+            TrackRepo.update(conn, c.trackId, c.name, c.description, metaJson, c.expectedVersion)
+        }
+        requireWritten(rows, c.expectedVersion)
         return TrackRepo.get(conn, c.trackId)!!
     }
 
     private fun archiveTrack(conn: Connection, c: ArchiveTrack): Track {
         liveTrack(conn, c.trackId)
-        TrackRepo.archive(conn, c.trackId)
+        requireWritten(TrackRepo.archive(conn, c.trackId, c.expectedVersion), c.expectedVersion)
+        // Cascade: archive the track's segments, their tasks, and those tasks' incident edges.
+        val segmentIds = SegmentRepo.liveIdsByTrack(conn, c.trackId)
+        cascadeArchiveSegmentsAndTasks(conn, segmentIds)
         return TrackRepo.get(conn, c.trackId)!!
     }
 
@@ -182,6 +213,13 @@ class Service {
         return SegmentRepo.get(conn, id)!!
     }
 
+    private fun renameSegment(conn: Connection, c: RenameSegment): Segment {
+        liveSegment(conn, c.segmentId)
+        requireName(c.name, "segment")
+        requireWritten(SegmentRepo.rename(conn, c.segmentId, c.name, c.expectedVersion), c.expectedVersion)
+        return SegmentRepo.get(conn, c.segmentId)!!
+    }
+
     private fun moveSegment(conn: Connection, c: MoveSegment): Segment {
         val seg = liveSegment(conn, c.segmentId)
         if (seg.isRoot) throw StxException.Validation("the root segment cannot be reparented")
@@ -196,14 +234,20 @@ class Service {
                 throw StxException.Validation("reparenting would create a cycle in the segment tree")
             }
         }
-        SegmentRepo.reparent(conn, c.segmentId, c.newParentSegmentId)
+        requireWritten(
+            SegmentRepo.reparent(conn, c.segmentId, c.newParentSegmentId, c.expectedVersion),
+            c.expectedVersion,
+        )
         return SegmentRepo.get(conn, c.segmentId)!!
     }
 
     private fun archiveSegment(conn: Connection, c: ArchiveSegment): Segment {
-        val seg = liveSegment(conn, c.segmentId)
-        SegmentRepo.archive(conn, c.segmentId)
-        return seg.copy(archived = true)
+        liveSegment(conn, c.segmentId)
+        requireWritten(SegmentRepo.archive(conn, c.segmentId, c.expectedVersion), c.expectedVersion)
+        // Cascade: archive descendant segments, their tasks, and those tasks' incident edges.
+        // The subtree includes c.segmentId itself; archiving it twice is harmless (idempotent).
+        cascadeArchiveSegmentsAndTasks(conn, SegmentRepo.subtreeIds(conn, c.segmentId))
+        return SegmentRepo.get(conn, c.segmentId)!!
     }
 
     // ── task ─────────────────────────────────────────────────────────────────────
@@ -227,7 +271,8 @@ class Service {
     private fun updateTask(conn: Connection, c: UpdateTask): Task {
         liveTask(conn, c.taskId)
         c.patch.title?.let { requireName(it, "task") }
-        mapConstraints { TaskRepo.applyPatch(conn, c.taskId, c.patch) }
+        val rows = mapConstraints { TaskRepo.applyPatch(conn, c.taskId, c.patch, c.expectedVersion) }
+        requireWritten(rows, c.expectedVersion)
         return TaskRepo.get(conn, c.taskId)!!
     }
 
@@ -241,17 +286,29 @@ class Service {
         if (!TransitionRepo.exists(conn, task.workspaceId, task.statusId, c.toStatusId)) {
             throw StxException.Validation("no legal transition from status ${task.statusId} to ${c.toStatusId}")
         }
-        TaskRepo.moveStatus(conn, c.taskId, c.toStatusId)
+        requireWritten(TaskRepo.moveStatus(conn, c.taskId, c.toStatusId, c.expectedVersion), c.expectedVersion)
+        return TaskRepo.get(conn, c.taskId)!!
+    }
+
+    private fun moveTaskToSegment(conn: Connection, c: MoveTaskToSegment): Task {
+        val task = liveTask(conn, c.taskId)
+        val segment = liveSegment(conn, c.toSegmentId)
+        // task.segment_id is the uniform parent — it must not cross a workspace boundary.
+        if (segment.workspaceId != task.workspaceId) {
+            throw StxException.Validation("target segment belongs to a different workspace")
+        }
+        if (task.segmentId == c.toSegmentId) return task // no-op move
+        requireWritten(TaskRepo.moveSegment(conn, c.taskId, c.toSegmentId, c.expectedVersion), c.expectedVersion)
         return TaskRepo.get(conn, c.taskId)!!
     }
 
     private fun archiveTask(conn: Connection, c: ArchiveTask): Task {
         liveTask(conn, c.taskId)
+        requireWritten(TaskRepo.archive(conn, c.taskId, c.expectedVersion), c.expectedVersion)
         // Invariant 4: archive incident edges in the same transaction so a live edge always
         // joins two live tasks (lets the frontier skip checking blocker archived-state).
         BlocksRepo.archiveIncident(conn, c.taskId)
         RelatesRepo.archiveIncident(conn, c.taskId)
-        TaskRepo.archive(conn, c.taskId)
         return TaskRepo.get(conn, c.taskId)!!
     }
 
@@ -274,9 +331,9 @@ class Service {
     }
 
     private fun archiveBlocks(conn: Connection, c: ArchiveBlocks): Blocks {
-        val b = BlocksRepo.get(conn, c.blocksId) ?: throw StxException.NotFound("blocks ${c.blocksId}")
-        BlocksRepo.archive(conn, c.blocksId)
-        return b.copy(archived = true)
+        BlocksRepo.get(conn, c.blocksId) ?: throw StxException.NotFound("blocks ${c.blocksId}")
+        requireWritten(BlocksRepo.archive(conn, c.blocksId, c.expectedVersion), c.expectedVersion)
+        return BlocksRepo.get(conn, c.blocksId)!!
     }
 
     private fun addRelatesTo(conn: Connection, c: AddRelatesTo): RelatesTo {
@@ -294,9 +351,93 @@ class Service {
     }
 
     private fun archiveRelatesTo(conn: Connection, c: ArchiveRelatesTo): RelatesTo {
-        val r = RelatesRepo.get(conn, c.relatesId) ?: throw StxException.NotFound("relates_to ${c.relatesId}")
-        RelatesRepo.archive(conn, c.relatesId)
-        return r.copy(archived = true)
+        RelatesRepo.get(conn, c.relatesId) ?: throw StxException.NotFound("relates_to ${c.relatesId}")
+        requireWritten(RelatesRepo.archive(conn, c.relatesId, c.expectedVersion), c.expectedVersion)
+        return RelatesRepo.get(conn, c.relatesId)!!
+    }
+
+    // ── per-key metadata ─────────────────────────────────────────────────────────
+    private fun setMetaKey(conn: Connection, c: SetMetaKey): Any {
+        val key = normalizeMetaKey(c.key)
+        return mutateMeta(conn, c.entity, c.entityId, c.expectedVersion) { it + (key to c.value) }
+    }
+
+    private fun deleteMetaKey(conn: Connection, c: DeleteMetaKey): Any {
+        val key = normalizeMetaKey(c.key)
+        return mutateMeta(conn, c.entity, c.entityId, c.expectedVersion) { it - key }
+    }
+
+    /**
+     * Read-modify-write a single metadata blob: load the live entity, transform its map, persist.
+     * Returns the refreshed entity. The whole thing runs inside the caller's transaction, so the
+     * read-then-write is atomic against other writers (the single write-actor serializes mutations).
+     */
+    private fun mutateMeta(
+        conn: Connection,
+        entity: MetaEntity,
+        id: Long,
+        expectedVersion: Long?,
+        transform: (Metadata) -> Metadata,
+    ): Any = when (entity) {
+        MetaEntity.WORKSPACE -> {
+            val e = liveWorkspace(conn, id)
+            val json = MetadataCodec.encode(transform(e.metadata))
+            requireWritten(WorkspaceRepo.update(conn, id, null, json, expectedVersion), expectedVersion)
+            WorkspaceRepo.get(conn, id)!!
+        }
+        MetaEntity.TRACK -> {
+            val e = liveTrack(conn, id)
+            val json = MetadataCodec.encode(transform(e.metadata))
+            requireWritten(TrackRepo.update(conn, id, null, null, json, expectedVersion), expectedVersion)
+            TrackRepo.get(conn, id)!!
+        }
+        MetaEntity.TASK -> {
+            val e = liveTask(conn, id)
+            requireWritten(
+                TaskRepo.applyPatch(conn, id, TaskPatch(metadata = transform(e.metadata)), expectedVersion),
+                expectedVersion,
+            )
+            TaskRepo.get(conn, id)!!
+        }
+        MetaEntity.BLOCKS -> {
+            val e = BlocksRepo.get(conn, id)?.takeUnless { it.archived } ?: throw StxException.NotFound("blocks $id")
+            val json = MetadataCodec.encode(transform(e.metadata))
+            requireWritten(BlocksRepo.updateMetadata(conn, id, json, expectedVersion), expectedVersion)
+            BlocksRepo.get(conn, id)!!
+        }
+        MetaEntity.RELATES_TO -> {
+            val e = RelatesRepo.get(conn, id)?.takeUnless { it.archived }
+                ?: throw StxException.NotFound("relates_to $id")
+            val json = MetadataCodec.encode(transform(e.metadata))
+            requireWritten(RelatesRepo.updateMetadata(conn, id, json, expectedVersion), expectedVersion)
+            RelatesRepo.get(conn, id)!!
+        }
+    }
+
+    // ── cascade + CAS helpers ────────────────────────────────────────────────────
+    /** Bulk-archive a set of segments, every live task inside them, and those tasks' incident edges. */
+    private fun cascadeArchiveSegmentsAndTasks(conn: Connection, segmentIds: List<Long>) {
+        if (segmentIds.isEmpty()) return
+        val taskIds = TaskRepo.liveIdsInSegments(conn, segmentIds)
+        // Invariant 4: archive incident edges so a live edge always joins two live tasks.
+        BlocksRepo.archiveIncidentToAny(conn, taskIds)
+        RelatesRepo.archiveIncidentToAny(conn, taskIds)
+        TaskRepo.archiveByIds(conn, taskIds)
+        SegmentRepo.archiveByIds(conn, segmentIds)
+    }
+
+    /** A versioned write that affected zero rows after a live-guard passed means the version was stale. */
+    private fun requireWritten(rows: Int, expectedVersion: Long?) {
+        if (expectedVersion != null && rows == 0) {
+            throw StxException.Conflict("version conflict: the entity was modified concurrently (stale expectedVersion)")
+        }
+    }
+
+    /** Metadata keys are normalized to lowercase (matching the v2 convention). */
+    private fun normalizeMetaKey(key: String): String {
+        val k = key.trim().lowercase()
+        if (k.isEmpty()) throw StxException.Validation("metadata key must not be blank")
+        return k
     }
 
     // ── shared guards ────────────────────────────────────────────────────────────

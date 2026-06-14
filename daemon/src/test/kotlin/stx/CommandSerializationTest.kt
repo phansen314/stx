@@ -18,8 +18,13 @@ import stx.command.CreateTask
 import stx.command.CreateTrack
 import stx.command.CreateTransition
 import stx.command.CreateWorkspace
+import stx.command.DeleteMetaKey
+import stx.command.MetaEntity
 import stx.command.MoveSegment
 import stx.command.MoveTask
+import stx.command.MoveTaskToSegment
+import stx.command.RenameSegment
+import stx.command.SetMetaKey
 import stx.command.TaskPatch
 import stx.command.UpdateStatus
 import stx.command.UpdateTask
@@ -45,16 +50,20 @@ class CommandSerializationTest {
         UpdateTrack(1, name = "auth2", description = "d", metadata = emptyMap()),
         ArchiveTrack(1),
         CreateSegment(1, "seg", parentSegmentId = 2),
+        RenameSegment(1, "seg2", expectedVersion = 3),
         MoveSegment(1, newParentSegmentId = null),
         ArchiveSegment(1),
         CreateTask(1, 2, "title", kind = "impl", description = "d", priority = 5),
-        UpdateTask(1, TaskPatch(title = "t", priority = 9, kind = "review")),
+        UpdateTask(1, TaskPatch(title = "t", priority = 9, kind = "review"), expectedVersion = 7),
         MoveTask(1, 2),
+        MoveTaskToSegment(1, 5, expectedVersion = 2),
         ArchiveTask(1),
         AddBlocks(1, 2),
         ArchiveBlocks(1),
         AddRelatesTo("spawns", 1, 2),
         ArchiveRelatesTo(1),
+        SetMetaKey(MetaEntity.TASK, 1, "jira_key", "AUTH-1", expectedVersion = 4),
+        DeleteMetaKey(MetaEntity.WORKSPACE, 1, "stale"),
     )
 
     @Test fun `every command round-trips through json`() {

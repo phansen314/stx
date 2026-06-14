@@ -23,19 +23,34 @@ object StatusRepo {
             workspaceId,
         ) { it.toStatus() }
 
-    fun update(conn: Connection, id: Long, name: String?, terminal: Boolean?, kanbanOrder: Int?): Int {
+    fun update(
+        conn: Connection,
+        id: Long,
+        name: String?,
+        terminal: Boolean?,
+        kanbanOrder: Int?,
+        expectedVersion: Long?,
+    ): Int {
         val sets = mutableListOf<String>()
         val args = mutableListOf<Any?>()
         if (name != null) { sets += "name=?"; args += name }
         if (terminal != null) { sets += "terminal=?"; args += if (terminal) 1 else 0 }
         if (kanbanOrder != null) { sets += "kanban_order=?"; args += kanbanOrder }
-        if (sets.isEmpty()) return 0
-        args += id
-        return conn.exec("UPDATE status SET ${sets.joinToString(", ")} WHERE id=?", *args.toTypedArray())
+        sets += "version=version+1"
+        return conn.exec(
+            "UPDATE status SET ${sets.joinToString(", ")} WHERE id=?${versionClause(expectedVersion)}",
+            *args.toTypedArray(), id, *versionArg(expectedVersion),
+        )
     }
 
-    fun archive(conn: Connection, id: Long): Int =
-        conn.exec("UPDATE status SET archived=1 WHERE id=?", id)
+    fun archive(conn: Connection, id: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE status SET archived=1, version=version+1 WHERE id=?${versionClause(expectedVersion)}",
+            id, *versionArg(expectedVersion),
+        )
+
+    fun archiveByWorkspace(conn: Connection, workspaceId: Long): Int =
+        conn.exec("UPDATE status SET archived=1, version=version+1 WHERE workspace_id=? AND archived=0", workspaceId)
 
     /** Live terminal status ids for a workspace — used by the frontier query. */
     fun terminalIds(conn: Connection, workspaceId: Long): List<Long> =
@@ -68,6 +83,15 @@ object TransitionRepo {
             workspaceId, fromStatusId, toStatusId,
         ) { true } ?: false
 
-    fun archive(conn: Connection, id: Long): Int =
-        conn.exec("UPDATE status_transition SET archived=1 WHERE id=?", id)
+    fun archive(conn: Connection, id: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE status_transition SET archived=1, version=version+1 WHERE id=?${versionClause(expectedVersion)}",
+            id, *versionArg(expectedVersion),
+        )
+
+    fun archiveByWorkspace(conn: Connection, workspaceId: Long): Int =
+        conn.exec(
+            "UPDATE status_transition SET archived=1, version=version+1 WHERE workspace_id=? AND archived=0",
+            workspaceId,
+        )
 }

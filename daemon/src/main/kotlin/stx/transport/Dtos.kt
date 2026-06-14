@@ -28,6 +28,7 @@ import stx.Metadata
 )
 
 @Serializable data class SegmentBody(val name: String, val parentSegmentId: Long? = null)
+@Serializable data class SegmentRenameBody(val name: String)
 @Serializable data class SegmentMoveBody(val newParentSegmentId: Long? = null)
 
 @Serializable data class TaskBody(
@@ -43,6 +44,10 @@ import stx.Metadata
 )
 
 @Serializable data class TaskStatusBody(val toStatusId: Long)
+@Serializable data class TaskSegmentBody(val toSegmentId: Long)
+
+/** Body for `PUT /{entity}/{id}/meta/{key}` — the single value to store under the path key. */
+@Serializable data class MetaValueBody(val value: String)
 
 @Serializable data class BlocksBody(val source: Long, val target: Long, val metadata: Metadata = emptyMap())
 @Serializable data class RelatesBody(

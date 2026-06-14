@@ -22,18 +22,38 @@ object TrackRepo {
             workspaceId,
         ) { it.toTrack() }
 
-    fun update(conn: Connection, id: Long, name: String?, description: String?, metadataJson: String?): Int {
+    fun update(
+        conn: Connection,
+        id: Long,
+        name: String?,
+        description: String?,
+        metadataJson: String?,
+        expectedVersion: Long?,
+    ): Int {
         val sets = mutableListOf<String>()
         val args = mutableListOf<Any?>()
         if (name != null) { sets += "name=?"; args += name }
         if (description != null) { sets += "description=?"; args += description }
         if (metadataJson != null) { sets += "metadata_json=?"; args += metadataJson }
-        if (sets.isEmpty()) return 0
+        sets += "version=version+1"
         sets += "updated_at=datetime('now')"
-        args += id
-        return conn.exec("UPDATE track SET ${sets.joinToString(", ")} WHERE id=?", *args.toTypedArray())
+        return conn.exec(
+            "UPDATE track SET ${sets.joinToString(", ")} WHERE id=?${versionClause(expectedVersion)}",
+            *args.toTypedArray(), id, *versionArg(expectedVersion),
+        )
     }
 
-    fun archive(conn: Connection, id: Long): Int =
-        conn.exec("UPDATE track SET archived=1, updated_at=datetime('now') WHERE id=?", id)
+    fun archive(conn: Connection, id: Long, expectedVersion: Long? = null): Int =
+        conn.exec(
+            "UPDATE track SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE id=?${versionClause(expectedVersion)}",
+            id, *versionArg(expectedVersion),
+        )
+
+    fun archiveByWorkspace(conn: Connection, workspaceId: Long): Int =
+        conn.exec(
+            "UPDATE track SET archived=1, version=version+1, updated_at=datetime('now') " +
+                "WHERE workspace_id=? AND archived=0",
+            workspaceId,
+        )
 }

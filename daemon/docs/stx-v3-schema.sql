@@ -28,6 +28,7 @@ CREATE TABLE workspace (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT    NOT NULL,
     metadata_json TEXT    NOT NULL DEFAULT '{}',
+    version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token; bumped on every write
     archived      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -41,6 +42,7 @@ CREATE TABLE status (
     name         TEXT    NOT NULL,
     kanban_order INTEGER NOT NULL DEFAULT 0,        -- display order only
     terminal     INTEGER NOT NULL DEFAULT 0,        -- terminal == "done"
+    version      INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -54,6 +56,7 @@ CREATE TABLE status_transition (
     workspace_id   INTEGER NOT NULL REFERENCES workspace(id) ON DELETE RESTRICT,
     from_status_id INTEGER NOT NULL REFERENCES status(id)    ON DELETE RESTRICT,
     to_status_id   INTEGER NOT NULL REFERENCES status(id)    ON DELETE RESTRICT,
+    version        INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived       INTEGER NOT NULL DEFAULT 0,
     CHECK (from_status_id <> to_status_id)
 );
@@ -69,6 +72,7 @@ CREATE TABLE track (
     name          TEXT    NOT NULL,
     description   TEXT    NOT NULL DEFAULT '',       -- the track blurb
     metadata_json TEXT    NOT NULL DEFAULT '{}',     -- e.g. jira_key, deadline
+    version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -88,6 +92,7 @@ CREATE TABLE segment (
     parent_segment_id INTEGER          REFERENCES segment(id)   ON DELETE RESTRICT,
     name              TEXT    NOT NULL,
     is_root           INTEGER NOT NULL DEFAULT 0,
+    version           INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived          INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
     CHECK (parent_segment_id IS NULL OR parent_segment_id <> id)   -- no self-parent
@@ -114,6 +119,7 @@ CREATE TABLE task (
     start_date    TEXT,
     finish_date   TEXT,
     metadata_json TEXT    NOT NULL DEFAULT '{}',
+    version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -130,6 +136,7 @@ CREATE TABLE blocks (
     source_task_id INTEGER NOT NULL REFERENCES task(id)      ON DELETE RESTRICT, -- blocker
     target_task_id INTEGER NOT NULL REFERENCES task(id)      ON DELETE RESTRICT, -- blocked
     metadata_json  TEXT    NOT NULL DEFAULT '{}',
+    version        INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
     CHECK (source_task_id <> target_task_id)
@@ -148,6 +155,7 @@ CREATE TABLE relates_to (
     source_task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE RESTRICT,
     target_task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE RESTRICT,
     metadata_json  TEXT    NOT NULL DEFAULT '{}',
+    version        INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token
     archived       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
     CHECK (source_task_id <> target_task_id)
