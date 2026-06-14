@@ -52,11 +52,41 @@ Mutations are serialized through one write-actor coroutine; reads run concurrent
 ```sh
 cd daemon
 ./gradlew test            # 28 tests
-./gradlew installDist
-./build/install/stx-daemon/bin/stx-daemon --port=8473 --db=~/.local/share/stx/stx.db
+
+# Quickest way to start it — straight from source, nothing installed on your PATH.
+# The DB defaults to $XDG_DATA_HOME/stx/stx.db (auto-created); --db is optional.
+./gradlew run --args="--port=8473"
+./gradlew run --args="--port=8473 --db=/tmp/stx-smoke.db"   # throwaway clean slate
 ```
 
+Prefer a standalone launcher (no Gradle in the run loop)? Build a local distribution and run that:
+
+```sh
+./gradlew installDist
+./build/install/stx-daemon/bin/stx-daemon --port=8473
+./build/install/stx-daemon/bin/stx-daemon --port=8473 --db="$HOME/.local/share/stx/stx.db"
+```
+
+> Pass `--db` an unquoted `~` and it won't expand (tilde isn't expanded after `=` in a
+> non-assignment argument) — use `"$HOME/…"` or an absolute path.
+
 Loopback-only is the security model — the daemon binds `127.0.0.1` and never an external interface.
+
+**Verify it's up:**
+
+```sh
+curl 127.0.0.1:8473/health        # → ok
+```
+
+**Try it end-to-end:** [`daemon/scripts/smoke.sh`](daemon/scripts/smoke.sh) drives the whole API
+against a running daemon — it builds a workspace → track → segment → task graph, walks the `next`
+frontier before/after unblocking a `blocks` edge, and shows the structured error envelope. Honors
+`STX_PORT` / `STX_HOST` (defaults `8473` / `127.0.0.1`); requires `curl` + `jq`.
+
+```sh
+daemon/scripts/smoke.sh
+STX_PORT=9000 daemon/scripts/smoke.sh
+```
 
 **HTTP surface** (JSON responses; structured error envelope `{error, kind}` — Validation→400, NotFound→404, Conflict→409):
 
