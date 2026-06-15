@@ -176,4 +176,150 @@ class HttpApiTest {
         val r = post("/workspaces", """{"nope":true}""")
         assertEquals(400, r.status)
     }
+
+    @Test fun `health check returns 200`() {
+        assertEquals(200, get("/health").status)
+    }
+
+    @Test fun `workspace and child-entity collection and single reads`() {
+        val ws = post("/workspaces", """{"name":"rdtest","metadata":{"owner":"demo"}}""").id()
+
+        val list = get("/workspaces").array()
+        assertTrue(list.any { it.jsonObject["id"]!!.jsonPrimitive.long == ws })
+
+        val single = get("/workspaces/$ws").json()
+        assertEquals("rdtest", single["name"]!!.jsonPrimitive.content)
+        assertEquals("demo", single["metadata"]!!.jsonObject["owner"]!!.jsonPrimitive.content)
+
+        val backlog = post("/workspaces/$ws/statuses", """{"name":"Backlog","kanbanOrder":0}""").id()
+        val done = post("/workspaces/$ws/statuses", """{"name":"Done","terminal":true,"kanbanOrder":1}""").id()
+        post("/workspaces/$ws/transitions", """{"fromStatusId":$backlog,"toStatusId":$done}""")
+
+        val statuses = get("/workspaces/$ws/statuses").array()
+        assertEquals(2, statuses.size)
+        val statusSingle = get("/statuses/$backlog").json()
+        assertEquals("Backlog", statusSingle["name"]!!.jsonPrimitive.content)
+
+        val transitions = get("/workspaces/$ws/transitions").array()
+        assertEquals(1, transitions.size)
+
+        val track = post(
+            "/workspaces/$ws/tracks",
+            """{"name":"Payments","description":"Billing rewrite","metadata":{"quarter":"Q3"}}"""
+        ).id()
+
+        val tracks = get("/workspaces/$ws/tracks").array()
+        assertEquals(1, tracks.size)
+        val trackSingle = get("/tracks/$track").json()
+        assertEquals("Payments", trackSingle["name"]!!.jsonPrimitive.content)
+        assertEquals("Billing rewrite", trackSingle["description"]!!.jsonPrimitive.content)
+        assertEquals("Q3", trackSingle["metadata"]!!.jsonObject["quarter"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `segment reads - single entity, direct tasks, and recursive tasks`() {
+        val ws = post("/workspaces", """{"name":"segtest"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val root = get("/tracks/$track/segments").array()[0].jsonObject["id"]!!.jsonPrimitive.long
+        val child = post("/tracks/$track/segments", """{"name":"child","parentSegmentId":$root}""").id()
+
+        val segSingle = get("/segments/$child").json()
+        assertEquals("child", segSingle["name"]!!.jsonPrimitive.content)
+
+        post("/tracks/$track/tasks", """{"statusId":$todo,"title":"root-task"}""").id()
+        val childTask = post("/segments/$child/tasks", """{"statusId":$todo,"title":"child-task"}""").id()
+
+        val direct = get("/segments/$child/tasks").array()
+        assertEquals(1, direct.size)
+        assertEquals(childTask, direct[0].jsonObject["id"]!!.jsonPrimitive.long)
+
+        val recursive = get("/segments/$root/tasks?recursive=true").array()
+        assertEquals(2, recursive.size)
+
+        val trackTasks = get("/tracks/$track/tasks").array()
+        assertEquals(2, trackTasks.size)
+    }
+
+    @Test fun `relates edges - create with kind and read at task and workspace level`() {
+        val ws = post("/workspaces", """{"name":"reltest"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val a = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"a"}""").id()
+        val b = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"b"}""").id()
+
+        post("/relates", """{"kind":"duplicates","source":$a,"target":$b}""")
+
+        assertEquals(1, get("/tasks/$a/relates").array().size)
+        assertEquals(1, get("/tasks/$b/relates").array().size)
+        assertEquals(1, get("/workspaces/$ws/relates").array().size)
+    }
+
+    @Test fun `scoped frontier by segment subtree and by kind`() {
+        val ws = post("/workspaces", """{"name":"scopetest"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val root = get("/tracks/$track/segments").array()[0].jsonObject["id"]!!.jsonPrimitive.long
+        val child = post("/tracks/$track/segments", """{"name":"child","parentSegmentId":$root}""").id()
+
+        val design = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"design","kind":"design"}""").id()
+        val feature = post("/segments/$child/tasks", """{"statusId":$todo,"title":"feature","kind":"feature"}""").id()
+
+        assertEquals(2, get("/next?workspace=$ws").array().size)
+
+        val segScoped = get("/next?workspace=$ws&segment=$child").array()
+        assertEquals(1, segScoped.size)
+        assertEquals(feature, segScoped[0].jsonObject["id"]!!.jsonPrimitive.long)
+
+        val kindFiltered = get("/next?workspace=$ws&kind=design").array()
+        assertEquals(1, kindFiltered.size)
+        assertEquals(design, kindFiltered[0].jsonObject["id"]!!.jsonPrimitive.long)
+    }
+
+    @Test fun `archiving a task cascades its incident edges and unblocks dependents`() {
+        val ws = post("/workspaces", """{"name":"archtest"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val a = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"a"}""").id()
+        val b = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"b"}""").id()
+        val c = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"c"}""").id()
+
+        post("/blocks", """{"source":$a,"target":$b}""")
+        post("/relates", """{"kind":"dup","source":$b,"target":$c}""")
+
+        // a and c are frontier; b is blocked
+        val before = get("/next?workspace=$ws").array().map { it.jsonObject["id"]!!.jsonPrimitive.long }.toSet()
+        assertEquals(setOf(a, c), before)
+
+        // Archive a → blocks edge cascades → b now unblocked
+        assertEquals(200, post("/tasks/$a/archive").status)
+        assertEquals(0, get("/tasks/$a/blocks").array().size)
+        val after = get("/next?workspace=$ws").array().map { it.jsonObject["id"]!!.jsonPrimitive.long }.toSet()
+        assertEquals(setOf(b, c), after)
+    }
+
+    @Test fun `segment rename is reflected on subsequent read`() {
+        val ws = post("/workspaces", """{"name":"rentest"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val root = get("/tracks/$track/segments").array()[0].jsonObject["id"]!!.jsonPrimitive.long
+        val seg = post("/tracks/$track/segments", """{"name":"old","parentSegmentId":$root}""").id()
+
+        assertEquals(200, patch("/segments/$seg", """{"name":"new"}""").status)
+        assertEquals("new", get("/segments/$seg").json()["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `track archive cascades all children and leaves frontier empty`() {
+        val ws = post("/workspaces", """{"name":"trackarch"}""").id()
+        val todo = post("/workspaces/$ws/statuses", """{"name":"todo"}""").id()
+        val track = post("/workspaces/$ws/tracks", """{"name":"t"}""").id()
+        val root = get("/tracks/$track/segments").array()[0].jsonObject["id"]!!.jsonPrimitive.long
+        val child = post("/tracks/$track/segments", """{"name":"child","parentSegmentId":$root}""").id()
+        val t1 = post("/tracks/$track/tasks", """{"statusId":$todo,"title":"t1"}""").id()
+        val t2 = post("/segments/$child/tasks", """{"statusId":$todo,"title":"t2"}""").id()
+        post("/blocks", """{"source":$t1,"target":$t2}""")
+
+        assertEquals(1, get("/next?workspace=$ws").array().size)
+
+        assertEquals(200, post("/tracks/$track/archive").status)
+        assertTrue(get("/next?workspace=$ws").array().isEmpty(), "frontier empty after track archive")
+    }
 }

@@ -169,6 +169,9 @@ expect_err POST /blocks "{\"source\":$T2,\"target\":$T1}"
 step "14. NotFound: a task id that doesn't exist → 404"
 expect_err GET "/tasks/999999"
 
+step "14a. Malformed body: missing required field → 400"
+expect_err POST /workspaces '{"nope":true}'
+
 # ── archive demo ────────────────────────────────────────────────────────────
 step "15. Archive T3 (cascades its incident edges), then confirm it's gone from next"
 api POST "/tasks/$T3/archive" >/dev/null
@@ -188,11 +191,17 @@ note "T2 current version = $VER"
 expect_err PATCH "/tasks/$T2?expectedVersion=0" '{"priority":9}'   # 0 is stale after the meta writes
 api PATCH "/tasks/$T2?expectedVersion=$VER" '{"priority":9}' >/dev/null
 
+step "17a. Update task title via PATCH (no expectedVersion = skip CAS)"
+api PATCH "/tasks/$T2" '{"title":"Wire OAuth callback (updated)"}' >/dev/null
+note "read back to confirm title updated"
+api GET "/tasks/$T2" >/dev/null
+
 # ── refile a task under a different segment ──────────────────────────────────────
 step "18. Refile T2 from API/Auth into the API segment"
 api POST "/tasks/$T2/segment" "{\"toSegmentId\":$SEG_API}" >/dev/null
-note "incident edge reads: T2's blocks/relates, and the whole-workspace edge list"
+note "incident edge reads: T2's blocks/relates, and whole-workspace blocks + relates lists"
 api GET "/tasks/$T2/blocks" >/dev/null
+api GET "/workspaces/$WS/blocks" >/dev/null
 api GET "/workspaces/$WS/relates" >/dev/null
 
 # ── rename a (pure-filing) segment ───────────────────────────────────────────────
