@@ -1,5 +1,6 @@
 package stx
 
+import org.apache.logging.log4j.kotlin.logger
 import stx.log.Sidecar
 import stx.repo.Db
 import stx.service.Reads
@@ -8,6 +9,8 @@ import stx.service.WriteActor
 import stx.transport.HttpApi
 import stx.transport.LoopbackServer
 import java.nio.file.Path
+
+private val log = logger("stx.Main")
 
 const val DEFAULT_PORT = 8473
 
@@ -36,7 +39,7 @@ fun main(args: Array<String>) {
     val api = HttpApi(reads, writeFn = actor::submitBlocking)
     val server = LoopbackServer(port, api.handler())
     val bound = server.start()
-    println("stx daemon listening on 127.0.0.1:$bound  (db=$dbPath)")
+    log.info { "stx daemon listening on 127.0.0.1:$bound  (db=$dbPath)" }
 
     Runtime.getRuntime().addShutdownHook(
         Thread {

@@ -21,6 +21,11 @@ dependencies {
     // plain JDBC + SQLite (no ORM)
     implementation("org.xerial:sqlite-jdbc:3.50.1.0")
 
+    // logging
+    implementation("org.apache.logging.log4j:log4j-api:2.24.3")
+    implementation("org.apache.logging.log4j:log4j-core:2.24.3")
+    implementation("org.apache.logging.log4j:log4j-api-kotlin:1.5.0")
+
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

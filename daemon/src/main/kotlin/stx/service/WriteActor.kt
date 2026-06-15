@@ -8,10 +8,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.apache.logging.log4j.kotlin.logger
 import stx.command.Command
 import stx.repo.Db
 import java.sql.Connection
 import java.util.concurrent.Executors
+
+private val log = logger("stx.WriteActor")
 
 /**
  * The single writer (brief §6). All mutations flow through one coroutine draining a
@@ -61,13 +64,16 @@ class WriteActor(
             // After commit: best-effort logging that must never affect the committed state.
             try {
                 onCommitted?.invoke(job.command, result)
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                log.warn(e) { "onCommitted hook failed for ${job.command::class.simpleName}" }
             }
             job.result.complete(result)
         } catch (e: Throwable) {
+            log.error(e) { "command failed: ${job.command::class.simpleName}" }
             try {
                 writeConn.rollback()
-            } catch (_: Throwable) {
+            } catch (re: Throwable) {
+                log.error(re) { "rollback failed after command error" }
             }
             job.result.completeExceptionally(e)
         } finally {
