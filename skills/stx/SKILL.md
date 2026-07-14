@@ -1,45 +1,71 @@
 ---
 name: stx
-description: Use when the user wants to persist structured context, a kanban board, or a multi-step plan across sessions via the local `stx` CLI — creating workspaces, managing nested groups, tracking tasks, moving statuses, querying workspace state, workflow tracking, or running `stx workspace show`/`stx export`. Not for ad-hoc in-chat task decomposition.
+description: Drive the stx task daemon from the shell — create/list/move tasks across workspaces, tracks, segments. Use when tracking work in stx-v3 (workspace → track → segment → task with a blocks-DAG "next" frontier).
 ---
 
-*If `stx` is not found, ask the user how they'd like to install it.*
+# stx CLI
 
-## Core Workflow
+Stateless CLI over the stx daemon — run `stx …` (it's on PATH). The daemon **autostarts**
+on login via a systemd user service and listens on `127.0.0.1:8420` (override with
+`--base-url` or `STX_URL`). If a command errors with a connection failure, start it:
+`systemctl --user start stx.service`.
 
-1. **Pick or create a workspace.** Pass `--statuses` to seed statuses — otherwise the workspace starts empty and `stx task create` will fail. Override active workspace per-command with `-w/--workspace`:
-   ```sh
-   stx workspace create work --statuses "Backlog,In Progress,Done"
-   ```
+## The one rule: always pass `-w`
 
-2. **Create tasks** — `-S/--status` is **required**, there is no default status:
-   ```sh
-   stx task create "Write README" -S Backlog
-   ```
+There is **no stored "current workspace"** — every workspace-scoped command takes `-w <name|id>`
+explicitly. This is deliberate: multiple Claude sessions and sub-agents run concurrently, and any
+shared/implied context would clobber across them. Names or numeric ids work everywhere. Add `--json`
+to any command for machine-readable output; text is the compact default.
 
-3. **Move tasks as work progresses** — the status must exist by name:
-   ```sh
-   stx task mv task-0001 -S "In Progress"
-   ```
+## Commands
 
-4. **Check workspace state** at any point:
-   ```sh
-   stx workspace show   # full snapshot: statuses, tasks, groups
-   stx task ls          # task list with filters (--status, --group, --search)
-   ```
+| Command | What |
+|---|---|
+| `stx ls` | list workspaces (no `-w`) |
+| `stx tree -w <ws>` | whole workspace as a tree — the "orient me" view |
+| `stx next -w <ws> [-t <track>] [--limit N]` | ready tasks (frontier: unblocked, non-terminal) |
+| `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
+| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …]` | create task (`-s <segment-id>` instead of `-t`) |
+| `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
+| `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k] [--clear-kind] [--due …]` | edit fields |
+| `stx done <id>` | move to the workspace's terminal status |
+| `stx block <id> --on <blocker-id>` | make a task blocked by another (feeds `next`) |
+| `stx relate <a> --to <b> --kind <k>` | relation edge (e.g. `relates_to`, `spawns`) |
+| `stx archive task\|segment\|track\|workspace <id> [--yes]` | archive (`--yes` required for track/workspace — cascades) |
+| `stx ws new <name>` | new workspace |
+| `stx track new <name> -w <ws> [--desc …]` | new track |
+| `stx segment new <name> -w <ws> -t <track> [--parent <id>]` | new segment |
+| `stx status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` | status admin |
+| `stx kind new <name> -w <ws>` · `kind archive <name> -w <ws>` | kind admin |
+| `stx transition -w <ws> --from <s> --to <s>` | allow a status transition |
 
-### Optional capabilities
+`mv`/`edit`/`done` handle the optimistic-lock `version` automatically (read-modify-write, one retry
+on conflict). Errors print as `error: <Variant>: …` with a non-zero exit.
 
-- **Polymorphic edges** — `stx edge create --source task-0003 --target task-0001 --kind blocks` links task-0003 to task-0001 with the `blocks` kind. Endpoint type is inferred from path delimiters: `/A` or `/A/B/C` (leading slash) → group, `A/B/C` (multi-seg) → group, `A:leaf` / `:leaf` (contains `:`) → task, `task-NNNN`/`#N`/int → task by id, bare title → task. The leading-slash anchor lets you reference a root group as `/A` without needing the `group:` prefix. Explicit prefixes `group:`, `task:`, `workspace:`, `status:` override inference. Cross-type edges work (e.g. `--source /A/B/C --target D:task0` is group→task with no prefixes needed). `kind` is a free-form lowercase label (`[a-z0-9_.-]+`, 1-64 chars). Each edge carries a metadata blob via `stx edge meta ls|get|set|del --source <ref> --target <ref> --kind <k>` and an `acyclic` flag (default on for `blocks`/`spawns`).
-- **Groups** — workspace-scoped hierarchies, nestable without depth limit: `stx group create "Sprint 1"`, then `stx group assign <task> <group>` (or pass `--group/-g` at task create time to skip the separate assign step). Nest via `--parent` or path-as-title: `stx group create "Sprint 1/Sub-group"`. Reference any group by path: `stx group show "Sprint 1/Sub-group"`. `/` and `:` are reserved for path syntax and forbidden in group/task titles.
-- **Entity metadata** — arbitrary key/value pairs on any task, workspace, or group: `stx task meta set task-0001 branch feat/kv`, `stx workspace meta set region us-east-1`, `stx group meta set "Sprint 1" start 2026-01-01`. Keys are lowercase-normalized (`Branch` → `branch`), charset `[a-z0-9_.-]+`, max 64 chars. Values free-form up to 500 chars. Use for linking to external IDs (JIRA, GitHub, branches, PRs), environment tags, ownership, sprint windows, etc.
-- **Cross-workspace move** — use `stx task transfer` (not `stx task mv`): `stx task transfer task-0001 --to ops --status Backlog`. Metadata is carried over; group assignment is not.
-- **Archive (soft-delete)** — `stx {task,group,workspace,status} archive <id>`. Cascade-archives descendants where applicable. **Pass `--force` in scripts/loops** — archive commands prompt y/N interactively and fail-fast on non-interactive stdin. No unarchive command; restore via SQLite directly.
-- **Audit trail** — `stx task log <task>` shows task field-change history. The underlying `journal` table covers all entity types (tasks, groups, workspaces, statuses, edges) and per-key metadata diffs — queryable directly via `stx export` or SQLite.
-- **Done flags and terminal statuses** — `stx task done <task>` marks a task done independent of its status (no-op if already done). `stx task undone <task> [--force]` clears it (gated: requires `--force` in non-interactive stdin). Mark a status terminal via `stx status edit <name> --terminal`; tasks moved into (or created in) a terminal status auto-set `done=true`. The `done` flag is sticky — status moves do not clear it. `group.done` is a read-only derived field: true iff every non-archived child task and subgroup is done.
-- **Next-task computation** — `stx next [--rank] [--include-blocked] [--limit N] [--edge-kind KIND]` topo-sorts the active acyclic `blocks` DAG (or any edge kind you specify) to surface the actionable **Ready** frontier and the **Blocked** list with pending blocker task IDs. Group endpoints are expanded to member tasks, so a `group-A blocks group-B` edge means all of A's tasks must finish before any of B's become ready. Use `--rank` to order by priority/due-date for agent task selection.
-- **Graph visualization** — `stx graph` generates a DOT or Mermaid file from workspace edges. Use `--format mermaid` for Mermaid, `-k KIND` (repeatable) to filter by edge kind, `-o PATH` for explicit output. Default: DOT to a temp file.
-- **Milestone snapshot** — `stx export` (all workspaces, Mermaid edge graphs labelled by `kind`); `-o FILE` writes to disk.
-- **Event hooks** — post-only observers that fire after every entity mutation (fire-and-forget; write always proceeds). Config: `~/.config/stx/hooks.toml`. Inspect via `stx hook events|ls|validate|schema`. For authoring custom hooks interactively, invoke the `stx:hooks` skill (`skills/hooks/SKILL.md`). Full event catalog and recipe library in `references/hooks.md`.
+## Recipes
 
-See `references/cli-reference.md` for full flag details, JSON envelope shapes, and error codes.
+**Orient** — what exists, what's ready:
+```
+stx ls
+stx tree -w auth-rewrite
+stx next -w auth-rewrite
+```
+
+**Pick next + start it:**
+```
+stx next -w auth-rewrite          # grab the top id
+stx mv 42 in-progress
+```
+
+**Finish + unblock downstream:**
+```
+stx done 42                       # 42 → terminal; anything blocked only by 42 now appears in `next`
+stx next -w auth-rewrite
+```
+
+**Plan a small chunk:**
+```
+stx add "design schema" -w auth-rewrite -t build -p 2
+stx add "write migration" -w auth-rewrite -t build
+stx block <migration-id> --on <schema-id>   # migration waits for schema
+```

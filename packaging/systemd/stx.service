@@ -1,0 +1,20 @@
+[Unit]
+Description=stx v3 task daemon
+Documentation=https://github.com/phansen314/stx
+After=default.target
+
+[Service]
+Type=simple
+# One-time build required first: (cd %h/code/stx && ./gradlew installDist)
+ExecStart=%h/code/stx/build/install/stx/bin/stx
+Restart=on-failure
+RestartSec=2s
+# Avoid tight restart loops (e.g. transient lock/port conflict):
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Optional overrides — uncomment to change:
+# Environment=STX_PORT=8420
+# Environment=XDG_STATE_HOME=%h/.local/state
+
+[Install]
+WantedBy=default.target

@@ -1,12 +1,13 @@
 {
   "name": "stx",
+  "description": "stx-v3 task tracking skills — drive the local task daemon (workspace → track → segment → task, blocks-DAG next frontier)",
   "owner": {
     "name": "phansen314"
   },
   "plugins": [
     {
       "name": "stx",
-      "description": "Structured context management and task tracking via the stx CLI",
+      "description": "Structured context & task tracking via the stx-v3 daemon (workspace → track → segment → task)",
       "source": "./"
     }
   ]

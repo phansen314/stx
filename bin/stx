@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# stx launcher — runs the CLI from any CWD by putting the repo root (which holds cli/ and stxc/)
+# on PYTHONPATH. Symlink this onto your PATH if you like: ln -s "$PWD/bin/stx" ~/.local/bin/stx
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec env PYTHONPATH="${here}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m cli "$@"

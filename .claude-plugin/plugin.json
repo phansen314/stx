@@ -1,10 +1,9 @@
 {
   "name": "stx",
-  "version": "0.17.0",
-  "description": "Structured context management and task tracking via the stx CLI",
+  "version": "3.0.0",
+  "description": "Structured context & task tracking via the stx-v3 daemon (workspace → track → segment → task)",
   "author": {
     "name": "phansen314"
   },
-  "repository": "https://github.com/phansen314/stx",
   "keywords": ["context", "tasks", "hierarchy", "agents", "productivity"]
 }

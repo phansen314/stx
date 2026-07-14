@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One log4j2 config, two needs (brief §7/§9):
+     (1) app logging + the onDefect stacktrace -> console (Root);
+     (2) the journal -> a dedicated rolling file via the `stx.journal` logger (additivity=false,
+         so journal lines never leak to console). The file lives in the XDG state dir. -->
+<Configuration status="WARN">
+  <Properties>
+    <!-- Prefer the path Main resolves (matches the DB dir exactly); fall back to the same XDG/home
+         logic for non-Main JVMs (tests). Main's value wins so the two never diverge. -->
+    <Property name="journalDir">${sys:stx.journalDir:-${env:XDG_STATE_HOME:-${sys:user.home}/.local/state}/stx}</Property>
+  </Properties>
+
+  <Appenders>
+    <Console name="Console" target="SYSTEM_OUT">
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"/>
+    </Console>
+
+    <RollingFile name="Journal"
+                 fileName="${journalDir}/journal.log"
+                 filePattern="${journalDir}/journal-%d{yyyy-MM-dd}-%i.log.gz">
+      <!-- One JSON object per line, no decoration: the message IS the event. -->
+      <PatternLayout pattern="%msg%n"/>
+      <Policies>
+        <SizeBasedTriggeringPolicy size="10 MB"/>
+        <TimeBasedTriggeringPolicy/>
+      </Policies>
+      <DefaultRolloverStrategy max="5"/>
+    </RollingFile>
+  </Appenders>
+
+  <Loggers>
+    <!-- Journal: its own file only; never additive to the console. -->
+    <Logger name="stx.journal" level="info" additivity="false">
+      <AppenderRef ref="Journal"/>
+    </Logger>
+
+    <Root level="info">
+      <AppenderRef ref="Console"/>
+    </Root>
+  </Loggers>
+</Configuration>

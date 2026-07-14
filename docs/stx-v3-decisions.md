@@ -1,0 +1,66 @@
+# stx v3.0.0 — Implementation Decisions
+
+Resolutions for points the four authoritative docs leave open or under-specified.
+These bind the build; they do not override the schema/next/brief on anything they
+already state. Recorded here (rather than scattered across the prose docs) to avoid
+the cross-doc drift the brief warns about.
+
+## D1 — Invariant count is 9
+Canonical count is **nine** (numbered 1–9 in schema.sql, design.md, brief §3). Stale
+"seven"/"eight" mentions were corrected in design.md and brief §3 / §9.
+
+## D2 — Reading a task's edges
+The brief §5 exposes no route to read a task's `blocks` / `relates_to` edges, but §8
+tests require it. Resolution: **`GET /tasks/{id}` embeds edges in its response DTO**:
+- `blocks`: incoming (tasks that block this) and outgoing (tasks this blocks), live edges only.
+- `relates_to`: the symmetric read — UNION both directions (X as source OR target),
+  **deduped** for symmetric kinds; directional kinds (`spawns`) keep both rows distinct.
+No new routes. The inverse `why <task>` traversal stays deferred (brief §11 / next.md).
+
+## D3 — Seeded status transitions (workspace bootstrap)
+Brief §3 mandates the `done → in-progress` rework back-edge but does not enumerate the
+rest. Seed exactly this transition set in the same txn as the status seed:
+- `todo → in-progress`
+- `in-progress → done`
+- `in-progress → todo`
+- `done → in-progress`   (rework back-edge)
+
+## D4 — Direct GET of an archived row
+Reconciles the schema note (a direct `GET /tasks/{id}` may bypass `live_task` to inspect
+an archived row on purpose) with the brief's `Gone → 410`:
+- **`GET /tasks/{id}`** (single, direct): returns **200** + the row even when archived,
+  with an `archived` boolean in the DTO. It bypasses `live_task` deliberately.
+- **List / `next` / kanban reads**: go through `live_task`; archived rows never appear.
+- **Mutations** targeting an archived row: **410 `Gone`** (`StxError.Gone`).
+
+## D5 — Pinned versions / toolchain
+Verified locally available: JDK 21.0.6 (Temurin), Gradle 9.3.1, kotlinc, sqlite3 3.45.
+- Kotlin **2.3.0** (matches `railway`'s `kotlin-stdlib`).
+- JDK toolchain **21**.
+- `tech.codingzen:railway:1.1.0` (Maven Central; package `tech.codingzen.res`).
+- http4k 5.x, **SunHttp** server backend (loopback, no extra server dep).
+- `org.xerial:sqlite-jdbc` latest 3.x.
+- `org.jetbrains.kotlinx:kotlinx-serialization-json` 1.7+.
+- `org.jetbrains.kotlinx:kotlinx-coroutines-core` 1.10+.
+- log4j2 2.23+ (`log4j-api` + `log4j-core` + `log4j-slf4j2-impl`).
+- Test: `kotlin-test-junit5` + JUnit 5.
+
+## D6 — relates_to.kind stays free text
+`relates_to.kind` is intentionally left as unconstrained `TEXT` (`schema.sql:206`) — **no CHECK, no
+registry, no enum**. stx is a developer tool for power users, and an open taxonomy is a feature: the
+set of useful relation kinds (`spawns`, `mentions`, `relates-to`, and whatever a user coins) is
+open-ended and evolves per-user, not per-schema.
+
+Considered and rejected:
+- **A per-workspace registry table** (the `task_kind` / `status` pattern). Rejected: relation kinds
+  read as a *cross-workspace* taxonomy, so per-workspace vocab would force re-registration or drift
+  across workspaces; and the read layer already **owns** kind semantics (symmetric UNION+dedup vs
+  directional `spawns`, D2), so an extensible registry would need a `symmetric` flag the read path
+  consults — cost without payoff for the target user.
+- **A config-file allowed-values list.** Rejected: no config subsystem exists (settings are env vars
+  + hardcoded defaults); this would mean inventing one just to constrain a field we chose not to
+  constrain.
+
+Mitigation for the one real downside (typo drift, e.g. `relates-to` vs `relates_to`): a **read-only**
+`stx relate-kinds -w <ws>` (`GET /workspaces/{id}/relates-kinds`) lists the distinct `kind` values in
+live use, so a user can self-check without a hard constraint. It reports drift; it does not prevent it.

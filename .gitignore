@@ -3,8 +3,12 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.gradle/
+.kotlin/
 .idea/
 .pytest_cache/
+.coverage
+coverage.json
 tmp/
 coverage/
 uv.lock

@@ -1,63 +1,18 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[project]
-name = "stx"
-version = "0.17.0"
-description = "Structured context management with CLI-first agent integration and a human-friendly TUI"
-requires-python = ">=3.12"
-dependencies = [
-    "textual>=0.50.0",
-]
-
-[project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=6.0", "pytest-asyncio>=1.0", "pytest-xdist>=3.0", "ruff>=0.9", "mypy>=1.0", "jsonschema>=4.0"]
-
-[project.scripts]
-stx = "stx.__main__:main"
-stx-tui = "stx.tui:main"
+# Python test/quality config for the stx-v3 client layer (stxc/ cli/ tui/).
+# The daemon itself is Kotlin/Gradle; this file only configures pytest + coverage.
+# These packages are flat at the repo root and run via PYTHONPATH (see bin/stx), so
+# pytest adds the repo root to sys.path via `pythonpath` rather than installing a package.
 
 [tool.pytest.ini_options]
-pythonpath = ["tests"]
-asyncio_mode = "auto"
-addopts = "-n auto --cov-report=term-missing --cov-report=html:coverage/html"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+# Coverage is opt-in (needs pytest-cov): `python -m pytest --cov=stxc --cov=cli tests/`.
 
 [tool.coverage.run]
-source_pkgs = ["stx"]
+source = ["stxc", "cli"]
 branch = true
-parallel = true
-data_file = "coverage/.coverage"
 
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
-
-[tool.coverage.html]
-directory = "coverage/html"
-
-[tool.ruff]
-target-version = "py312"
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "W"]
-ignore = ["E501"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["stx"]
-
-[tool.ruff.lint.per-file-ignores]
-"*/__init__.py" = ["F401"]   # re-export modules
-"tests/*" = ["F841"]          # unused vars in tests are often intentional fixtures
-
-[tool.mypy]
-python_version = "3.12"
-ignore_missing_imports = true
-warn_return_any = true
-warn_unused_configs = true
-warn_unused_ignores = true
-disable_error_code = ["no-any-return"]  # SQLite Row fields are inherently Any
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/stx"]

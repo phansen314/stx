@@ -1,83 +1,86 @@
+"""Shared test fixtures for the stx-v3 Python client layer.
+
+The daemon boundary is HTTP, and this sibling-less project has no precedent for mocking it
+(the ~/code/stx predecessor talks straight to SQLite). The convention established here: inject
+a fake `requests.Session` into `Client.s` (the only network seam, stxc/client.py:28). No daemon,
+no sockets — tests assert the exact wire contract the client sends and parses.
+"""
 from __future__ import annotations
 
-import os
-import sqlite3
-from collections.abc import Generator
-from pathlib import Path
+from typing import Any
 
 import pytest
+import requests
 
-from stx import service
-from stx.connection import get_connection, init_db
-from tests.seed import seed_multi_workspace, seed_workspace
-
-
-def pytest_configure(config):
-    """Enable coverage in xdist workers by setting COVERAGE_PROCESS_START."""
-    os.environ.setdefault("COVERAGE_PROCESS_START", "pyproject.toml")
+from stxc import Client
 
 
-@pytest.fixture
-def config_path(tmp_path: Path) -> Path:
-    return tmp_path / "tui.toml"
+class FakeResponse:
+    """Stands in for a `requests.Response`. `json()` raises ValueError when no JSON was set,
+    exercising the client's text fallback (stxc/client.py:34)."""
+
+    def __init__(self, status_code: int = 200, json_data: Any = None, text: str = "") -> None:
+        self.status_code = status_code
+        self._json = json_data
+        self.text = text
+
+    def json(self) -> Any:
+        if self._json is None:
+            raise ValueError("no JSON body")
+        return self._json
 
 
-@pytest.fixture(autouse=True)
-def _isolate_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect DEFAULT_CONFIG_PATH to a per-test tmp location.
+class FakeSession:
+    """Records every call and returns queued FakeResponses (FIFO). Covers both `.request(...)`
+    used by `_call` and `.get(...)` used by `ping`."""
 
-    Prevents any test from reading or writing ~/.config/stx/tui.toml,
-    whether via StxApp() with no config_path, load_config() with no arg,
-    or save_config() falling back to the default.
-    """
-    safe = tmp_path / "tui.toml"
-    monkeypatch.setattr("stx.tui.config.DEFAULT_CONFIG_PATH", safe)
-    monkeypatch.setattr("stx.tui.app.DEFAULT_CONFIG_PATH", safe)
+    def __init__(self, responses: list[FakeResponse] | None = None, raise_on_get: bool = False,
+                 raise_on_request: bool = False) -> None:
+        self._responses = list(responses or [])
+        self.calls: list[dict[str, Any]] = []
+        self.raise_on_get = raise_on_get
+        self.raise_on_request = raise_on_request
 
+    def request(self, method: str, url: str, json: Any = None, timeout: Any = None) -> FakeResponse:
+        self.calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
+        if self.raise_on_request:
+            raise requests.RequestException("connection refused")
+        return self._responses.pop(0)
 
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test.db"
+    def get(self, url: str, timeout: Any = None) -> FakeResponse:
+        self.calls.append({"method": "GET", "url": url, "json": None, "timeout": timeout})
+        if self.raise_on_get:
+            raise requests.RequestException("connection refused")
+        return self._responses.pop(0)
 
-
-@pytest.fixture
-def conn(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    c = get_connection(db_path)
-    init_db(c)
-    yield c
-    if c.in_transaction:
-        c.rollback()
-    c.close()
-
-
-@pytest.fixture
-def seeded_tui_db(tmp_path: Path) -> tuple[Path, dict]:
-    db_path = tmp_path / "tui-seeded.db"
-    c = get_connection(db_path)
-    init_db(c)
-    ids = seed_workspace(c, db_path=db_path)
-    c.close()
-    return db_path, ids
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.calls[-1]
 
 
 @pytest.fixture
-def multi_workspace_tui_db(tmp_path: Path) -> tuple[Path, dict]:
-    db_path = tmp_path / "tui-multi.db"
-    c = get_connection(db_path)
-    init_db(c)
-    ids = seed_multi_workspace(c, db_path=db_path)
-    c.close()
-    return db_path, ids
+def make_client():
+    """Build a Client whose session is a FakeSession primed with `responses`."""
+
+    def _make(responses: list[FakeResponse] | None = None, *, raise_on_get: bool = False,
+              raise_on_request: bool = False, base: str = "http://x:8420") -> Client:
+        c = Client(base)
+        c.s = FakeSession(responses, raise_on_get=raise_on_get, raise_on_request=raise_on_request)
+        return c
+
+    return _make
 
 
-@pytest.fixture
-def seeded_tui_db_empty_middle(tmp_path: Path) -> tuple[Path, dict]:
-    """Seeded workspace with all In Progress tasks archived (empty middle column)."""
-    db_path = tmp_path / "tui-seeded-empty-mid.db"
-    c = get_connection(db_path)
-    init_db(c)
-    ids = seed_workspace(c, db_path=db_path)
-    service.update_task(c, ids["task_ids"]["auth_middleware"], {"archived": True}, "test")
-    service.update_task(c, ids["task_ids"]["unit_tests"], {"archived": True}, "test")
-    c.close()
-    return db_path, ids
+# ── wire-dict factories (camelCase, as the daemon emits) ──────────────────────
+def status_dict(**over: Any) -> dict[str, Any]:
+    d = {"id": 1, "workspaceId": 1, "name": "todo", "kanbanOrder": 0,
+         "terminal": False, "isDefault": True, "archived": False}
+    d.update(over)
+    return d
+
+
+def task_dict(**over: Any) -> dict[str, Any]:
+    d = {"id": 1, "workspaceId": 1, "segmentId": 1, "statusId": 1, "kindId": None,
+         "title": "t", "priority": 0, "version": 0, "archived": False}
+    d.update(over)
+    return d
