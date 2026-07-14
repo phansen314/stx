@@ -93,10 +93,10 @@ def simulate(stx: Stx, state_dir: str | None) -> None:
     check(stx.get(f"/workspaces/{ws}/statuses", quiet=True)[1] is not None, "workspace queryable")
     sts = stx.statuses(ws)
     names = {s["name"] for s in sts}
-    check({"todo", "in-progress", "done"} <= names, "seeded statuses present")
+    check({"Backlog", "Implementation", "Review", "Done"} <= names, "seeded statuses present")
     check(sum(1 for s in sts if s["isDefault"]) == 1, "exactly one default status")
-    check(next(s for s in sts if s["name"] == "todo")["isDefault"], "todo is the default")
-    check(next(s for s in sts if s["name"] == "done")["terminal"], "done is terminal")
+    check(next(s for s in sts if s["name"] == "Backlog")["isDefault"], "Backlog is the default")
+    check(next(s for s in sts if s["name"] == "Done")["terminal"], "Done is terminal")
     listed = stx.get("/workspaces", expect=200)[1]["items"]
     check(any(w["id"] == ws for w in listed), "new workspace shows in listing")
 
@@ -106,18 +106,18 @@ def simulate(stx: Stx, state_dir: str | None) -> None:
     review = stx.post(f"/workspaces/{ws}/kinds", {"name": "review"}, expect=200)[1]["id"]
     stx.post(f"/workspaces/{ws}/kinds", {"name": "research"}, expect=200)
     research_kind = next(k["id"] for k in stx.kinds(ws) if k["name"] == "research")
-    blocked = stx.post(f"/workspaces/{ws}/statuses", {"name": "blocked", "kanbanOrder": 3}, expect=200)[1]["id"]
+    blocked = stx.post(f"/workspaces/{ws}/statuses", {"name": "blocked", "kanbanOrder": 4}, expect=200)[1]["id"]
     stx.post(f"/workspaces/{ws}/transitions",
-             {"fromStatusId": stx.status_id(ws, "todo"), "toStatusId": blocked}, expect=200)
+             {"fromStatusId": stx.status_id(ws, "Backlog"), "toStatusId": blocked}, expect=200)
     stx.post(f"/workspaces/{ws}/transitions",
-             {"fromStatusId": blocked, "toStatusId": stx.status_id(ws, "in-progress")}, expect=200)
-    check(len(stx.get(f"/workspaces/{ws}/transitions", quiet=True)[1]["items"]) == 6,
-          "transitions listed (4 seeded + 2 added)")
-    # move the create-time default to in-progress, verify, then restore to todo
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'in-progress')}/default", expect=200)
-    check(next(s for s in stx.statuses(ws) if s["isDefault"])["name"] == "in-progress", "default moved")
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'todo')}/default", expect=200)
-    check(next(s for s in stx.statuses(ws) if s["isDefault"])["name"] == "todo", "default restored to todo")
+             {"fromStatusId": blocked, "toStatusId": stx.status_id(ws, "Implementation")}, expect=200)
+    check(len(stx.get(f"/workspaces/{ws}/transitions", quiet=True)[1]["items"]) == 8,
+          "transitions listed (6 seeded + 2 added)")
+    # move the create-time default to Implementation, verify, then restore to Backlog
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Implementation')}/default", expect=200)
+    check(next(s for s in stx.statuses(ws) if s["isDefault"])["name"] == "Implementation", "default moved")
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Backlog')}/default", expect=200)
+    check(next(s for s in stx.statuses(ws) if s["isDefault"])["name"] == "Backlog", "default restored to Backlog")
 
     # 3 ── structure the work
     scene("3. Structure tracks & segments")
@@ -132,7 +132,7 @@ def simulate(stx: Stx, state_dir: str | None) -> None:
     scene("4. Create tasks")
     a1 = stx.post(f"/tracks/{auth}/tasks", {"title": "design auth", "kindId": impl, "priority": 5}, expect=200)[1]
     check(a1["workspaceId"] == ws, "task workspace_id derived from container")
-    check(a1["statusId"] == stx.status_id(ws, "todo"), "no-status task lands on default (todo)")
+    check(a1["statusId"] == stx.status_id(ws, "Backlog"), "no-status task lands on default (Backlog)")
     check(a1["kindId"] == impl, "kind set")
     a1 = a1["id"]
     a2 = stx.post(f"/segments/{story}/tasks", {"title": "impl login", "kindId": impl}, expect=200)[1]["id"]
@@ -167,20 +167,20 @@ def simulate(stx: Stx, state_dir: str | None) -> None:
 
     # 7 ── lifecycle & kanban
     scene("7. Work the lifecycle & kanban")
-    stx.move(ws, a1, "in-progress")
+    stx.move(ws, a1, "Implementation")
     check(a1 in stx.frontier(ws), "in-progress task stays in the frontier")
-    inprog = stx.status_id(ws, "in-progress")
+    inprog = stx.status_id(ws, "Implementation")
     kanban = stx.get(f"/tracks/{auth}/tasks?status={inprog}", expect=200)[1]["items"]
-    check([t["id"] for t in kanban] == [a1], "kanban: auth in-progress column = [a1]")
-    stx.move(ws, a1, "done")
+    check([t["id"] for t in kanban] == [a1], "kanban: auth Implementation column = [a1]")
+    stx.move(ws, a1, "Done")
     check({a2, a4, b1} <= set(stx.frontier(ws)), "completing a1 unblocks a2 and cross-track b1")
     stx.patch(f"/tasks/{a2}", {"expectedVersion": stx.version(a2), "priority": 9, "description": "use authlib"}, expect=200)
     check(stx.task(a2)["task"]["priority"] == 9, "edit applied (priority bumped)")
     # complete a2, then rework it to re-gate a3
-    stx.move(ws, a2, "in-progress")
-    stx.move(ws, a2, "done")
+    stx.move(ws, a2, "Implementation")
+    stx.move(ws, a2, "Done")
     check(a3 in stx.frontier(ws), "completing a2 unblocks a3")
-    stx.move(ws, a2, "in-progress")  # rework (done -> in-progress)
+    stx.move(ws, a2, "Review")  # rework (Done -> Review, the seeded rework edge)
     check(a3 not in stx.frontier(ws), "rework re-gates a3 (recompute-on-read)")
 
     # 8 ── self-defending rejections
@@ -192,25 +192,25 @@ def simulate(stx: Stx, state_dir: str | None) -> None:
     t_other = stx.post(f"/tracks/{stx.post(f'/workspaces/{ws2}/tracks', {'name':'x'}, quiet=True)[1]['id']}/tasks",
                        {"title": "foreign"}, expect=200)[1]["id"]
     stx.post("/blocks", {"sourceTaskId": a1, "targetTaskId": t_other}, expect=409, error="CrossWorkspace")
-    stx.post(f"/tasks/{a4}/status", {"toStatusId": stx.status_id(ws, "done"), "expectedVersion": stx.version(a4)},
-             expect=409, error="IllegalTransition")  # todo -> done not a transition
+    stx.post(f"/tasks/{a4}/status", {"toStatusId": stx.status_id(ws, "Review"), "expectedVersion": stx.version(a4)},
+             expect=409, error="IllegalTransition")  # Backlog -> Review unseeded (→terminal is always legal, so probe a non-terminal move)
     stx.patch(f"/tasks/{a4}", {"expectedVersion": 999, "title": "stale"}, expect=409, error="VersionConflict")
     stx.get("/tasks/999999", expect=404, error="NotFound")
     check(stx.raw_post("/workspaces", '{"nam')[0] == 400, "malformed body → 400")
     stx.get("/next", expect=400)  # missing workspace
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'todo')}/archive", expect=400, error="Validation")  # default
-    # referenced (non-default) status: free todo from default, then archive it (a4 still on todo) → referenced reject
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'in-progress')}/default", expect=200)
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'todo')}/archive", expect=400, error="Validation")
-    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'todo')}/default", expect=200)  # restore
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Backlog')}/archive", expect=400, error="Validation")  # default
+    # referenced (non-default) status: free Backlog from default, then archive it (a4 still on Backlog) → referenced reject
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Implementation')}/default", expect=200)
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Backlog')}/archive", expect=400, error="Validation")
+    stx.post(f"/workspaces/{ws}/statuses/{stx.status_id(ws, 'Backlog')}/default", expect=200)  # restore
     root_seg = next(s for s in stx.get(f"/tracks/{auth}/segments", quiet=True)[1]["items"] if s["isRoot"])
     stx.post(f"/segments/{root_seg['id']}/archive", expect=400, error="Validation")  # root-segment archive
 
     # 9 ── archive cascades & gone
-    # State here: a1 done; a2 in-progress (reworked) blocking a3; a3 gated; a4 free; b1 free (a1 done).
+    # State here: a1 Done; a2 Review (reworked) blocking a3; a3 gated; a4 free; b1 free (a1 Done).
     scene("9. Archive cascades & gone semantics")
-    # blocker archive (#4 edge cascade): a2 (in-progress) gates a3; archiving a2 frees a3.
-    check(a3 not in stx.frontier(ws), "a3 gated by in-progress blocker a2 before archive")
+    # blocker archive (#4 edge cascade): a2 (Review, non-terminal) gates a3; archiving a2 frees a3.
+    check(a3 not in stx.frontier(ws), "a3 gated by non-terminal blocker a2 before archive")
     stx.post(f"/tasks/{a2}/archive", expect=200)
     check(a3 in stx.frontier(ws), "archiving blocker a2 auto-unblocks a3")
     # kind null-cascade (#9) on a still-live referencing task (b1 has kind impl)
