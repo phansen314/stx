@@ -256,6 +256,16 @@ class ServiceTest {
         w(CreateStatus(ws, "Blocked", kanbanOrder = 9, terminal = false)).getOrThrow()
     }
 
+    @Test fun `creating a kind whose name case-insensitively duplicates a live one is rejected`() {
+        val (ws, _) = seedTrack()
+        w(CreateKind(ws, "impl")).getOrThrow()
+        // 'Impl' / '  IMPL ' must be refused so `next --kind` can't fragment on casing/whitespace.
+        assertIs<StxError.Duplicate>(w(CreateKind(ws, "Impl")).failureOrNull())
+        assertIs<StxError.Duplicate>(w(CreateKind(ws, "  IMPL ")).failureOrNull())
+        // a genuinely new name still succeeds
+        w(CreateKind(ws, "docs")).getOrThrow()
+    }
+
     // ── segment default parent (#68) ─────────────────────────────────────────────────────────────
 
     @Test fun `segment created without a parent nests under the track root`() {

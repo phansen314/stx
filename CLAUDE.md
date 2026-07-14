@@ -63,7 +63,7 @@ workspace → track → segment* → task
   decorative, cycles OK, `kind` is free text (see decision D6).
 - **Lifecycle:** `status` rows are kanban stages (`terminal=1` **is** "done" — no separate
   flag); `status_transition` is the per-workspace legal-move state machine. No `journal`
-  table — history is a non-authoritative append-only sidecar log (`events.log`).
+  table — history is a non-authoritative append-only sidecar log (`journal.log`).
 
 ## `next` (the frontier)
 
@@ -75,7 +75,7 @@ terminal, and no live `blocks` edge points at it from a non-terminal task. Order
 ## Invariants
 
 SQLite enforces FKs, CHECKs, and partial-unique indexes. The daemon enforces the graph
-invariants SQLite can't, transactionally (`service/Invariants.kt`, `service/Service.kt`):
+invariants SQLite can't, transactionally (`service/Invariants.kt`, `service/StxService.kt`):
 `blocks` is a DAG, `segment` parent is acyclic within a track, exactly one root segment per
 track, archive cascade (archiving a task archives its incident edges), immutable
 `segment.track_id`. Canonical invariant count is **nine** — numbered in `schema.sql` /
@@ -88,10 +88,12 @@ track, archive cascade (archiving a task archives its incident edges), immutable
   `done`, `archive`) don't need `-w`. `--json` for machine output.
 - **Single write-actor.** All mutations drain one `Channel<Command>` coroutine, each in its
   own transaction, in submission order; reads run concurrently against WAL.
-- **Loopback binding is the whole security model** — no auth. Structured JSON error envelope
-  (`{error, kind}`; Validation→400, NotFound→404, Conflict→409, Gone→410).
-- **Optimistic locking** is automatic in `mv`/`edit`/`done` (read-modify-write, one retry on
-  conflict).
+- **Loopback binding is the whole security model** — no auth. Structured JSON error envelope:
+  `{error: <variant>, ...variant-specific fields}` (no `kind` key). Status mapping
+  Validation→400, NotFound→404, Conflict→409, Gone→410.
+- **Optimistic locking**: `mv`/`edit`/`done` do a single CAS on the client-supplied version and
+  return `VersionConflict` on mismatch. The one-retry read-modify-write lives in the **Python CLI**
+  (`cli/__main__.py` `_retry_conflict`), not the daemon.
 - Sole local user: schema changes edit `src/main/resources/schema.sql` and recreate the DB
   rather than authoring a migration by default.
 

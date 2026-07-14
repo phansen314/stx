@@ -97,22 +97,22 @@ all its live tasks terminal — not a stored track status. Tracks have no lifecy
 - `status` rows define the stages; `terminal` marks done-ness (there is **no**
   separate `done` flag — terminal membership *is* done).
 - `status_transition` defines legal moves, per-workspace, **cycles allowed**
-  (`done → in-progress` rework is a legal back-edge).
+  (`Done → Review` rework is a legal back-edge).
 - **No guards.** Transitions define legality only; preconditions like "finish all
   impl before review" are honored by the dev/agent, not enforced. Keeps the machine
   a declarative table, not a rules engine.
 
 **Bootstrapping.** `task.status_id` is required (NOT NULL + FK), so a workspace with
 no statuses can hold no task. Workspace creation therefore **seeds a default status
-set in the same transaction** — `todo / in-progress / done` (with `done` terminal),
-sensible `kanban_order`, and the obvious transitions including the `done → in-progress`
-rework back-edge. The **create-time default** status (used when a task is created
+set in the same transaction** — `Backlog / Implementation / Review / Done` (with `Done`
+terminal), sensible `kanban_order`, and the forward flow plus rework back-edges (see D3).
+The **create-time default** status (used when a task is created
 without an explicit status) is marked by a stored **`is_default` flag** on `status` —
 deliberately decoupled from `kanban_order` so the task entry-point and the kanban
 display order stay independent axes (the same "each structure has one job" discipline
 as status × track). Exactly one live default per workspace is DB-enforced by a partial
 unique index (`ux_status_one_default`, the same singleton idiom as the root segment's
-`is_root`); the seed sets it on `todo`, a set-default verb moves it, and archiving the
+`is_root`); the seed sets it on `Backlog`, a set-default verb moves it, and archiving the
 current default is rejected ("set another default first" — symmetric with the
 root-segment archive reject in #6). The dev can rename/extend the set afterward; the
 seed only guarantees a workspace is usable the moment it exists.

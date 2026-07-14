@@ -37,8 +37,10 @@ client stack; the v2 Python application is retired. No data migration — a fres
 
 ### Changed
 
-- Version jumps 0.17.0 → 3.0.0 to mark the v3 line. Schema changes now edit
-  `src/main/resources/schema.sql` and recreate the DB (single local user, no migration framework).
+- Version jumps 0.17.0 → 3.0.0 to mark the v3 line. Schema changes edit
+  `src/main/resources/schema.sql` and recreate the DB by default (single local user); a forward
+  migration runner (`repo/Db.kt`, keyed on `PRAGMA user_version`) exists for when recreation isn't
+  acceptable.
 
 ## [0.17.0] — 2026-04-18
 

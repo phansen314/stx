@@ -112,6 +112,12 @@ class StxService {
 
     private fun createKind(c: Connection, cmd: CreateKind): Res<Reply, StxError> = rail {
         WorkspaceRepo.getLive(c, cmd.workspaceId) ?: raise(StxError.NotFound("workspace", cmd.workspaceId))
+        // Reject case-insensitive near-duplicates (e.g. "Impl" when "impl" exists) so `next --kind`
+        // can't fragment — the SQL uniqueness index is byte-exact and won't catch this on its own.
+        val wanted = cmd.name.trim()
+        if (KindRepo.listLive(c, cmd.workspaceId).any { it.name.trim().equals(wanted, ignoreCase = true) }) {
+            raise(StxError.Duplicate("kind", "kind name '${cmd.name}'"))
+        }
         val id = KindRepo.insert(c, cmd.workspaceId, cmd.name).bind()
         KindRepo.getById(c, id) ?: raise(StxError.NotFound("kind", id))
     }
@@ -284,7 +290,7 @@ class StxService {
     private fun archiveWorkspace(c: Connection, cmd: ArchiveWorkspace): Res<Reply, StxError> = rail {
         val ws = WorkspaceRepo.getById(c, cmd.id) ?: raise(StxError.NotFound("workspace", cmd.id))
         if (ws.archived) raise(StxError.Gone("workspace", cmd.id))
-        TrackRepo.liveIdsOfWorkspace(c, ws.id).forEach { archiveTrackCascade(c, it) }
+        TrackRepo.allIdsOfWorkspace(c, ws.id).forEach { archiveTrackCascade(c, it) }
         WorkspaceRepo.archive(c, ws.id)
         IdReply("workspace", cmd.id)
     }

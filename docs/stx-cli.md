@@ -30,7 +30,7 @@ Add `--json` to any command for raw output (pipe to `jq`); the default is compac
 
 ## Command reference
 
-See the table and recipes in [`.claude/skills/stx/SKILL.md`](../.claude/skills/stx/SKILL.md) — it's
+See the table and recipes in [`skills/stx/SKILL.md`](../skills/stx/SKILL.md) — it's
 the single source for the command list. In short:
 
 - **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>]`, `show <id>`

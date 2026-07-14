@@ -248,8 +248,8 @@ archive, status-archive-while-referenced #9 — see below) — never a thrown ex
 Express them with `ensure(cond) { StxError.X(...) }` inside the command's `rail { }`.
 
 **Plus a bootstrap + default-status rule.** Workspace-create seeds the default status
-set (`todo / in-progress / done`, `done.terminal=1`) and transitions (incl.
-`done → in-progress`) in the SAME transaction, and sets `is_default=1` on `todo`.
+set (`Backlog / Implementation / Review / Done`, `Done.terminal=1`) and transitions (incl.
+the `Done → Review` rework back-edge) in the SAME transaction, and sets `is_default=1` on `Backlog`.
 **Exactly one live default status per workspace:** "at most one" is DB-enforced by
 `ux_status_one_default` (partial unique index); the daemon provides "at least one" via
 the seed. Task-create with no `status_id` lands on the live `is_default=1` status. The
@@ -455,7 +455,7 @@ first. OL closes that hole and is additive to the actor, not redundant.
   their invariants re-validate live against current state, so a stale-based edge is
   caught by the invariant — not OL), and segments (pure filing, not edited).
 - A status move is CAS'd on the task, which **doubles as interim work
-  coordination**: two agents racing `todo→in-progress` — first wins, the loser gets
+  coordination**: two agents racing `Backlog→Implementation` — first wins, the loser gets
   409 and picks another `next` task. It arbitrates the move *instant* only, NOT the
   work duration; reserving a task while an agent works it is the deferred
   claim/lease (§11). OL = correctness of edits; lease = reservation of work —
@@ -574,7 +574,7 @@ Optimistic-locking tests:
   second is rejected 409 and the body carries the current row.
 - status move with a stale `expected_version` rejected (409); with the current
   version accepted.
-- two agents race the same `todo→in-progress` move: exactly one wins, the other
+- two agents race the same `Backlog→Implementation` move: exactly one wins, the other
   409s (interim first-mover-wins).
 - create succeeds with no `expected_version`.
 - an edge add computed from a stale read is caught by its invariant (DAG /
@@ -649,7 +649,7 @@ stx/
 5. `Invariants.kt` + `Service.kt`: the exhaustive `when` dispatch returning `Res`,
    plus the 9 invariants (rail/ensure → typed Failures), each with a unit test (§8).
    Workspace-create seeds the default status set + transitions in the same txn and
-   sets `is_default=1` on `todo` (§3 bootstrap); task-create derives `workspace_id`
+   sets `is_default=1` on `Backlog` (§3 bootstrap); task-create derives `workspace_id`
    from the segment and, when no `status_id` is given, uses the live `is_default`
    status.
 6. `Frontier.kt`: implement `next` with the §4 query; write the lifecycle + rework

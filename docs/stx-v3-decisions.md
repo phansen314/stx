@@ -18,12 +18,17 @@ tests require it. Resolution: **`GET /tasks/{id}` embeds edges in its response D
 No new routes. The inverse `why <task>` traversal stays deferred (brief §11 / next.md).
 
 ## D3 — Seeded status transitions (workspace bootstrap)
-Brief §3 mandates the `done → in-progress` rework back-edge but does not enumerate the
-rest. Seed exactly this transition set in the same txn as the status seed:
-- `todo → in-progress`
-- `in-progress → done`
-- `in-progress → todo`
-- `done → in-progress`   (rework back-edge)
+The seed uses a four-stage machine `Backlog / Implementation / Review / Done` (`Done`
+terminal, `Backlog` default). Reaching a terminal status is always legal regardless of
+edges (the `stx done` escape hatch — see `moveStatus`), so no direct `→Done` edge is
+seeded from `Backlog`/`Implementation`. Seed exactly this set in the same txn as the
+status seed (`StxService.createWorkspace`):
+- `Backlog → Implementation`
+- `Implementation → Review`
+- `Review → Done`
+- `Implementation → Backlog`   (rework back-edge)
+- `Review → Implementation`    (rework back-edge)
+- `Done → Review`              (rework back-edge)
 
 ## D4 — Direct GET of an archived row
 Reconciles the schema note (a direct `GET /tasks/{id}` may bypass `live_task` to inspect
@@ -38,10 +43,14 @@ Verified locally available: JDK 21.0.6 (Temurin), Gradle 9.3.1, kotlinc, sqlite3
 - Kotlin **2.3.0** (matches `railway`'s `kotlin-stdlib`).
 - JDK toolchain **21**.
 - `tech.codingzen:railway:1.1.0` (Maven Central; package `tech.codingzen.res`).
-- http4k 5.x, **SunHttp** server backend (loopback, no extra server dep).
+- http4k, **SunHttp** server backend (loopback, no extra server dep).
 - `org.xerial:sqlite-jdbc` latest 3.x.
-- `org.jetbrains.kotlinx:kotlinx-serialization-json` 1.7+.
-- `org.jetbrains.kotlinx:kotlinx-coroutines-core` 1.10+.
+- `org.jetbrains.kotlinx:kotlinx-serialization-json`.
+- `org.jetbrains.kotlinx:kotlinx-coroutines-core`.
+
+Exact pinned versions live in `gradle/libs.versions.toml` (the version-catalog source of
+truth) — Kotlin 2.3, http4k 6.54.x, serialization/coroutines 1.11.x as of 3.0.0. This list
+names the dependencies; the catalog owns the numbers.
 - log4j2 2.23+ (`log4j-api` + `log4j-core` + `log4j-slf4j2-impl`).
 - Test: `kotlin-test-junit5` + JUnit 5.
 

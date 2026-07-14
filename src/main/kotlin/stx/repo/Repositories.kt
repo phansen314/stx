@@ -123,6 +123,12 @@ object TrackRepo {
     fun liveIdsOfWorkspace(c: Connection, workspaceId: Long): List<Long> =
         c.queryList("SELECT id FROM track WHERE workspace_id=? AND archived=0", workspaceId) { it.getLong("id") }
 
+    /** All track ids in the workspace, archived or not — the workspace cascade sweeps every track
+     *  (like archiveTrackCascade sweeps every segment) so no live task under a pre-archived track
+     *  is orphaned (C4b). */
+    fun allIdsOfWorkspace(c: Connection, workspaceId: Long): List<Long> =
+        c.queryList("SELECT id FROM track WHERE workspace_id=?", workspaceId) { it.getLong("id") }
+
     fun casEdit(c: Connection, id: Long, expected: Int, name: String?, description: String?, metadataJson: String?): Int {
         val sets = buildList {
             if (name != null) add("name=?")

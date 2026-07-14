@@ -2,6 +2,10 @@
 Description=stx v3 task daemon
 Documentation=https://github.com/phansen314/stx
 After=default.target
+# Avoid tight restart loops (e.g. transient lock/port conflict). These are [Unit]-section
+# directives — systemd silently ignores them under [Service].
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -9,9 +13,6 @@ Type=simple
 ExecStart=%h/code/stx/build/install/stx/bin/stx
 Restart=on-failure
 RestartSec=2s
-# Avoid tight restart loops (e.g. transient lock/port conflict):
-StartLimitIntervalSec=60
-StartLimitBurst=5
 # Optional overrides — uncomment to change:
 # Environment=STX_PORT=8420
 # Environment=XDG_STATE_HOME=%h/.local/state

@@ -9,9 +9,7 @@ import argparse
 import os
 import sys
 
-import requests
-
-from stxc import Client, StxApiError
+from stxc import Client, StxApiError, StxError
 
 from . import context, render
 from .context import CliError
@@ -69,15 +67,7 @@ def cmd_next(c, args):
     tr_id = context.track(c, ws.id, args.track).id if args.track else None
     items = c.next(ws.id, track=tr_id, segment=args.segment, limit=args.limit)
     sn = _status_names(c, ws.id)
-    _emit(args, _frontier_text(items, sn), items)
-
-
-def _frontier_text(items, sn):
-    if not items:
-        return "(nothing ready)"
-    return "\n".join(
-        f"{i['id']:>4}  {('P'+str(i['priority'])) if i['priority'] else '  '}  "
-        f"[{sn.get(i['statusId'], i['statusId'])}]  {i['title']}" for i in items)
+    _emit(args, render.frontier(items, sn), items)
 
 
 def cmd_show(c, args):
@@ -415,8 +405,10 @@ def main(argv=None) -> int:
     except StxApiError as e:
         print(f"error: {e.variant or e.code}: {e}", file=sys.stderr)
         return 1
-    except requests.RequestException as e:
-        # Daemon crash / timeout / connection drop mid-command — a clean message, not a traceback.
+    except StxError as e:
+        # Daemon crash / timeout / connection drop mid-command: the client wraps every transport
+        # failure in StxConnError (a StxError subclass, NOT requests.RequestException), so catch the
+        # base here for a clean message instead of a traceback.
         print(f"error: daemon request failed: {e}", file=sys.stderr)
         return 1
 

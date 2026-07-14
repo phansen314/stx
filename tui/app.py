@@ -324,7 +324,11 @@ class StxApp(App):
     async def on_kanban_board_task_status_move(self, event: KanbanBoard.TaskStatusMove) -> None:
         task, to = event.task, event.new_status_id
         ws = task.workspace_id
-        legal = any(
+        # Reaching a terminal status is always legal regardless of edges — the `stx done` escape
+        # hatch the daemon honors (StxService.moveStatus). Mirror it here or the TUI wrongly refuses
+        # moves the daemon accepts.
+        to_terminal = any(st.id == to and st.terminal for st in self._statuses.get(ws, []))
+        legal = to_terminal or any(
             tr.from_status_id == task.status_id and tr.to_status_id == to
             for tr in self._transitions.get(ws, [])
         )

@@ -106,6 +106,18 @@ class DefensiveVisibilityTest {
         assertEquals(0, orphanCount(), "cascade descended through the archived mid and archived deep")
     }
 
+    @Test fun `workspace cascade reaches a live task under an already-archived track`() {
+        val ws = id(w(CreateWorkspace("ws")))
+        val track = id(w(CreateTrack(ws, "t")))
+        val live = id(w(CreateTask(trackId = track, title = "x")))
+        // Degenerate: archive the track row directly WITHOUT cascading its task -> `live` orphaned under it.
+        execRaw("UPDATE track SET archived = 1 WHERE id = $track")
+        assertEquals(1, orphanCount(), "precondition: task orphaned under archived track")
+        // Archiving the workspace must sweep every track (archived or not) and reach the orphan (C4b).
+        w(ArchiveWorkspace(ws)).getOrThrow()
+        assertEquals(0, orphanCount(), "workspace cascade descended through the archived track and archived $live")
+    }
+
     @Test fun `assertConsistent throws on a live task orphaned under an archived ancestor segment`() {
         val ws = id(w(CreateWorkspace("ws")))
         val track = id(w(CreateTrack(ws, "t")))

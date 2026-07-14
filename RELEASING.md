@@ -1,10 +1,11 @@
 # Releasing
 
-Checklist for cutting a new `stx` release. The version lives in two files that must move together: `pyproject.toml` (the Python package) and `.claude-plugin/plugin.json` (the Claude Code plugin). Missing one silently ships a mismatched release.
+Checklist for cutting a new `stx` release. The version lives in two files that must move together: `build.gradle.kts` (the Kotlin daemon) and `.claude-plugin/plugin.json` (the Claude Code plugin). Missing one silently ships a mismatched release. (`pyproject.toml` holds only pytest/coverage config — there is no Python package version.)
 
 ## 1. Pre-release checks
 
-- `python -m pytest tests/` — full suite must pass
+- `./gradlew test` — Kotlin daemon suite must pass
+- `python -m pytest tests/` — Python suite must pass
 - `git status` — working tree clean on the release branch
 - All user-visible changes since the previous release are reflected in `CHANGELOG.md` under `## [Unreleased]`
 
@@ -18,7 +19,7 @@ Pick the new version per [SemVer](https://semver.org/):
 
 Update both files in a single commit:
 
-- `pyproject.toml` → `version = "X.Y.Z"` under `[project]`
+- `build.gradle.kts` → `version = "X.Y.Z"`
 - `.claude-plugin/plugin.json` → `"version": "X.Y.Z"`
 
 ## 3. CHANGELOG promotion

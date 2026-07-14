@@ -38,15 +38,16 @@ class TestWorkspaces:
 
 
 class TestFrontier:
+    # Frontier rows arrive as raw wire dicts (camelCase keys), not Task dataclasses — mirror that.
     def test_empty(self) -> None:
         assert render.frontier([], {}) == "(nothing ready)"
 
     def test_status_name_used(self) -> None:
-        out = render.frontier([Task(id=4, status_id=1, priority=2, title="do it")], {1: "todo"})
+        out = render.frontier([{"id": 4, "statusId": 1, "priority": 2, "title": "do it"}], {1: "todo"})
         assert "[todo]" in out and "do it" in out and "P2" in out
 
     def test_status_id_fallback_when_name_missing(self) -> None:
-        out = render.frontier([Task(id=4, status_id=9, title="x")], {})
+        out = render.frontier([{"id": 4, "statusId": 9, "priority": 0, "title": "x"}], {})
         assert "[9]" in out
 
 

@@ -39,12 +39,13 @@ def relates_kinds(items: list[str]) -> str:
 
 
 def frontier(items: list, status_names: dict[int, str]) -> str:
+    # Frontier rows come off the wire as raw dicts (camelCase keys), not Task dataclasses.
     if not items:
         return "(nothing ready)"
     lines = []
-    for it in items:
-        st = status_names.get(it.status_id, str(it.status_id))
-        lines.append(f"{it.id:>4}  {_prio(it.priority)}  [{st}]  {it.title}")
+    for i in items:
+        st = status_names.get(i["statusId"], i["statusId"])
+        lines.append(f"{i['id']:>4}  {_prio(i['priority'])}  [{st}]  {i['title']}")
     return "\n".join(lines)
 
 

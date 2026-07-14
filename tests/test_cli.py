@@ -7,7 +7,7 @@ import pytest
 
 from cli import __main__ as m
 from cli.context import CliError
-from stxc import StxApiError
+from stxc import StxApiError, StxConnError
 from stxc.models import Status, Transition, Workspace
 
 
@@ -244,7 +244,7 @@ class TestBuildParser:
 
 class _MainClient:
     """Patched in for cli.__main__.Client so main() never touches a socket."""
-    behavior = "ok"  # "ok" | "down" | "apierror"
+    behavior = "ok"  # "ok" | "down" | "apierror" | "connerror"
 
     def __init__(self, base_url) -> None:
         self.base_url = base_url
@@ -255,6 +255,9 @@ class _MainClient:
     def list_workspaces(self):
         if _MainClient.behavior == "apierror":
             raise StxApiError(500, {"error": "Boom"})
+        # Daemon dies AFTER ping succeeds: the client wraps the transport failure in StxConnError.
+        if _MainClient.behavior == "connerror":
+            raise StxConnError(ConnectionError("connection reset"))
         return []
 
     def tracks(self, ws_id):
@@ -279,3 +282,11 @@ class TestMainExitCodes:
         monkeypatch.setattr(m, "Client", _MainClient)
         assert m.main(["ls"]) == 1
         assert "Boom" in capsys.readouterr().err
+
+    def test_mid_command_conn_error_returns_one_no_traceback(self, monkeypatch, capsys) -> None:
+        # StxConnError subclasses StxError, NOT requests.RequestException — main() must catch the
+        # base and print a clean message instead of letting it escape as a traceback.
+        _MainClient.behavior = "connerror"
+        monkeypatch.setattr(m, "Client", _MainClient)
+        assert m.main(["ls"]) == 1
+        assert "daemon request failed" in capsys.readouterr().err

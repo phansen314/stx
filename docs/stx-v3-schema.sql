@@ -41,9 +41,9 @@ CREATE TABLE workspace (
 -- Status: lifecycle stage. The kanban columns ARE statuses.
 --   BOOTSTRAP: task.status_id is NOT NULL with an FK, so a workspace with zero
 --   statuses can accept no task. Workspace creation MUST seed a default status set
---   in the SAME transaction — todo(kanban_order=0, is_default=1) / in-progress(1) /
---   done(2, terminal=1) — plus the obvious transitions, including the
---   done -> in-progress rework back-edge. The create-time default status (used when
+--   in the SAME transaction — Backlog(kanban_order=0, is_default=1) / Implementation(1) /
+--   Review(2) / Done(3, terminal=1) — plus the forward transitions and rework
+--   back-edges (Implementation->Backlog, Review->Implementation, Done->Review). The create-time default status (used when
 --   a task is created without an explicit status_id) is the live status flagged
 --   is_default=1 — a STORED flag, not derived from kanban_order, so the entry-point
 --   and the display order are independent. ux_status_one_default backs "at most one
