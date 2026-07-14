@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-07-13
+
+Complete rewrite. stx is now a **local loopback task daemon** written in Kotlin with a Python
+client stack; the v2 Python application is retired. No data migration — a fresh datastore.
+
+### Added
+
+- **Kotlin daemon** (`src/`): a single long-lived writer over loopback HTTP (`127.0.0.1:8420`),
+  JSON wire contract, SQLite in WAL mode. All mutations flow through one write-actor coroutine in
+  submission order; reads run concurrently. Built on http4k (SunHttp), kotlinx.serialization/
+  coroutines, plain JDBC + `xerial/sqlite-jdbc`, and `tech.codingzen:railway` for the result type.
+- **New model**: `workspace → track → segment → task`. Tracks are root-only anchors; segments are
+  nestable pure-filing nodes; tasks are the only first-class node.
+- **`blocks` DAG** drives a recompute-on-read `next`/ready frontier (a filter, not a recommender),
+  scoped by workspace / track / segment / kind. **`relates_to`** edges are decorative (free-text
+  kind).
+- **Per-workspace status state machine**: statuses seed `Backlog/Implementation/Review/Done`
+  (Backlog default, Done terminal) with forward + rework transitions; a status move is legal only
+  via a live `status_transition` (reaching a terminal status is always legal).
+- **Python client stack**: a shared wire client (`stxc/`), a stateless CLI (`cli/`, `bin/stx`),
+  and a Textual TUI (`tui/`). systemd user unit under `packaging/systemd/`.
+
+### Removed
+
+- The entire v2 Python app (`src/stx/`): the `workspace → group → task` model, the v2 Textual TUI,
+  SQLite migrations 001–023, the hooks subsystem, and the `journal` audit table. History is now a
+  non-authoritative append-only sidecar log.
+
+### Changed
+
+- Version jumps 0.17.0 → 3.0.0 to mark the v3 line. Schema changes now edit
+  `src/main/resources/schema.sql` and recreate the DB (single local user, no migration framework).
+
 ## [0.17.0] — 2026-04-18
 
 ### Changed
