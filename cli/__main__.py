@@ -6,6 +6,7 @@ so concurrent Claude sessions / sub-agents never interfere. --json on any comman
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -157,6 +158,91 @@ def cmd_done(c, args):
                            f"{sn.get(cur, cur)!r}: {', '.join(legal) or '(none)'}")
         raise CliError(str(e))
     _emit(args, f"done #{task.id} → {terminal.name}", task)
+
+
+# ── metadata (key/value over each entity's free-form JSON blob) ───────────────
+def _parse_value(s: str):
+    """Parse a `set` value as JSON, falling back to the raw string on parse failure."""
+    try:
+        return json.loads(s)
+    except ValueError:
+        return s
+
+
+def _meta_load(blob: str | None) -> dict:
+    d = json.loads(blob or "{}")
+    if not isinstance(d, dict):
+        raise CliError("metadata is not a JSON object")
+    return d
+
+
+def _meta_target(c, args):
+    """Resolve the meta selector → (read, write). Exactly one of --task / -w; --track needs -w.
+
+    read() → (blob_str, version) freshly; write(version, blob_str) → updated entity. The daemon
+    has no per-key ops, so set/del are client-side read-modify-write over the CAS `edit_*` methods.
+    """
+    has_task = args.task is not None
+    has_ws = args.workspace is not None
+    if has_task == has_ws:
+        raise CliError("pass exactly one target: --task <id> or -w <workspace>")
+    if args.track and not has_ws:
+        raise CliError("--track requires -w <workspace>")
+
+    if has_task:
+        def read():
+            t = c.task_detail(args.task)["task"]
+            return t["metadataJson"], t["version"]
+        return read, lambda v, blob: c.edit_task(args.task, v, metadata_json=blob)
+
+    ws_id = context.workspace(c, args.workspace).id
+    if args.track:
+        tr_id = context.track(c, ws_id, args.track).id
+        def read():
+            tr = context.track(c, ws_id, args.track)
+            return tr.metadata_json, tr.version
+        return read, lambda v, blob: c.edit_track(tr_id, v, metadata_json=blob)
+
+    def read():
+        w = context.workspace(c, args.workspace)
+        return w.metadata_json, w.version
+    return read, lambda v, blob: c.edit_workspace(ws_id, v, metadata_json=blob)
+
+
+def _meta_rmw(read, write, mutate):
+    """Read blob → mutate(dict) in place → write, with one CAS retry on VersionConflict."""
+    def attempt():
+        blob, ver = read()
+        d = _meta_load(blob)
+        mutate(d)
+        return write(ver, json.dumps(d))
+    try:
+        return attempt()
+    except StxApiError as e:
+        if e.variant != "VersionConflict":
+            raise
+        return attempt()
+
+
+def cmd_meta(c, args):
+    read, write = _meta_target(c, args)
+    if args.sub == "ls":
+        d = _meta_load(read()[0])
+        _emit(args, render.meta(d), d)
+    elif args.sub == "get":
+        d = _meta_load(read()[0])
+        if args.key not in d:
+            raise CliError(f"no metadata key {args.key!r}")
+        _emit(args, render.meta({args.key: d[args.key]}), {args.key: d[args.key]})
+    elif args.sub == "set":
+        value = args.value if args.string else _parse_value(args.value)
+        _meta_rmw(read, write, lambda d: d.__setitem__(args.key, value))
+        _emit(args, f"{args.key} = {json.dumps(value)}", {args.key: value})
+    elif args.sub == "del":
+        if args.key not in _meta_load(read()[0]):
+            raise CliError(f"no metadata key {args.key!r}")
+        _meta_rmw(read, write, lambda d: d.pop(args.key, None))
+        _emit(args, f"deleted {args.key}", {"deleted": args.key})
 
 
 # ── edges ────────────────────────────────────────────────────────────────────
@@ -348,6 +434,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--kind", required=True, help="relation kind to remove")
 
     w(add("relate-kinds", cmd_relate_kinds, "list relation kinds currently in use"))
+
+    # metadata: `meta {ls|get|set|del}` on a task (--task), workspace (-w), or track (-w --track)
+    meta = sub.add_parser("meta", parents=[common], help="get/set/delete an entity's metadata keys")
+    msub = meta.add_subparsers(dest="sub", required=True)
+
+    def sel(sp):  # the task/workspace/track target selector, shared by every meta verb
+        sp.add_argument("--task", type=int, help="target task id")
+        sp.add_argument("-w", "--workspace", help="target workspace (name or id)")
+        sp.add_argument("--track", help="target track under -w (name or id)")
+        return sp
+
+    sel(msub.add_parser("ls", parents=[common], help="list all metadata keys"))
+    g = sel(msub.add_parser("get", parents=[common], help="print one key")); g.add_argument("key")
+    s = sel(msub.add_parser("set", parents=[common], help="set a key (value parsed as JSON)"))
+    s.add_argument("key"); s.add_argument("value")
+    s.add_argument("--string", action="store_true", help="store value as a literal string, not JSON")
+    d = sel(msub.add_parser("del", parents=[common], help="delete a key")); d.add_argument("key")
+    meta.set_defaults(fn=cmd_meta)
 
     sp = add("archive", cmd_archive, "archive an entity")
     sp.add_argument("type", choices=list(_ARCHIVE_PATH))

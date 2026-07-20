@@ -8,7 +8,7 @@ import pytest
 from cli import __main__ as m
 from cli.context import CliError
 from stxc import StxApiError, StxConnError
-from stxc.models import Status, Transition, Workspace
+from stxc.models import Status, Task, Track, Transition, Workspace
 
 
 def conflict() -> StxApiError:
@@ -185,6 +185,127 @@ class TestCmdArchive:
         assert c.archived == ("tasks", 3)
 
 
+class _MetaClient:
+    """Fake client whose metadata blob round-trips through edit_*; records each edit's changes."""
+
+    def __init__(self, blob: str = "{}") -> None:
+        self.task_blob = self.ws_blob = self.tr_blob = blob
+        self.task_ver = self.ws_ver = self.tr_ver = 0
+        self.edits: list = []
+
+    def task_detail(self, tid):
+        return {"task": {"metadataJson": self.task_blob, "version": self.task_ver}}
+
+    def list_workspaces(self):
+        return [Workspace(id=1, name="ws", metadata_json=self.ws_blob, version=self.ws_ver)]
+
+    def tracks(self, ws_id):
+        return [Track(id=5, workspace_id=1, name="t", metadata_json=self.tr_blob, version=self.tr_ver)]
+
+    def edit_task(self, tid, v, **ch):
+        self.edits.append(("task", ch)); self.task_blob = ch["metadata_json"]; self.task_ver += 1
+        return Task(id=tid, metadata_json=self.task_blob)
+
+    def edit_workspace(self, ws, v, **ch):
+        self.edits.append(("ws", ch)); self.ws_blob = ch["metadata_json"]; self.ws_ver += 1
+        return Workspace(id=ws, metadata_json=self.ws_blob)
+
+    def edit_track(self, tr, v, **ch):
+        self.edits.append(("track", ch)); self.tr_blob = ch["metadata_json"]; self.tr_ver += 1
+        return Track(id=tr, metadata_json=self.tr_blob)
+
+
+def _meta_args(sub, **over):
+    base = dict(sub=sub, task=None, workspace=None, track=None,
+                key=None, value=None, string=False, json=False)
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+class TestCmdMeta:
+    def test_set_then_ls_task(self, capsys) -> None:
+        c = _MetaClient()
+        m.cmd_meta(c, _meta_args("set", task=1, key="dueDate", value="2026-08-01"))
+        assert c.edits[-1] == ("task", {"metadata_json": '{"dueDate": "2026-08-01"}'})
+        m.cmd_meta(c, _meta_args("ls", task=1))
+        assert 'dueDate = "2026-08-01"' in capsys.readouterr().out
+
+    def test_json_value_parsed(self) -> None:
+        c = _MetaClient()
+        m.cmd_meta(c, _meta_args("set", task=1, key="n", value="5"))
+        assert '"n": 5' in c.task_blob  # int, not the string "5"
+
+    def test_string_flag_forces_literal(self) -> None:
+        c = _MetaClient()
+        m.cmd_meta(c, _meta_args("set", task=1, key="n", value="5", string=True))
+        assert '"n": "5"' in c.task_blob
+
+    def test_get_missing_key_errors(self) -> None:
+        with pytest.raises(CliError, match="no metadata key 'nope'"):
+            m.cmd_meta(_MetaClient(), _meta_args("get", task=1, key="nope"))
+
+    def test_del_missing_key_errors(self) -> None:
+        with pytest.raises(CliError, match="no metadata key 'nope'"):
+            m.cmd_meta(_MetaClient(), _meta_args("del", task=1, key="nope"))
+
+    def test_del_removes_key(self) -> None:
+        c = _MetaClient('{"a": 1, "b": 2}')
+        m.cmd_meta(c, _meta_args("del", task=1, key="a"))
+        assert c.task_blob == '{"b": 2}'
+
+    def test_workspace_target(self) -> None:
+        c = _MetaClient()
+        m.cmd_meta(c, _meta_args("set", workspace="ws", key="theme", value="dark"))
+        assert c.edits[-1][0] == "ws" and '"theme": "dark"' in c.ws_blob
+
+    def test_track_target(self) -> None:
+        c = _MetaClient()
+        m.cmd_meta(c, _meta_args("set", workspace="ws", track="t", key="owner", value="paul"))
+        assert c.edits[-1][0] == "track" and '"owner": "paul"' in c.tr_blob
+
+    def test_non_object_blob_errors(self) -> None:
+        with pytest.raises(CliError, match="not a JSON object"):
+            m.cmd_meta(_MetaClient("[1, 2]"), _meta_args("ls", task=1))
+
+    def test_no_target_rejected(self) -> None:
+        with pytest.raises(CliError, match="exactly one target"):
+            m.cmd_meta(None, _meta_args("ls"))
+
+    def test_both_targets_rejected(self) -> None:
+        with pytest.raises(CliError, match="exactly one target"):
+            m.cmd_meta(None, _meta_args("ls", task=1, workspace="ws"))
+
+    def test_track_without_workspace_rejected(self) -> None:
+        with pytest.raises(CliError, match="--track requires -w"):
+            m.cmd_meta(None, _meta_args("ls", task=1, track="t"))
+
+
+class _MetaConflictClient:
+    """edit_task raises VersionConflict once, then succeeds — exercises the RMW retry."""
+
+    def __init__(self) -> None:
+        self.blob = "{}"
+        self.ver = 0
+        self.edit_calls = 0
+
+    def task_detail(self, tid):
+        return {"task": {"metadataJson": self.blob, "version": self.ver}}
+
+    def edit_task(self, tid, v, **ch):
+        self.edit_calls += 1
+        if self.edit_calls == 1:
+            raise StxApiError(409, {"error": "VersionConflict", "message": "stale"})
+        self.blob = ch["metadata_json"]; self.ver += 1
+        return Task(id=tid, metadata_json=self.blob)
+
+
+class TestCmdMetaRetry:
+    def test_set_retries_on_conflict(self) -> None:
+        c = _MetaConflictClient()
+        m.cmd_meta(c, _meta_args("set", task=1, key="k", value="v"))
+        assert c.edit_calls == 2 and '"k": "v"' in c.blob
+
+
 class TestBuildParser:
     def test_ls(self) -> None:
         ns = m.build_parser().parse_args(["ls"])
@@ -197,6 +318,15 @@ class TestBuildParser:
     def test_archive_choices(self) -> None:
         ns = m.build_parser().parse_args(["archive", "task", "3"])
         assert ns.type == "task" and ns.id == 3 and ns.yes is False
+
+    def test_meta_set_positionals(self) -> None:
+        ns = m.build_parser().parse_args(["meta", "set", "--task", "5", "k", "v"])
+        assert ns.cmd == "meta" and ns.sub == "set" and ns.task == 5
+        assert ns.key == "k" and ns.value == "v" and ns.fn is m.cmd_meta
+
+    def test_meta_ls_workspace(self) -> None:
+        ns = m.build_parser().parse_args(["meta", "ls", "-w", "auth"])
+        assert ns.sub == "ls" and ns.workspace == "auth" and ns.fn is m.cmd_meta
 
     def test_transition_defaults_sub_new_and_from_attr(self) -> None:
         ns = m.build_parser().parse_args(["transition", "-w", "ws", "--from", "a", "--to", "b"])

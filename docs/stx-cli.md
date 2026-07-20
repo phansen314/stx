@@ -35,6 +35,9 @@ the single source for the command list. In short:
 
 - **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>]`, `show <id>`
 - **Tasks:** `add`, `mv <id> <status>`, `edit`, `done`, `block`, `relate`, `archive`
+- **Metadata:** `meta {ls|get|set|del} (--task <id> | -w <ws> [--track <t>]) [key] [value]` —
+  free-form JSON key/values on a task, workspace, or track (`set` parses the value as JSON,
+  falling back to a string; `--string` forces a literal string)
 - **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one

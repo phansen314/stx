@@ -31,6 +31,13 @@ def workspaces(rows: list[tuple]) -> str:
     return "\n".join(f"{ws.id:>4}  {ws.name}  ({n} track{'s' if n != 1 else ''})" for ws, n in rows)
 
 
+def meta(d: dict) -> str:
+    # The one renderer that shows metadata — text mode drops metadataJson everywhere else.
+    if not d:
+        return "(no metadata)"
+    return "\n".join(f"{k} = {json.dumps(d[k])}" for k in sorted(d))
+
+
 def relates_kinds(items: list[str]) -> str:
     # relates_to.kind is free text by design (D6); this just lists what's in live use.
     if not items:
