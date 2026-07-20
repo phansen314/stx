@@ -315,6 +315,10 @@ object BlocksRepo {
 
     fun liveOutgoing(c: Connection, taskId: Long): List<Long> = liveTargetsOf(c, taskId)
 
+    /** All live blocks edges in a workspace — bulk read for graph export. */
+    fun liveByWorkspace(c: Connection, workspaceId: Long): List<BlocksDto> =
+        c.queryList("SELECT * FROM blocks WHERE workspace_id=? AND archived=0", workspaceId) { it.toBlocks() }
+
     fun liveIncoming(c: Connection, taskId: Long): List<Long> =
         c.queryList("SELECT source_task_id FROM blocks WHERE target_task_id=? AND archived=0", taskId) { it.getLong("source_task_id") }
 
@@ -338,6 +342,10 @@ object RelatesRepo {
      *  without constraining the free-text vocabulary. */
     fun distinctKinds(c: Connection, workspaceId: Long): List<String> =
         c.queryList("SELECT DISTINCT kind FROM relates_to WHERE workspace_id=? AND archived=0 ORDER BY kind", workspaceId) { it.getString("kind") }
+
+    /** All live relates_to edges in a workspace — bulk read for graph export. */
+    fun liveByWorkspace(c: Connection, workspaceId: Long): List<RelatesDto> =
+        c.queryList("SELECT * FROM relates_to WHERE workspace_id=? AND archived=0", workspaceId) { it.toRelates() }
 
     /** Symmetric read (D2): live relations with this task as source OR target. */
     fun liveIncident(c: Connection, taskId: Long): List<RelatesDto> =

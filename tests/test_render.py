@@ -80,6 +80,21 @@ class TestTaskDetail:
         assert "mentions←#6" in out
 
 
+class TestGraphDot:
+    def test_header_nodes_and_edges(self) -> None:
+        nodes = {1: {"title": "build", "terminal": False}, 2: {"title": "ship", "terminal": True}}
+        out = render.graph_dot("auth", nodes, [(1, 2)], [(1, 2, "spawns")])
+        assert 'digraph "auth" {' in out and "rankdir=LR;" in out
+        assert '"1" [label="#1 build"];' in out
+        assert 'fillcolor="#cde7cd"' in out            # terminal node filled
+        assert '"1" -> "2";' in out                    # blocks: solid
+        assert '"1" -> "2" [style=dashed, label="spawns"];' in out
+
+    def test_escapes_quotes_and_newlines(self) -> None:
+        out = render.graph_dot("ws", {1: {"title": 'a "q"\nb', "terminal": False}}, [], [])
+        assert '#1 a \\"q\\" b' in out and "\\n" not in out
+
+
 class TestTree:
     def test_empty_workspace(self) -> None:
         out = render.tree(Workspace(id=1, name="ws"), [], {})

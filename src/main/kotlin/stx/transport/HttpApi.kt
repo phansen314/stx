@@ -55,6 +55,7 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
         "/workspaces/{id}/kinds" bind GET to { read(ListKinds(it.longPath("id"))) },
         "/workspaces/{id}/relates-kinds" bind GET to { read(ListRelatesKinds(it.longPath("id"))) },
         "/workspaces/{id}/transitions" bind GET to { read(ListTransitions(it.longPath("id"))) },
+        "/workspaces/{id}/edges" bind GET to { read(ListEdges(it.longPath("id"))) },
         "/tracks/{id}/segments" bind GET to { read(ListSegments(it.longPath("id"))) },
         "/tracks/{id}/tasks" bind GET to { read(ListTasks(it.longPath("id"), it.longQuery("status"))) },
         "/tasks/{id}" bind GET to { read(GetTask(it.longPath("id"))) },

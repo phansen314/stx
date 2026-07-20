@@ -37,6 +37,7 @@ fun encodeReply(reply: Reply): String = when (reply) {
     is SegmentList -> json.encodeToString(reply)
     is TaskList -> json.encodeToString(reply)
     is FrontierList -> json.encodeToString(reply)
+    is EdgeList -> json.encodeToString(reply)
 }
 
 // ── Request body shapes (path supplies ids; body supplies the rest) ──────────────────────────

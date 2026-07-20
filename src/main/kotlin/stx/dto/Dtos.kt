@@ -161,3 +161,5 @@ data class SegmentList(val items: List<SegmentDto>) : Reply
 data class TaskList(val items: List<TaskDto>) : Reply
 @Serializable
 data class FrontierList(val items: List<FrontierItem>) : Reply
+@Serializable
+data class EdgeList(val blocks: List<BlocksDto>, val relates: List<RelatesDto>) : Reply

@@ -108,6 +108,10 @@ class Client:
     def task_detail(self, task_id: int) -> dict:
         return self._call("GET", f"/tasks/{task_id}")
 
+    def edges(self, ws: int) -> dict:
+        """All live edges in a workspace: {"blocks": [...], "relates": [...]}. Bulk read for graph export."""
+        return self._call("GET", f"/workspaces/{ws}/edges")
+
     def next(self, ws: int, track: int | None = None, segment: int | None = None,
              kind: int | None = None, limit: int | None = None) -> list[dict]:
         params = [f"workspace={ws}"]

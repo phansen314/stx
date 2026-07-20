@@ -32,6 +32,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx block <id> --on <blocker-id>` | make a task blocked by another (feeds `next`) |
 | `stx relate <a> --to <b> --kind <k>` | relation edge (e.g. `relates_to`, `spawns`) |
 | `stx meta {ls\|get\|set\|del} (--task <id> \| -w <ws> [--track <t>]) [key] [value]` | free-form JSON metadata keys on a task/workspace/track (`set` value is JSON, or `--string` for a literal) |
+| `stx graph -w <ws> [-t <track>] [--blocks-only]` | task graph as Graphviz DOT on stdout (pipe to `dot`); `--json` for `{nodes, blocks, relates}` |
 | `stx archive task\|segment\|track\|workspace <id> [--yes]` | archive (`--yes` required for track/workspace — cascades) |
 | `stx ws new <name>` | new workspace |
 | `stx track new <name> -w <ws> [--desc …]` | new track |

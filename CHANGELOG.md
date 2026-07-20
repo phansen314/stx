@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`stx meta`** — key/value manager over each entity's free-form JSON metadata blob
+  (`meta {ls|get|set|del}` on a task, workspace, or track; `set` value parses as JSON with a
+  string fallback, `--string` forces a literal). Client-side read-modify-write over the CAS
+  `edit_*` methods; no daemon change.
+- **`stx graph`** — Graphviz DOT export of the task graph on stdout (`blocks` solid,
+  `relates_to` dashed, done nodes filled; `-t` to scope, `--blocks-only`, `--json`). Backed by
+  a new bulk read endpoint `GET /workspaces/{id}/edges` returning all live edges in one call.
+
 ## [3.0.0] — 2026-07-13
 
 Complete rewrite. stx is now a **local loopback task daemon** written in Kotlin with a Python

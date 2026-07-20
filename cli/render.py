@@ -38,6 +38,29 @@ def meta(d: dict) -> str:
     return "\n".join(f"{k} = {json.dumps(d[k])}" for k in sorted(d))
 
 
+def _dot_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def graph_dot(ws_name: str, nodes: dict, blocks: list, relates: list) -> str:
+    """Graphviz DOT of the task graph. nodes: {id: {title, terminal}}; blocks: [(a, b)];
+    relates: [(a, b, kind)]. Terminal (done) nodes are filled; blocks solid, relates dashed."""
+    lines = [f'digraph "{_dot_escape(ws_name)}" {{',
+             "  rankdir=LR;",
+             "  node [shape=box, style=rounded];"]
+    for nid in sorted(nodes):
+        n = nodes[nid]
+        label = _dot_escape(f"#{nid} {n['title']}"[:40])
+        style = ' style="rounded,filled" fillcolor="#cde7cd"' if n["terminal"] else ""
+        lines.append(f'  "{nid}" [label="{label}"{style}];')
+    for a, b in blocks:
+        lines.append(f'  "{a}" -> "{b}";')
+    for a, b, kind in relates:
+        lines.append(f'  "{a}" -> "{b}" [style=dashed, label="{_dot_escape(kind)}"];')
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def relates_kinds(items: list[str]) -> str:
     # relates_to.kind is free text by design (D6); this just lists what's in live use.
     if not items:

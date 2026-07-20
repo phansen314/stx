@@ -78,6 +78,14 @@ class TestReads:
         c.next(9)
         assert c.s.last["url"] == "http://x:8420/next?workspace=9"
 
+    def test_edges_bulk_read(self, make_client) -> None:
+        body = {"blocks": [{"sourceTaskId": 1, "targetTaskId": 2}],
+                "relates": [{"kind": "spawns", "sourceTaskId": 1, "targetTaskId": 3}]}
+        c = make_client([FakeResponse(200, body)])
+        assert c.edges(7) == body
+        assert c.s.last["method"] == "GET"
+        assert c.s.last["url"] == "http://x:8420/workspaces/7/edges"
+
 
 class TestWrites:
     def test_create_task_via_segment_path_and_body(self, make_client) -> None:

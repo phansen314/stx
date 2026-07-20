@@ -306,6 +306,62 @@ class TestCmdMetaRetry:
         assert c.edit_calls == 2 and '"k": "v"' in c.blob
 
 
+class _GraphClient:
+    def __init__(self, edges) -> None:
+        self._edges = edges
+
+    def list_workspaces(self): return [Workspace(id=1, name="ws")]
+    def statuses(self, ws): return [Status(id=10, name="todo"),
+                                    Status(id=20, name="done", terminal=True)]
+    def tracks(self, ws): return [Track(id=5, name="main"), Track(id=6, name="other")]
+
+    def track_tasks(self, tr):
+        if tr == 5:
+            return [Task(id=1, title="a", status_id=10), Task(id=2, title="b", status_id=20)]
+        return [Task(id=3, title="c", status_id=10)]
+
+    def edges(self, ws): return self._edges
+
+
+def _graph_args(**over):
+    base = dict(workspace="ws", track=None, blocks_only=False, json=False)
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+_GRAPH_EDGES = {"blocks": [{"sourceTaskId": 1, "targetTaskId": 2}],
+                "relates": [{"kind": "spawns", "sourceTaskId": 1, "targetTaskId": 3}]}
+
+
+class TestCmdGraph:
+    def test_dot_includes_blocks_and_relates(self, capsys) -> None:
+        m.cmd_graph(_GraphClient(_GRAPH_EDGES), _graph_args())
+        out = capsys.readouterr().out
+        assert '"1" -> "2";' in out
+        assert '"1" -> "3" [style=dashed, label="spawns"];' in out
+        assert 'fillcolor="#cde7cd"' in out  # task 2 is terminal (done)
+
+    def test_blocks_only_drops_relates(self, capsys) -> None:
+        m.cmd_graph(_GraphClient(_GRAPH_EDGES), _graph_args(blocks_only=True))
+        out = capsys.readouterr().out
+        assert '"1" -> "2";' in out and "spawns" not in out
+
+    def test_track_scope_drops_out_of_scope_edge(self, capsys) -> None:
+        # scope to track 'main' (tasks 1,2); relate 1->3 (task 3 in 'other') is dropped
+        m.cmd_graph(_GraphClient(_GRAPH_EDGES), _graph_args(track="main"))
+        out = capsys.readouterr().out
+        assert '"1" -> "2";' in out and "spawns" not in out
+
+    def test_json_payload_shape(self, capsys) -> None:
+        import json as _json
+        m.cmd_graph(_GraphClient(_GRAPH_EDGES), _graph_args(json=True))
+        payload = _json.loads(capsys.readouterr().out)
+        assert payload["workspace"] == "ws"
+        assert payload["blocks"] == [[1, 2]]
+        assert payload["relates"] == [[1, 3, "spawns"]]
+        assert {n["id"] for n in payload["nodes"]} == {1, 2, 3}
+
+
 class TestBuildParser:
     def test_ls(self) -> None:
         ns = m.build_parser().parse_args(["ls"])
@@ -327,6 +383,11 @@ class TestBuildParser:
     def test_meta_ls_workspace(self) -> None:
         ns = m.build_parser().parse_args(["meta", "ls", "-w", "auth"])
         assert ns.sub == "ls" and ns.workspace == "auth" and ns.fn is m.cmd_meta
+
+    def test_graph_flags(self) -> None:
+        ns = m.build_parser().parse_args(["graph", "-w", "auth", "-t", "main", "--blocks-only"])
+        assert ns.cmd == "graph" and ns.workspace == "auth" and ns.track == "main"
+        assert ns.blocks_only is True and ns.fn is m.cmd_graph
 
     def test_transition_defaults_sub_new_and_from_attr(self) -> None:
         ns = m.build_parser().parse_args(["transition", "-w", "ws", "--from", "a", "--to", "b"])

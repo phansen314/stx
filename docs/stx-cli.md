@@ -38,6 +38,9 @@ the single source for the command list. In short:
 - **Metadata:** `meta {ls|get|set|del} (--task <id> | -w <ws> [--track <t>]) [key] [value]` —
   free-form JSON key/values on a task, workspace, or track (`set` parses the value as JSON,
   falling back to a string; `--string` forces a literal string)
+- **Graph:** `graph -w <ws> [-t <track>] [--blocks-only]` — emit the task graph as Graphviz DOT
+  on stdout (`blocks` solid, `relates_to` dashed; done nodes filled). Pipe to `dot`:
+  `stx graph -w auth | dot -Tsvg -o auth.svg`. `--json` emits `{nodes, blocks, relates}` instead.
 - **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one

@@ -160,6 +160,35 @@ def cmd_done(c, args):
     _emit(args, f"done #{task.id} → {terminal.name}", task)
 
 
+# ── graph (Graphviz DOT export) ───────────────────────────────────────────────
+def cmd_graph(c, args):
+    ws = context.workspace(c, args.workspace)
+    statuses = {s.id: s for s in c.statuses(ws.id)}
+    tracks = c.tracks(ws.id)
+    if args.track:
+        tr = context.track(c, ws.id, args.track)
+        tracks = [t for t in tracks if t.id == tr.id]
+    nodes: dict = {}
+    for t in tracks:
+        for task in c.track_tasks(t.id):
+            st = statuses.get(task.status_id)
+            nodes[task.id] = {"title": task.title, "status": st.name if st else str(task.status_id),
+                              "terminal": bool(st and st.terminal)}
+    # One bulk edges read; keep only edges whose endpoints are in scope (drops cross-track under -t).
+    edges = c.edges(ws.id)
+    blocks = [(e["sourceTaskId"], e["targetTaskId"]) for e in edges["blocks"]
+              if e["sourceTaskId"] in nodes and e["targetTaskId"] in nodes]
+    relates = [] if args.blocks_only else [
+        (e["sourceTaskId"], e["targetTaskId"], e["kind"]) for e in edges["relates"]
+        if e["sourceTaskId"] in nodes and e["targetTaskId"] in nodes]
+    payload = {"workspace": ws.name,
+               "nodes": [{"id": nid, "title": n["title"], "status": n["status"], "terminal": n["terminal"]}
+                         for nid, n in sorted(nodes.items())],
+               "blocks": [[a, b] for a, b in blocks],
+               "relates": [[a, b, k] for a, b, k in relates]}
+    _emit(args, render.graph_dot(ws.name, nodes, blocks, relates), payload)
+
+
 # ── metadata (key/value over each entity's free-form JSON blob) ───────────────
 def _parse_value(s: str):
     """Parse a `set` value as JSON, falling back to the raw string on parse failure."""
@@ -434,6 +463,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--kind", required=True, help="relation kind to remove")
 
     w(add("relate-kinds", cmd_relate_kinds, "list relation kinds currently in use"))
+
+    sp = w(add("graph", cmd_graph, "emit the task graph as Graphviz DOT (pipe to `dot`)"))
+    sp.add_argument("-t", "--track", help="scope to a track (name or id)")
+    sp.add_argument("--blocks-only", action="store_true", help="omit relates_to edges")
 
     # metadata: `meta {ls|get|set|del}` on a task (--task), workspace (-w), or track (-w --track)
     meta = sub.add_parser("meta", parents=[common], help="get/set/delete an entity's metadata keys")

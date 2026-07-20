@@ -53,6 +53,10 @@ data class ListRelatesKinds(val workspaceId: Long) : ReadCommand
 @Serializable
 data class ListTransitions(val workspaceId: Long) : ReadCommand
 
+/** All live edges (blocks + relates_to) in a workspace — bulk read for graph export. */
+@Serializable
+data class ListEdges(val workspaceId: Long) : ReadCommand
+
 /** Single task incl. embedded edges (decision D2). May return an archived row (decision D4). */
 @Serializable
 data class GetTask(val id: Long) : ReadCommand

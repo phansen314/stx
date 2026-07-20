@@ -24,6 +24,7 @@ class StxService {
         is ListKinds -> read { KindList(KindRepo.listLive(c, command.workspaceId)) }
         is ListRelatesKinds -> read { RelatesKindList(RelatesRepo.distinctKinds(c, command.workspaceId)) }
         is ListTransitions -> read { TransitionList(TransitionRepo.listLive(c, command.workspaceId)) }
+        is ListEdges -> read { EdgeList(BlocksRepo.liveByWorkspace(c, command.workspaceId), RelatesRepo.liveByWorkspace(c, command.workspaceId)) }
         is ListTasks -> read { TaskList(TaskRepo.listVisibleByTrack(c, command.trackId, command.statusId)) }
         is GetTask -> getTask(c, command)
         is Next -> Frontier.next(c, command)
