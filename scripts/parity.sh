@@ -12,7 +12,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 GO=./bin/stx-go
-PY=./bin/stx
+PY=./bin/stx-py     # the Python oracle (bin/stx is the Go client after the cutover)
 WS=${1:-}
 TID=${2:-}
 fails=0

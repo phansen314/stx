@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# stx-py — the Python CLI launcher, kept as the reference/oracle now that the Go client is the
+# default `stx`. PYTHONSAFEPATH=1 stops Python prepending the CWD to sys.path, so `-m cli` always
+# loads THIS repo's cli/ (not a cli/ package that happens to be in the current directory).
+set -euo pipefail
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+here="$(cd "$(dirname "$self")/.." && pwd)"
+exec env PYTHONSAFEPATH=1 PYTHONPATH="${here}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m cli "$@"
