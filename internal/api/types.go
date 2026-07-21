@@ -58,6 +58,14 @@ type Segment struct {
 	CreatedAt       string `json:"createdAt"`
 }
 
+type Transition struct {
+	ID           int64 `json:"id"`
+	WorkspaceID  int64 `json:"workspaceId"`
+	FromStatusID int64 `json:"fromStatusId"`
+	ToStatusID   int64 `json:"toStatusId"`
+	Archived     bool  `json:"archived"`
+}
+
 // FrontierItem is the slim projection GET /next returns (no description/names/kind).
 type FrontierItem struct {
 	ID        int64  `json:"id"`

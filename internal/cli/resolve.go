@@ -10,8 +10,41 @@ import (
 	"github.com/phansen314/stx/internal/client"
 )
 
-// resolveWorkspace turns a -w name-or-id into a Workspace, mirroring context.workspace/_pick:
-// numeric → by id; else exact name (error on miss/ambiguity). Empty ref → the "required" error.
+// pickByRef resolves a name-or-id ref against a list, mirroring context._pick: numeric → by id;
+// else exact name match (error on miss with the available names, or on ambiguity).
+func pickByRef[T any](items []T, ref, kind string, idOf func(T) int64, nameOf func(T) string) (T, error) {
+	var zero T
+	if id, e := strconv.ParseInt(ref, 10, 64); e == nil {
+		for _, it := range items {
+			if idOf(it) == id {
+				return it, nil
+			}
+		}
+		return zero, fmt.Errorf("no %s with id %d", kind, id)
+	}
+	var matches []T
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		names = append(names, nameOf(it))
+		if nameOf(it) == ref {
+			matches = append(matches, it)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		sort.Strings(names)
+		avail := "(none)"
+		if len(names) > 0 {
+			avail = strings.Join(names, ", ")
+		}
+		return zero, fmt.Errorf("no %s named '%s'. available: %s", kind, ref, avail)
+	default:
+		return zero, fmt.Errorf("%s name '%s' is ambiguous (%d matches) — use an id", kind, ref, len(matches))
+	}
+}
+
 func resolveWorkspace(c *client.Client, ref string) (api.Workspace, error) {
 	if ref == "" {
 		return api.Workspace{}, fmt.Errorf("--workspace required (e.g. -w auth-rewrite)")
@@ -20,72 +53,24 @@ func resolveWorkspace(c *client.Client, ref string) (api.Workspace, error) {
 	if err != nil {
 		return api.Workspace{}, err
 	}
-	if id, e := strconv.ParseInt(ref, 10, 64); e == nil {
-		for _, w := range wss {
-			if w.ID == id {
-				return w, nil
-			}
-		}
-		return api.Workspace{}, fmt.Errorf("no workspace with id %d", id)
-	}
-	var matches []api.Workspace
-	names := make([]string, 0, len(wss))
-	for _, w := range wss {
-		names = append(names, w.Name)
-		if w.Name == ref {
-			matches = append(matches, w)
-		}
-	}
-	switch len(matches) {
-	case 1:
-		return matches[0], nil
-	case 0:
-		sort.Strings(names)
-		avail := "(none)"
-		if len(names) > 0 {
-			avail = strings.Join(names, ", ")
-		}
-		return api.Workspace{}, fmt.Errorf("no workspace named '%s'. available: %s", ref, avail)
-	default:
-		return api.Workspace{}, fmt.Errorf("workspace name '%s' is ambiguous (%d matches) — use an id", ref, len(matches))
-	}
+	return pickByRef(wss, ref, "workspace", func(w api.Workspace) int64 { return w.ID }, func(w api.Workspace) string { return w.Name })
 }
 
-// resolveTrack turns a --track name-or-id into a Track within a workspace.
 func resolveTrack(c *client.Client, wsID int64, ref string) (api.Track, error) {
 	tracks, err := c.Tracks(wsID)
 	if err != nil {
 		return api.Track{}, err
 	}
-	if id, e := strconv.ParseInt(ref, 10, 64); e == nil {
-		for _, t := range tracks {
-			if t.ID == id {
-				return t, nil
-			}
-		}
-		return api.Track{}, fmt.Errorf("no track with id %d", id)
-	}
-	var matches []api.Track
-	names := make([]string, 0, len(tracks))
-	for _, t := range tracks {
-		names = append(names, t.Name)
-		if t.Name == ref {
-			matches = append(matches, t)
-		}
-	}
-	switch len(matches) {
-	case 1:
-		return matches[0], nil
-	case 0:
-		sort.Strings(names)
-		avail := "(none)"
-		if len(names) > 0 {
-			avail = strings.Join(names, ", ")
-		}
-		return api.Track{}, fmt.Errorf("no track named '%s'. available: %s", ref, avail)
-	default:
-		return api.Track{}, fmt.Errorf("track name '%s' is ambiguous (%d matches) — use an id", ref, len(matches))
-	}
+	return pickByRef(tracks, ref, "track", func(t api.Track) int64 { return t.ID }, func(t api.Track) string { return t.Name })
+}
+
+// resolveStatusIn / resolveKindIn pick from an already-fetched list (mirror context.status/kind).
+func resolveStatusIn(statuses []api.Status, ref string) (api.Status, error) {
+	return pickByRef(statuses, ref, "status", func(s api.Status) int64 { return s.ID }, func(s api.Status) string { return s.Name })
+}
+
+func resolveKindIn(kinds []api.Kind, ref string) (api.Kind, error) {
+	return pickByRef(kinds, ref, "kind", func(k api.Kind) int64 { return k.ID }, func(k api.Kind) string { return k.Name })
 }
 
 // statusNames / kindNames build id→name maps for rendering (mirror _status_names/_kind_names).

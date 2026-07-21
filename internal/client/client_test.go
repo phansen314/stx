@@ -35,6 +35,55 @@ func TestCall_TransportFailureBecomesConnError(t *testing.T) {
 	}
 }
 
+func TestCreateTask_RoutesToSegmentAndOmitsNilFields(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		io.WriteString(w, `{"id":5,"title":"t"}`)
+	}))
+	defer srv.Close()
+
+	seg := int64(4)
+	_, err := New(srv.URL).CreateTask(CreateTaskParams{Segment: &seg, Title: "t", Priority: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/segments/4/tasks" {
+		t.Fatalf("wrong route: %s", gotPath)
+	}
+	// title/description/priority always present; statusId/kindId omitted when nil
+	if _, ok := gotBody["statusId"]; ok {
+		t.Fatalf("statusId should be omitted: %v", gotBody)
+	}
+	if _, ok := gotBody["kindId"]; ok {
+		t.Fatalf("kindId should be omitted: %v", gotBody)
+	}
+	if gotBody["title"] != "t" || gotBody["priority"] != float64(2) {
+		t.Fatalf("bad body: %v", gotBody)
+	}
+}
+
+func TestMoveStatus_Body(t *testing.T) {
+	var gotBody map[string]any
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		io.WriteString(w, `{"id":7,"title":"T","version":3}`)
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL).MoveStatus(7, 12, 2); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/tasks/7/status" ||
+		gotBody["toStatusId"] != float64(12) || gotBody["expectedVersion"] != float64(2) {
+		t.Fatalf("bad move: %s %v", gotPath, gotBody)
+	}
+}
+
 func TestEditTask_MergesVersionAndParsesResult(t *testing.T) {
 	var gotBody map[string]any
 	var gotMethod, gotPath string

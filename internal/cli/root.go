@@ -30,7 +30,10 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&flagBaseURL, "base-url", def, "daemon URL")
 	root.PersistentFlags().BoolVar(&flagJSON, "json", false, "emit raw JSON instead of compact text")
 
-	root.AddCommand(newLsCmd(), newEditCmd(), newNextCmd(), newTreeCmd(), newShowCmd())
+	root.AddCommand(
+		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(),
+		newAddCmd(), newMvCmd(), newEditCmd(), newDoneCmd(),
+	)
 	return root
 }
 

@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 
 	"github.com/phansen314/stx/internal/api"
@@ -20,10 +21,26 @@ func (c *Client) Tracks(ws int64) ([]api.Track, error) {
 	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/tracks", ws), nil, &out)
 }
 
-// Statuses → GET /workspaces/{ws}/statuses.
+// Statuses → GET /workspaces/{ws}/statuses, sorted (kanbanOrder, id) like the Python client so
+// "first terminal" and kanban ordering are deterministic regardless of daemon row order.
 func (c *Client) Statuses(ws int64) ([]api.Status, error) {
 	var out api.Items[api.Status]
-	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/statuses", ws), nil, &out)
+	if err := c.call("GET", fmt.Sprintf("/workspaces/%d/statuses", ws), nil, &out); err != nil {
+		return nil, err
+	}
+	sort.Slice(out.Items, func(i, j int) bool {
+		if out.Items[i].KanbanOrder != out.Items[j].KanbanOrder {
+			return out.Items[i].KanbanOrder < out.Items[j].KanbanOrder
+		}
+		return out.Items[i].ID < out.Items[j].ID
+	})
+	return out.Items, nil
+}
+
+// Transitions → GET /workspaces/{ws}/transitions (the legal-move state machine).
+func (c *Client) Transitions(ws int64) ([]api.Transition, error) {
+	var out api.Items[api.Transition]
+	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/transitions", ws), nil, &out)
 }
 
 // Kinds → GET /workspaces/{ws}/kinds.
