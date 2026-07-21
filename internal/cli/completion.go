@@ -27,25 +27,35 @@ func newCommandsCmd() *cobra.Command {
 	}
 }
 
-// bashFzfCompletion wires `stx <TAB>` (at the command position) to an fzf menu whose preview pane
-// shows each command's -h help. Falls back to plain name completion when fzf is absent. It calls
-// the `stx` on PATH — point that at the Go binary (Phase 6, or a shell alias).
+// bashFzfCompletion wires `stx <TAB>` (the command word) to an fzf menu whose preview pane shows
+// each command's -h help. Everything AFTER the command — flags, subcommands (meta ls/get/set/del,
+// status default/archive, …) — delegates to cobra's own `__complete` protocol, so TAB keeps working
+// past the command word. Self-contained: no bash-completion package needed. Without fzf, cobra's
+// completion handles the command word too. Calls the `stx` on PATH (the Go binary after cutover).
 const bashFzfCompletion = `# stx fzf completion — eval "$(stx fzf-completion)"  (add that line to ~/.bashrc)
-# TAB after 'stx' opens an fzf menu of commands, with each command's -h help live in the
-# preview pane. Falls back to plain name completion when fzf is not installed.
+# The command word (stx <TAB>) opens an fzf menu with each command's -h help in the preview pane.
+# After a command is chosen, TAB completes that command's flags and subcommands. Needs fzf for the
+# menu; without it, TAB uses the CLI's own completion everywhere.
 _stx_fzf() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    [ "$COMP_CWORD" -eq 1 ] || return 0            # only complete the command word (this slice)
-    if command -v fzf >/dev/null 2>&1; then
+    # command word → fzf menu with help preview
+    if [ "$COMP_CWORD" -eq 1 ] && command -v fzf >/dev/null 2>&1; then
         local picked
         picked="$(stx __commands \
             | fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=40% --reverse \
                   --query="$cur" --preview 'stx {1} -h' --preview-window=right:55%:wrap \
             | cut -f1)"
         [ -n "$picked" ] && COMPREPLY=( "$picked" )
-    else
-        COMPREPLY=( $(compgen -W "$(stx __commands | cut -f1)" -- "$cur") )
+        return
     fi
+    # everything else → the CLI's own completion protocol (flags, subcommands, values)
+    local args name comps=()
+    args=( "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" )
+    while IFS=$'\t' read -r name _; do
+        [ "${name:0:1}" = ":" ] && continue        # skip the trailing :directive line
+        comps+=( "$name" )
+    done < <(stx __complete "${args[@]}" 2>/dev/null)
+    COMPREPLY=( $(compgen -W "${comps[*]}" -- "$cur") )
 }
 complete -F _stx_fzf stx
 `

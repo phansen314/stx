@@ -40,9 +40,10 @@ func TestFzfCompletionScriptShape(t *testing.T) {
 	out := runRoot(t, "fzf-completion")
 	for _, want := range []string{
 		"complete -F _stx_fzf stx",     // registers the completer
-		"stx __commands",               // feeds the catalog
+		"stx __commands",               // feeds the fzf command menu
 		"--preview 'stx {1} -h'",       // help in the preview pane
-		"compgen -W",                   // graceful no-fzf fallback
+		"stx __complete",               // delegates flags/subcommands past the command word
+		"compgen -W",                   // filters the delegated candidates
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("script missing %q", want)
