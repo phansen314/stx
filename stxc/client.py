@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
-
 from .models import Kind, Segment, Status, Task, Track, Transition, Workspace, _camel, build
+
+# `requests` (+ urllib3) is ~50ms to import — a big chunk of CLI startup. It's only needed once
+# a Client actually talks to the daemon, so it's imported lazily (below) rather than at module
+# load. That keeps daemon-free paths — `stx <cmd> -h`, `stx __complete`, `stx completion` — fast.
 
 
 def _camelize(changes: dict) -> dict:
@@ -47,10 +49,12 @@ class StxConnError(StxError):
 
 class Client:
     def __init__(self, base_url: str = "http://127.0.0.1:8420"):
+        import requests  # lazy: only pay the import when a Client is actually built (see top note)
         self.base = base_url.rstrip("/")
         self.s = requests.Session()
 
     def _call(self, method: str, path: str, body: dict | None = None) -> Any:
+        import requests
         try:
             r = self.s.request(method, self.base + path, json=body, timeout=15)
         except requests.RequestException as e:
@@ -67,6 +71,7 @@ class Client:
         return data
 
     def ping(self) -> bool:
+        import requests
         try:
             return self.s.get(self.base + "/health", timeout=5).status_code == 200
         except requests.RequestException:

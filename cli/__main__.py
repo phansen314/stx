@@ -363,6 +363,54 @@ def cmd_transition(c, args):
     _emit(args, f"transition {f.name} → {t.name}", tr)
 
 
+# ── shell completion ─────────────────────────────────────────────────────────
+# Two daemon-free commands: `stx __complete commands` emits the command catalog
+# (single-sourced from the parser, so it can't drift); `stx completion bash` prints a
+# completion script that drives fzf over that catalog with `stx <cmd> -h` in the preview
+# pane. `__complete` is intercepted in parse_cli (kept out of the parser, so it never shows
+# in `stx -h`); both set needs_client=False so completion works with the daemon stopped.
+def _complete_commands(parser) -> None:
+    """Print one `name<TAB>help` line per top-level command, in definition order."""
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    for choice in sub._choices_actions:  # _ChoicesPseudoAction: .dest=name, .help=help str
+        print(f"{choice.dest}\t{choice.help or ''}")
+
+
+def cmd_complete(c, args):
+    """Hidden completion backend. Only `commands` for now; more kinds added later."""
+    what = args.complete_args[0] if args.complete_args else "commands"
+    if what == "commands":
+        _complete_commands(build_parser())
+    else:
+        raise CliError(f"unknown __complete kind {what!r}")
+
+
+_BASH_COMPLETION = r"""# stx bash completion — eval "$(stx completion bash)" (add to ~/.bashrc)
+# `stx <TAB>` at the command position opens an fzf menu of commands with each command's
+# `-h` help in the preview pane. Falls back to plain name completion when fzf is absent.
+_stx() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    [ "$COMP_CWORD" -eq 1 ] || return 0          # only complete the command word (this slice)
+    if command -v fzf >/dev/null 2>&1; then
+        local picked
+        picked="$(stx __complete commands \
+            | fzf --delimiter='\t' --with-nth=1 --height=40% --reverse \
+                  --query="$cur" --preview 'stx {1} -h' --preview-window=right:60%:wrap \
+            | cut -f1)"
+        [ -n "$picked" ] && COMPREPLY=( "$picked" )
+    else
+        COMPREPLY=( $(compgen -W "$(stx __complete commands | cut -f1)" -- "$cur") )
+    fi
+}
+complete -F _stx stx
+"""
+
+
+def cmd_completion(c, args):
+    if args.shell == "bash":
+        print(_BASH_COMPLETION, end="")
+
+
 # ── parser ───────────────────────────────────────────────────────────────────
 def _global_parser() -> argparse.ArgumentParser:
     """The `--base-url`/`--json` globals, parsed separately so they work in ANY position.
@@ -387,7 +435,11 @@ def parse_cli(argv=None) -> argparse.Namespace:
     if argv is None:
         argv = sys.argv[1:]
     globals_ns, rest = _global_parser().parse_known_args(argv)
-    args = build_parser().parse_args(rest)
+    if rest and rest[0] == "__complete":  # hidden completion backend — kept out of the parser
+        args = argparse.Namespace(fn=cmd_complete, cmd="__complete",
+                                  complete_args=rest[1:], needs_client=False)
+    else:
+        args = build_parser().parse_args(rest)
     args.base_url = globals_ns.base_url
     args.json = globals_ns.json
     return args
@@ -527,13 +579,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--to", required=True, help="to status name or id")
     sp.set_defaults(fn=cmd_transition, sub="new")
 
+    sp = add("completion", cmd_completion, "print a shell completion script (eval it)")
+    sp.add_argument("shell", choices=["bash"], help="target shell")
+    sp.set_defaults(needs_client=False)  # daemon-free: prints a static script
+
     return p
 
 
 def main(argv=None) -> int:
     args = parse_cli(argv)
     try:
-        client = _client(args)
+        client = _client(args) if getattr(args, "needs_client", True) else None
         args.fn(client, args)
         return 0
     except CliError as e:

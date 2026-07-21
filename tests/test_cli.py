@@ -433,6 +433,47 @@ class TestBuildParser:
             m.parse_cli(["--json"])
 
 
+class TestCompletion:
+    def test_parse_cli_intercepts_hidden_backend(self) -> None:
+        ns = m.parse_cli(["__complete", "commands"])
+        assert ns.fn is m.cmd_complete and ns.complete_args == ["commands"]
+        assert ns.needs_client is False          # daemon-free
+
+    def test_hidden_backend_not_a_real_subcommand(self) -> None:
+        # __complete is intercepted in parse_cli, never added to the parser → stays out of `-h`
+        with pytest.raises(SystemExit):
+            m.build_parser().parse_args(["__complete"])
+
+    def test_complete_commands_emits_name_tab_help(self, monkeypatch, capsys) -> None:
+        # runs through main() with NO Client patched — proves it never touches the daemon
+        monkeypatch.setattr(m, "Client", None)   # would explode if main tried to build one
+        assert m.main(["__complete", "commands"]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        catalog = {ln.split("\t", 1)[0]: ln.split("\t", 1)[1] for ln in lines}
+        # single-sourced from the parser: every top-level command appears, with its help
+        for name in ("ls", "edit", "mv", "archive", "transition", "completion"):
+            assert name in catalog and catalog[name]
+        assert "__complete" not in catalog       # the backend never lists itself
+        assert all("\t" in ln for ln in lines)
+
+    def test_completion_parses_and_is_daemon_free(self) -> None:
+        ns = m.build_parser().parse_args(["completion", "bash"])
+        assert ns.fn is m.cmd_completion and ns.shell == "bash" and ns.needs_client is False
+
+    def test_completion_bad_shell_exits(self) -> None:
+        with pytest.raises(SystemExit):
+            m.build_parser().parse_args(["completion", "fish"])
+
+    def test_completion_bash_script_shape(self, monkeypatch, capsys) -> None:
+        monkeypatch.setattr(m, "Client", None)   # daemon-free
+        assert m.main(["completion", "bash"]) == 0
+        out = capsys.readouterr().out
+        assert "complete -F _stx stx" in out                       # registers the completer
+        assert "stx __complete commands" in out                    # feeds the catalog
+        assert "--preview 'stx {1} -h'" in out                     # help in the preview pane
+        assert "compgen -W" in out                                 # graceful no-fzf fallback
+
+
 class _MainClient:
     """Patched in for cli.__main__.Client so main() never touches a socket."""
     behavior = "ok"  # "ok" | "down" | "apierror" | "connerror"
