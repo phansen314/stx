@@ -39,6 +39,35 @@ type Status struct {
 	Archived    bool   `json:"archived"`
 }
 
+type Kind struct {
+	ID          int64  `json:"id"`
+	WorkspaceID int64  `json:"workspaceId"`
+	Name        string `json:"name"`
+	Archived    bool   `json:"archived"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+type Segment struct {
+	ID              int64  `json:"id"`
+	WorkspaceID     int64  `json:"workspaceId"`
+	TrackID         int64  `json:"trackId"`
+	ParentSegmentID *int64 `json:"parentSegmentId"`
+	Name            string `json:"name"`
+	IsRoot          bool   `json:"isRoot"`
+	Archived        bool   `json:"archived"`
+	CreatedAt       string `json:"createdAt"`
+}
+
+// FrontierItem is the slim projection GET /next returns (no description/names/kind).
+type FrontierItem struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Priority  int    `json:"priority"`
+	StatusID  int64  `json:"statusId"`
+	SegmentID int64  `json:"segmentId"`
+	Version   int    `json:"version"`
+}
+
 // Task is the full task row returned by GET /tasks/{id} (as detail.task) and PATCH /tasks/{id}.
 type Task struct {
 	ID           int64  `json:"id"`
