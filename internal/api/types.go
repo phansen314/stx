@@ -21,12 +21,13 @@ type Workspace struct {
 }
 
 type Track struct {
-	ID          int64  `json:"id"`
-	WorkspaceID int64  `json:"workspaceId"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Archived    bool   `json:"archived"`
-	Version     int    `json:"version"`
+	ID           int64  `json:"id"`
+	WorkspaceID  int64  `json:"workspaceId"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	MetadataJSON string `json:"metadataJson"`
+	Archived     bool   `json:"archived"`
+	Version      int    `json:"version"`
 }
 
 type Status struct {
@@ -105,4 +106,21 @@ type RelatesEdge struct {
 	Kind        string `json:"kind"`
 	OtherTaskID int64  `json:"otherTaskId"`
 	Outgoing    bool   `json:"outgoing"`
+}
+
+// Edges is GET /workspaces/{ws}/edges — the bulk edge export used by graph.
+type Edges struct {
+	Blocks  []BlockEdge   `json:"blocks"`
+	Relates []RelatesRow  `json:"relates"`
+}
+
+type BlockEdge struct {
+	SourceTaskID int64 `json:"sourceTaskId"`
+	TargetTaskID int64 `json:"targetTaskId"`
+}
+
+type RelatesRow struct {
+	SourceTaskID int64  `json:"sourceTaskId"`
+	TargetTaskID int64  `json:"targetTaskId"`
+	Kind         string `json:"kind"`
 }

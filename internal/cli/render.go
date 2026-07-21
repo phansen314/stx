@@ -20,6 +20,8 @@ func prio(p int) string {
 	return "  "
 }
 
+func joinLines(xs []string) string { return strings.Join(xs, "\n") }
+
 func statusName(m map[int64]string, id int64) string {
 	if n, ok := m[id]; ok {
 		return n

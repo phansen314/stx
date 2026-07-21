@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # smoke-go.sh — exercise the Go stx CLI end to end (NOT unit tests; just runs the commands).
 #
-# Ported-to-Go commands exercised: ls, tree, next, show, add, edit, mv, done (+ --json, errors).
-# Scaffolding uses the Python bin/stx for the commands not yet in Go (ws/track/segment/block).
-# Creates a throwaway workspace and archives it at the end.
+# Ported-to-Go commands exercised: ls, tree, next, show, add, edit, mv, done, block, relate,
+# unblock, unrelate, relate-kinds, meta, graph, archive (+ --json, errors).
+# Scaffolding uses the Python bin/stx only for ws/track/segment (not yet in Go).
+# Creates a throwaway workspace and archives it (with Go) at the end.
 #
 #   bash scripts/smoke-go.sh
 set -u
@@ -37,8 +38,14 @@ hr "2. edit — title / description / priority (CAS)"
 g edit "$A1" --desc "the core v3 schema" --priority 3
 g edit "$A2" --title "write the migration"
 
-hr "3. scaffold a blocks edge (Python) so 'next' has something to filter"
-scaf block "$A2" --on "$A1"     # migration blocked by schema → should drop out of next
+hr "3. edges — block / relate / relate-kinds / unblock (Go)"
+g block "$A2" --on "$A1"                       # migration blocked by schema → drops out of next
+g relate "$A3" --to "$A1" --kind relates_to
+g relate "$A4" --to "$A3" --kind spawns
+g relate-kinds -w "$W"
+printf '\ndemonstrate unblock then re-block:\n'
+g unblock "$A2" --on "$A1"
+g block "$A2" --on "$A1"
 
 hr "4. reads — tree"
 g tree -w "$W"
@@ -53,6 +60,21 @@ hr "6. reads — show (task detail + edges)"
 g show "$A1"
 printf '\n--json:\n'; g show "$A1" --json
 
+hr "6b. meta — set / ls / get / del (Go RMW over the metadata blob)"
+g meta set --task "$A1" area schema           # bareword → JSON string
+g meta set --task "$A1" points 5              # number
+g meta set --task "$A1" tags '["v3","core"]'  # JSON array
+g meta ls  --task "$A1"
+printf '\n--json:\n'; g meta ls --task "$A1" --json
+g meta get --task "$A1" area
+g meta del --task "$A1" points
+g meta set -w "$W" owner paul                 # metadata on the workspace itself
+g meta ls  -w "$W"
+
+hr "6c. graph — Graphviz DOT + json (pipe DOT to 'dot -Tsvg -o g.svg' for a picture)"
+g graph -w "$W"
+printf '\n--json:\n'; g graph -w "$W" --json
+
 hr "7. status flow — mv through the kanban, then done"
 g mv "$A3" Implementation
 g mv "$A3" Review
@@ -66,7 +88,10 @@ g edit "$A1"                                 # nothing to edit
 g add "bad" -w "$W" -t build -s "$SEG"       # both -t and -s
 g add "bad" -w no-such-workspace -t build    # unknown workspace
 g next                                       # missing -w
+g meta ls                                    # no target (need --task or -w)
+g meta ls --task "$A1" -w "$W"               # both targets
+g archive bogus 1                            # invalid entity type
 
-hr "9. cleanup — archive the throwaway workspace by id (Python)"
-if "$PY" archive workspace "$WID" --yes; then echo "archived $W (#$WID)"; else echo "CLEANUP FAILED for #$WID"; fi
+hr "9. cleanup — archive the throwaway workspace by id (Go's own archive)"
+if "$GO" archive workspace "$WID" --yes; then echo "archived $W (#$WID)"; else echo "CLEANUP FAILED for #$WID"; fi
 "$GO" ls

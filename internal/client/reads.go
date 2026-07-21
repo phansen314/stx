@@ -43,6 +43,18 @@ func (c *Client) Transitions(ws int64) ([]api.Transition, error) {
 	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/transitions", ws), nil, &out)
 }
 
+// RelatesKinds → GET /workspaces/{ws}/relates-kinds (free-text kinds currently in use).
+func (c *Client) RelatesKinds(ws int64) ([]string, error) {
+	var out api.Items[string]
+	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/relates-kinds", ws), nil, &out)
+}
+
+// Edges → GET /workspaces/{ws}/edges (bulk export for graph).
+func (c *Client) Edges(ws int64) (api.Edges, error) {
+	var out api.Edges
+	return out, c.call("GET", fmt.Sprintf("/workspaces/%d/edges", ws), nil, &out)
+}
+
 // Kinds → GET /workspaces/{ws}/kinds.
 func (c *Client) Kinds(ws int64) ([]api.Kind, error) {
 	var out api.Items[api.Kind]
