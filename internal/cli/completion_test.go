@@ -36,6 +36,21 @@ func TestCommandsEmitter(t *testing.T) {
 	}
 }
 
+func TestShellInitBundlesWizardAndCompletion(t *testing.T) {
+	out := runRoot(t, "shell-init")
+	for _, want := range []string{
+		"_stx_build",               // the guided builder
+		"stx() {",                  // the wrapper function (bare stx → builder)
+		"read -r -e -i",            // assembled command lands on an editable prompt
+		"_stxb_task",               // a daemon-backed picker
+		"complete -F _stx_fzf stx", // completion bundled in too
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("shell-init missing %q", want)
+		}
+	}
+}
+
 func TestFzfCompletionScriptShape(t *testing.T) {
 	out := runRoot(t, "fzf-completion")
 	for _, want := range []string{

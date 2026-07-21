@@ -100,6 +100,41 @@ func newSegmentCmd() *cobra.Command {
 func newStatusCmd() *cobra.Command {
 	status := &cobra.Command{Use: "status", Short: "status admin"}
 
+	var lsWs string
+	list := &cobra.Command{
+		Use: "ls", Short: "list statuses (kanban order)", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, lsWs)
+			if err != nil {
+				return err
+			}
+			statuses, err := c.Statuses(ws.ID)
+			if err != nil {
+				return err
+			}
+			if flagJSON {
+				return printJSON(cmd, statuses)
+			}
+			out := cmd.OutOrStdout()
+			for _, s := range statuses {
+				tag := ""
+				if s.IsDefault {
+					tag += " (default)"
+				}
+				if s.Terminal {
+					tag += " (terminal)"
+				}
+				fmt.Fprintf(out, "%4d  %s%s\n", s.ID, s.Name, tag)
+			}
+			return nil
+		},
+	}
+	addWsFlag(list, &lsWs)
+
 	var newWs string
 	var order int
 	var terminal bool
@@ -183,7 +218,7 @@ func newStatusCmd() *cobra.Command {
 	}
 	addWsFlag(archive, &arcWs)
 
-	status.AddCommand(create, setDefault, archive)
+	status.AddCommand(list, create, setDefault, archive)
 	return status
 }
 
