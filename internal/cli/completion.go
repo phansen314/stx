@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 )
@@ -33,13 +34,17 @@ func newCommandsCmd() *cobra.Command {
 // past the command word. Self-contained: no bash-completion package needed. Without fzf, cobra's
 // completion handles the command word too. Calls the `stx` on PATH (the Go binary after cutover).
 const bashFzfCompletion = `# stx fzf completion — eval "$(stx fzf-completion)"  (add that line to ~/.bashrc)
-# The command word (stx <TAB>) opens an fzf menu with each command's -h help in the preview pane.
-# After a command is chosen, TAB completes that command's flags and subcommands. Needs fzf for the
-# menu; without it, TAB uses the CLI's own completion everywhere.
+# stx <TAB>            → fzf menu of commands, each command's -h in the preview pane
+# stx <cmd> <TAB>      → fzf menu of that command's subcommands / flags (with descriptions),
+#                        the command's -h in the preview; a lone free-text arg falls back to
+#                        offering the flags so TAB is never dead
+# One candidate inserts directly (no menu). Without fzf, plain completion is used throughout.
 _stx_fzf() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    # command word → fzf menu with help preview
-    if [ "$COMP_CWORD" -eq 1 ] && command -v fzf >/dev/null 2>&1; then
+    local fzf=0; command -v fzf >/dev/null 2>&1 && fzf=1
+
+    # 1) the command word → fzf menu with -h help preview
+    if [ "$COMP_CWORD" -eq 1 ] && [ $fzf -eq 1 ]; then
         local picked
         picked="$(stx __commands \
             | fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=40% --reverse \
@@ -48,14 +53,28 @@ _stx_fzf() {
         [ -n "$picked" ] && COMPREPLY=( "$picked" )
         return
     fi
-    # everything else → the CLI's own completion protocol (flags, subcommands, values)
-    local args name comps=()
-    args=( "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" )
-    while IFS=$'\t' read -r name _; do
-        [ "${name:0:1}" = ":" ] && continue        # skip the trailing :directive line
-        comps+=( "$name" )
-    done < <(stx __complete "${args[@]}" 2>/dev/null)
-    COMPREPLY=( $(compgen -W "${comps[*]}" -- "$cur") )
+
+    # 2) after the command → candidates from the CLI's own completion protocol
+    local pre="${COMP_WORDS[*]:1:COMP_CWORD-1}"       # e.g. "meta ls" (parent path, no cur)
+    local raw
+    raw="$(stx __complete ${pre:+$pre} "$cur" 2>/dev/null | grep -v '^:')"
+    # a bare free-text positional completes to nothing → offer the command's flags instead
+    if [ -z "$raw" ] && [ "${cur:0:1}" != "-" ]; then
+        raw="$(stx __complete ${pre:+$pre} -- 2>/dev/null | grep -v '^:')"
+    fi
+    [ -z "$raw" ] && return
+
+    local names; names="$(cut -f1 <<<"$raw")"
+    if [ $fzf -eq 1 ] && [ "$(wc -l <<<"$names")" -gt 1 ]; then
+        local picked
+        picked="$(printf '%s\n' "$raw" \
+            | fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=40% --reverse \
+                  --query="$cur" --preview "stx $pre -h" --preview-window=right:55%:wrap \
+            | cut -f1)"
+        [ -n "$picked" ] && COMPREPLY=( "$picked" )
+    else
+        COMPREPLY=( $(compgen -W "$names" -- "$cur") )
+    fi
 }
 complete -F _stx_fzf stx
 `
@@ -66,8 +85,8 @@ func newFzfCompletionCmd() *cobra.Command {
 		Short: "print a bash completion script: `stx <TAB>` → fzf menu with help preview",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Fprint(cmd.OutOrStdout(), bashFzfCompletion)
-			return nil
+			_, err := io.WriteString(cmd.OutOrStdout(), bashFzfCompletion)
+			return err
 		},
 	}
 }
