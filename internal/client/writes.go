@@ -97,3 +97,53 @@ func (c *Client) edge(path string, body map[string]any) (json.RawMessage, error)
 func (c *Client) Archive(kind string, id int64) error {
 	return c.call("POST", fmt.Sprintf("/%s/%d/archive", kind, id), nil, nil)
 }
+
+// ── admin: containers & registries ──
+func (c *Client) CreateWorkspace(name string) (api.Workspace, error) {
+	var out api.Workspace
+	return out, c.call("POST", "/workspaces", map[string]any{"name": name}, &out)
+}
+
+func (c *Client) CreateTrack(ws int64, name, description string) (api.Track, error) {
+	var out api.Track
+	body := map[string]any{"name": name, "description": description}
+	return out, c.call("POST", fmt.Sprintf("/workspaces/%d/tracks", ws), body, &out)
+}
+
+func (c *Client) CreateSegment(track int64, name string, parent *int64) (api.Segment, error) {
+	body := map[string]any{"name": name}
+	if parent != nil {
+		body["parentSegmentId"] = *parent
+	}
+	var out api.Segment
+	return out, c.call("POST", fmt.Sprintf("/tracks/%d/segments", track), body, &out)
+}
+
+func (c *Client) CreateStatus(ws int64, name string, order int, terminal bool) (api.Status, error) {
+	body := map[string]any{"name": name, "kanbanOrder": order, "terminal": terminal}
+	var out api.Status
+	return out, c.call("POST", fmt.Sprintf("/workspaces/%d/statuses", ws), body, &out)
+}
+
+func (c *Client) SetDefaultStatus(ws, statusID int64) error {
+	return c.call("POST", fmt.Sprintf("/workspaces/%d/statuses/%d/default", ws, statusID), nil, nil)
+}
+
+func (c *Client) ArchiveStatus(ws, statusID int64) error {
+	return c.call("POST", fmt.Sprintf("/workspaces/%d/statuses/%d/archive", ws, statusID), nil, nil)
+}
+
+func (c *Client) CreateKind(ws int64, name string) (api.Kind, error) {
+	var out api.Kind
+	return out, c.call("POST", fmt.Sprintf("/workspaces/%d/kinds", ws), map[string]any{"name": name}, &out)
+}
+
+func (c *Client) ArchiveKind(ws, kindID int64) error {
+	return c.call("POST", fmt.Sprintf("/workspaces/%d/kinds/%d/archive", ws, kindID), nil, nil)
+}
+
+func (c *Client) CreateTransition(ws, from, to int64) (api.Transition, error) {
+	body := map[string]any{"fromStatusId": from, "toStatusId": to}
+	var out api.Transition
+	return out, c.call("POST", fmt.Sprintf("/workspaces/%d/transitions", ws), body, &out)
+}

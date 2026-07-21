@@ -86,6 +86,41 @@ func TestCreateTask_RoutesToSegmentAndOmitsNilFields(t *testing.T) {
 	}
 }
 
+func TestCreateStatus_Body(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		io.WriteString(w, `{"id":5,"name":"Blocked","kanbanOrder":5,"terminal":false}`)
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL).CreateStatus(3, "Blocked", 5, false); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/workspaces/3/statuses" ||
+		gotBody["name"] != "Blocked" || gotBody["kanbanOrder"] != float64(5) || gotBody["terminal"] != false {
+		t.Fatalf("bad create-status: %s %v", gotPath, gotBody)
+	}
+}
+
+func TestCreateSegment_OmitsNilParent(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		io.WriteString(w, `{"id":9,"name":"api"}`)
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL).CreateSegment(4, "api", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gotBody["parentSegmentId"]; ok {
+		t.Fatalf("parentSegmentId should be omitted when nil: %v", gotBody)
+	}
+}
+
 func TestMoveStatus_Body(t *testing.T) {
 	var gotBody map[string]any
 	var gotPath string

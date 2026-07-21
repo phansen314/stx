@@ -166,6 +166,15 @@ func printJSON(cmd *cobra.Command, v any) error {
 	return err
 }
 
+// emitEntity prints a created entity as JSON (--json) or the given compact text line.
+func emitEntity(cmd *cobra.Command, text string, entity any) error {
+	if flagJSON {
+		return printJSON(cmd, entity)
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), text)
+	return err
+}
+
 // parseID turns a positional id argument into an int64 (argparse type=int equivalent).
 func parseID(s string) (int64, error) {
 	id, err := strconv.ParseInt(s, 10, 64)

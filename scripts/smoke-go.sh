@@ -1,41 +1,44 @@
 #!/usr/bin/env bash
 # smoke-go.sh — exercise the Go stx CLI end to end (NOT unit tests; just runs the commands).
 #
-# Ported-to-Go commands exercised: ls, tree, next, show, add, edit, mv, done, block, relate,
-# unblock, unrelate, relate-kinds, meta, graph, archive (+ --json, errors).
-# Scaffolding uses the Python bin/stx only for ws/track/segment (not yet in Go).
-# Creates a throwaway workspace and archives it (with Go) at the end.
+# 100% Go now (all 22 commands ported): ls, tree, next, show, add, edit, mv, done, block,
+# relate, unblock, unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status,
+# kind, transition (+ --json, errors). Creates a throwaway workspace and archives it at the end.
 #
 #   bash scripts/smoke-go.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GO="$ROOT/bin/stx-go"
-PY="$ROOT/bin/stx"
 W="go-smoke-$$"          # unique per run
 
-hr()  { printf '\n══ %s ══\n' "$*"; }
-g()   { printf '$ stx %s\n' "$*"; "$GO" "$@"; printf '  [exit %s]\n' "$?"; }
-scaf(){ printf '# scaffold: stx %s\n' "$*"; "$PY" "$@" >/dev/null; }
-addid(){ "$GO" add "$1" "${@:2}" --json | jq -r .id; }   # create via Go, return id
+hr()   { printf '\n══ %s ══\n' "$*"; }
+g()    { printf '$ stx %s\n' "$*"; "$GO" "$@"; printf '  [exit %s]\n' "$?"; }
+gid()  { "$GO" "$@" --json | jq -r .id; }                # run a Go command, return the new id
+addid(){ "$GO" add "$1" "${@:2}" --json | jq -r .id; }
 
 command -v jq >/dev/null || { echo "need jq"; exit 1; }
 "$GO" ls >/dev/null 2>&1 || { echo "daemon unreachable — is it running?"; exit 1; }
 
-hr "0. scaffold a workspace (Python: ws/track/segment not yet in Go)"
-WID=$("$PY" ws new "$W" --json | jq -r .id)     # capture id — archive needs it, not the name
+hr "0. scaffold a workspace — pure Go (ws / track / segment)"
+WID=$(gid ws new "$W")                           # capture id — archive needs it, not the name
 # safety net: archive the throwaway workspace even if the run is interrupted (e.g. xclip SIGPIPE)
 cleanup() { [ -n "${WID:-}" ] && "$GO" archive workspace "$WID" --yes >/dev/null 2>&1; }
 trap cleanup EXIT
-scaf track new build -w "$W"
-SEG=$("$PY" segment new api -w "$W" -t build --json | jq -r .id)
+g track new build -w "$W" --desc "the build track"
+SEG=$(gid segment new api -w "$W" -t build)
 echo "workspace=$W (#$WID)  segment(api)=$SEG"
+
+hr "0b. admin — status / kind / transition (Go)"
+g status new Blocked -w "$W" --order 5           # add a status to the seeded kanban
+g transition -w "$W" --from Backlog --to Blocked # ...and a legal move into it
+g kind new bug -w "$W"
 
 hr "1. add — create tasks with Go"
 A1=$(addid "design schema"   -w "$W" -t build -p 2); echo "  design schema  → #$A1"
 A2=$(addid "write migration" -w "$W" -t build       ); echo "  write migration → #$A2"
 A3=$(addid "ship it"         -w "$W" -t build -p 1  ); echo "  ship it        → #$A3"
 A4=$(addid "GET /users"      -w "$W" -s "$SEG"       ); echo "  GET /users     → #$A4 (in api segment)"
-printf '\ntext form of one add:\n'; g add "extra task" -w "$W" -t build
+printf '\ntext form of one add (with the bug kind from §0b):\n'; g add "extra task" -w "$W" -t build --kind bug
 
 hr "2. edit — title / description / priority (CAS)"
 g edit "$A1" --desc "the core v3 schema" --priority 3
@@ -83,6 +86,8 @@ g mv "$A3" Implementation
 g mv "$A3" Review
 g done "$A3"
 g show "$A3"
+printf '\nuse the custom Backlog→Blocked transition created in §0b:\n'
+g mv "$A1" Blocked
 
 hr "8. error paths (each should print 'error: …' and exit 1)"
 g show 99999999                              # NotFound

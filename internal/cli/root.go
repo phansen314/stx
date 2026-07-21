@@ -35,6 +35,7 @@ func NewRootCmd() *cobra.Command {
 		newAddCmd(), newMvCmd(), newEditCmd(), newDoneCmd(),
 		newBlockCmd(), newRelateCmd(), newUnblockCmd(), newUnrelateCmd(), newRelateKindsCmd(),
 		newMetaCmd(), newGraphCmd(), newArchiveCmd(),
+		newWsCmd(), newTrackCmd(), newSegmentCmd(), newStatusCmd(), newKindCmd(), newTransitionCmd(),
 	)
 	return root
 }
