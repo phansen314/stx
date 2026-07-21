@@ -11,24 +11,27 @@ import (
 // `stx` function forwards to the real binary (`command stx`). v1 covers the daily loop; other
 // commands fall back to placing `stx <cmd> ` on the prompt for you to finish (TAB completes).
 const bashWizard = `# stx guided builder — bare 'stx' (terminal, no args) → fzf chain → command on your prompt.
-_stxb_ws() {      # -> workspace name
+# Each picker shows the command-so-far as its fzf header ($1), so you always see what you build.
+_stxb_ws() {      # $1=header -> workspace name
     command stx ls --json 2>/dev/null \
         | jq -r '.[] | "\(.name)\t\(.tracks) track(s)"' \
-        | fzf --delimiter='\t' --with-nth=1,2 --height=40% --reverse --prompt='workspace> ' | cut -f1
+        | fzf --delimiter='\t' --with-nth=1,2 --height=45% --reverse --prompt='workspace> ' \
+              --header="$1" | cut -f1
 }
-_stxb_track() {   # $1=ws -> track name
+_stxb_track() {   # $1=ws $2=header -> track name
     command stx tree -w "$1" --json 2>/dev/null | jq -r '.tracks[].track' \
-        | fzf --height=40% --reverse --prompt='track> '
+        | fzf --height=45% --reverse --prompt='track> ' --header="$2"
 }
-_stxb_task() {    # $1=ws -> task id
+_stxb_task() {    # $1=ws $2=header -> task id
     command stx tree -w "$1" --json 2>/dev/null \
         | jq -r '.tracks[].tasks[] | "\(.id)\t[\(.status)] \(.title)"' \
-        | fzf --delimiter='\t' --with-nth=2 --height=50% --reverse \
-              --preview 'stx show {1}' --preview-window=right:55%:wrap --prompt='task> ' | cut -f1
+        | fzf --delimiter='\t' --with-nth=2 --height=55% --reverse \
+              --preview 'stx show {1}' --preview-window=right:55%:wrap --prompt='task> ' \
+              --header="$2" | cut -f1
 }
-_stxb_status() {  # $1=ws -> status name
+_stxb_status() {  # $1=ws $2=header -> status name
     command stx status ls -w "$1" --json 2>/dev/null | jq -r '.[].name' \
-        | fzf --height=40% --reverse --prompt='status> '
+        | fzf --height=45% --reverse --prompt='status> ' --header="$2"
 }
 
 _stx_build() {
@@ -37,35 +40,42 @@ _stx_build() {
     local cmd
     cmd="$(command stx __commands \
         | fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=60% --reverse \
-              --preview 'stx {1} -h' --preview-window=right:55%:wrap --prompt='stx> ' | cut -f1)"
+              --preview 'stx {1} -h' --preview-window=right:55%:wrap \
+              --prompt='stx> ' --header='building:  stx …' | cut -f1)"
     [ -z "$cmd" ] && return
 
-    local line='' ws id st tr title field val
+    local line='' ws id st tr title field val h
     case "$cmd" in
         add)
-            ws="$(_stxb_ws)";          [ -z "$ws" ] && return
-            tr="$(_stxb_track "$ws")"; [ -z "$tr" ] && return
-            read -r -e -p 'title> ' title; [ -z "$title" ] && return
+            ws="$(_stxb_ws       'building:  stx add …')";                       [ -z "$ws" ] && return
+            tr="$(_stxb_track "$ws" "building:  stx add -w $ws …")";             [ -z "$tr" ] && return
+            printf 'building:  stx add -w %s -t %s …\n' "$ws" "$tr"
+            read -r -e -p 'title> ' title;                                       [ -z "$title" ] && return
             printf -v line 'stx add %q -w %q -t %q' "$title" "$ws" "$tr" ;;
         mv)
-            ws="$(_stxb_ws)";           [ -z "$ws" ] && return
-            id="$(_stxb_task "$ws")";   [ -z "$id" ] && return
-            st="$(_stxb_status "$ws")"; [ -z "$st" ] && return
+            ws="$(_stxb_ws       'building:  stx mv …')";                        [ -z "$ws" ] && return
+            id="$(_stxb_task "$ws" "building:  stx mv …   (workspace: $ws)")";    [ -z "$id" ] && return
+            st="$(_stxb_status "$ws" "building:  stx mv $id …")";                 [ -z "$st" ] && return
             printf -v line 'stx mv %s %q' "$id" "$st" ;;
         done)
-            ws="$(_stxb_ws)"; id="$(_stxb_task "$ws")"; [ -z "$id" ] && return
+            ws="$(_stxb_ws       'building:  stx done …')";                      [ -z "$ws" ] && return
+            id="$(_stxb_task "$ws" "building:  stx done …   (workspace: $ws)")";  [ -z "$id" ] && return
             printf -v line 'stx done %s' "$id" ;;
         show)
-            ws="$(_stxb_ws)"; id="$(_stxb_task "$ws")"; [ -z "$id" ] && return
+            ws="$(_stxb_ws       'building:  stx show …')";                      [ -z "$ws" ] && return
+            id="$(_stxb_task "$ws" "building:  stx show …   (workspace: $ws)")";  [ -z "$id" ] && return
             printf -v line 'stx show %s' "$id" ;;
         edit)
-            ws="$(_stxb_ws)"; id="$(_stxb_task "$ws")"; [ -z "$id" ] && return
-            field="$(printf 'title\ndesc\npriority' | fzf --height=20% --reverse --prompt='field> ')"
-            [ -z "$field" ] && return
-            read -r -e -p "$field> " val; [ -z "$val" ] && return
+            ws="$(_stxb_ws       'building:  stx edit …')";                      [ -z "$ws" ] && return
+            id="$(_stxb_task "$ws" "building:  stx edit …   (workspace: $ws)")";  [ -z "$id" ] && return
+            h="building:  stx edit $id …"
+            field="$(printf 'title\ndesc\npriority' \
+                | fzf --height=30% --reverse --prompt='field> ' --header="$h")"; [ -z "$field" ] && return
+            printf 'building:  stx edit %s --%s …\n' "$id" "$field"
+            read -r -e -p "$field> " val;                                        [ -z "$val" ] && return
             printf -v line 'stx edit %s --%s %q' "$id" "$field" "$val" ;;
         next|tree)
-            ws="$(_stxb_ws)"; [ -z "$ws" ] && return
+            ws="$(_stxb_ws "building:  stx $cmd …")";                            [ -z "$ws" ] && return
             printf -v line 'stx %s -w %q' "$cmd" "$ws" ;;
         ls)
             line='stx ls' ;;
