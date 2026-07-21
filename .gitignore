@@ -14,3 +14,6 @@ coverage/
 uv.lock
 settings.local.json
 /.claude/
+
+# Go client build
+/bin/stx-go

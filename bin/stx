@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# stx launcher — runs the CLI from any CWD by putting the repo root (which holds cli/ and stxc/)
-# on PYTHONPATH. Symlink this onto your PATH if you like: ln -s "$PWD/bin/stx" ~/.local/bin/stx
+# stx launcher — runs the Go CLI (bin/stx-go), building it on first use if missing.
+# The Python CLI is kept as the reference/oracle and is available as `bin/stx-py`.
+# Symlink this onto your PATH if you like: ln -s "$PWD/bin/stx" ~/.local/bin/stx
 set -euo pipefail
-# Resolve symlinks so `ln -s .../bin/stx ~/.local/bin/stx` finds the real repo root.
 self="$(readlink -f "${BASH_SOURCE[0]}")"
 here="$(cd "$(dirname "$self")/.." && pwd)"
-exec env PYTHONPATH="${here}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m cli "$@"
+bin="$here/bin/stx-go"
+if [ ! -x "$bin" ]; then
+  echo "stx: building the Go client (first run)…" >&2
+  ( cd "$here" && go build -o bin/stx-go ./cmd/stx )
+fi
+exec "$bin" "$@"
