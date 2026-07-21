@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -31,18 +33,59 @@ func New(base string) *Client {
 	return &Client{base: base, http: &http.Client{Timeout: 15 * time.Second}}
 }
 
-// APIError is a non-2xx response carrying the daemon's error envelope.
+// APIError is a non-2xx response carrying the daemon's error envelope
+// ({error: <variant>, ...variant-specific fields}; no fixed `message` key). Variant-specific
+// fields (e.g. entity/id on NotFound) land in Detail so they aren't lost.
 type APIError struct {
 	Code    int
-	Variant string `json:"error"`
-	Message string `json:"message"`
+	Variant string
+	Message string // the "message" field, when the variant carries one (e.g. VersionConflict)
+	Detail  string // other variant-specific fields, rendered "k=v, k=v" (sorted)
 }
 
 func (e *APIError) Error() string {
-	if e.Message == "" {
+	switch {
+	case e.Message != "":
+		return e.Variant + ": " + e.Message
+	case e.Detail != "":
+		return e.Variant + ": " + e.Detail
+	default:
 		return e.Variant
 	}
-	return fmt.Sprintf("%s: %s", e.Variant, e.Message)
+}
+
+// parseAPIError decodes the daemon error envelope. UseNumber keeps ids as integers (not float
+// scientific notation) when rendered into Detail.
+func parseAPIError(code int, body []byte) *APIError {
+	ae := &APIError{Code: code}
+	var env map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&env); err != nil || env == nil {
+		ae.Variant = fmt.Sprintf("HTTP%d", code)
+		return ae
+	}
+	if v, ok := env["error"].(string); ok {
+		ae.Variant = v
+	} else {
+		ae.Variant = fmt.Sprintf("HTTP%d", code)
+	}
+	if m, ok := env["message"].(string); ok {
+		ae.Message = m
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if k != "error" && k != "message" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, env[k]))
+	}
+	ae.Detail = strings.Join(parts, ", ")
+	return ae
 }
 
 // ConnError wraps a transport failure (daemon down / reset / timeout).
@@ -77,12 +120,7 @@ func (c *Client) call(method, path string, body, out any) error {
 		return &ConnError{Err: err}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		ae := &APIError{Code: resp.StatusCode}
-		_ = json.Unmarshal(data, ae) // best-effort; leaves Variant/Message empty on non-JSON
-		if ae.Variant == "" {
-			ae.Variant = fmt.Sprintf("HTTP%d", resp.StatusCode)
-		}
-		return ae
+		return parseAPIError(resp.StatusCode, data)
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)

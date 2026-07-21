@@ -26,6 +26,27 @@ func TestCall_ErrorEnvelopeBecomesTypedAPIError(t *testing.T) {
 	}
 }
 
+func TestCall_MessagelessEnvelopeSurfacesVariantFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+		io.WriteString(w, `{"error":"NotFound","entity":"task","id":99999999}`)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL).TaskDetail(99999999)
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T", err)
+	}
+	// no "message" field → variant-specific fields land in Detail (sorted, integer-formatted)
+	if ae.Variant != "NotFound" || ae.Detail != "entity=task, id=99999999" {
+		t.Fatalf("bad parse: variant=%q detail=%q", ae.Variant, ae.Detail)
+	}
+	if got := ae.Error(); got != "NotFound: entity=task, id=99999999" {
+		t.Fatalf("bad Error(): %q", got)
+	}
+}
+
 func TestCall_TransportFailureBecomesConnError(t *testing.T) {
 	// nothing listening on this port → dial refused
 	_, err := New("http://127.0.0.1:1").ListWorkspaces()
