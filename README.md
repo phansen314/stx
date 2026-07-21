@@ -8,7 +8,9 @@ A local, loopback-only task daemon with a terminal UI. Work is organized
 ## Prerequisites
 
 - **JDK 21** — for the daemon.
-- **Python 3** — for the TUI and the integration script.
+- **Go 1.26+** — for the `stx` CLI (the default client). Only needed to build it; the
+  `bin/stx` launcher compiles it on first use.
+- **Python 3** — for the TUI, the integration script, and the reference/oracle CLI.
 - Gradle is **not** required separately; use the committed wrapper (`./gradlew`).
 
 ## Run the daemon
@@ -56,6 +58,27 @@ running.
 Every workspace-scoped command takes `-w <name|id>` explicitly (nothing is stored, so concurrent
 sessions don't clobber each other). Full reference: [`docs/stx-cli.md`](docs/stx-cli.md).
 
+### Two implementations: Go (default) vs Python (reference)
+
+There are two interchangeable CLIs behind the same wire contract. Pick one; both are stateless
+and take the same flags (`-w`, `--json`, `--base-url` / `STX_URL`).
+
+- **Go — the default.** `bin/stx` runs the compiled Go client (`bin/stx-go`), **building it on
+  first use** with `go build -o bin/stx-go ./cmd/stx` (needs Go 1.26+). Source lives in
+  `cmd/stx` + `internal/cli`. Put it on your PATH:
+
+  ```bash
+  ln -s "$PWD/bin/stx" ~/.local/bin/stx
+  ```
+
+- **Python — the reference/oracle.** `bin/stx-py` runs `python3 -m cli` (the original
+  implementation, kept for cross-checking). It needs the repo's `stxc` client importable —
+  the launcher sets `PYTHONPATH` for you. No Go required.
+
+  ```bash
+  ./bin/stx-py ls
+  ```
+
 ## Demo / integration test
 
 `scripts/dev_sim.py` drives the full API as a "developer" would and asserts state along the
@@ -69,7 +92,9 @@ python3 scripts/dev_sim.py --base-url http://127.0.0.1:8420
 ## Run the tests
 
 ```bash
-./gradlew test
+./gradlew test              # Kotlin daemon suite
+go test ./internal/...      # Go CLI suite
+pytest                      # Python CLI / client / TUI suite
 ```
 
 ## Project layout
@@ -77,8 +102,10 @@ python3 scripts/dev_sim.py --base-url http://127.0.0.1:8420
 | Path     | What                                              |
 |----------|---------------------------------------------------|
 | `src/`   | Kotlin daemon (HTTP transport, service, SQLite repo) |
-| `stxc/`  | Shared Python wire client (used by the CLI and TUI) |
-| `cli/`   | `stx` CLI (`bin/stx`, `python3 -m cli`) — see [`docs/stx-cli.md`](docs/stx-cli.md) |
+| `cmd/stx/`, `internal/` | Go CLI — the default `stx` client (`bin/stx-go`)   |
+| `stxc/`  | Shared Python wire client (used by the Python CLI and TUI) |
+| `cli/`   | Python reference/oracle CLI (`bin/stx-py`, `python3 -m cli`) — see [`docs/stx-cli.md`](docs/stx-cli.md) |
+| `bin/`   | Launchers — `stx` (→ Go, auto-builds), `stx-py` (→ Python) |
 | `tui/`   | Python Textual TUI (`python3 -m tui`)             |
 | `scripts/` | `dev_sim.py` — Python integration test / demo     |
 | `docs/`  | Design decisions — see [`docs/stx-v3-decisions.md`](docs/stx-v3-decisions.md) |

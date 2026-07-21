@@ -1,21 +1,38 @@
 # stx CLI
 
-A thin, **stateless** command layer over the stx daemon — for agents and humans. Built on the
-shared `stxc` client (same wire contract as the TUI and `scripts/dev_sim.py`).
+A thin, **stateless** command layer over the stx daemon — for agents and humans. Two
+interchangeable implementations sit behind one wire contract (the same the TUI and
+`scripts/dev_sim.py` speak): a **Go** client (the default) and a **Python** reference/oracle.
+Same commands, same flags — pick whichever is convenient.
 
 ## Install / run
 
 The daemon must be running (`./gradlew run`, listens on `127.0.0.1:8420`).
 
+### Go CLI — the default
+
+`bin/stx` runs the compiled Go client (`bin/stx-go`) and **builds it on first use**
+(`go build -o bin/stx-go ./cmd/stx`), so you need **Go 1.26+** installed. Source: `cmd/stx` +
+`internal/cli`.
+
 ```bash
-./bin/stx ls                       # from the repo root
-# or, from anywhere:
-PYTHONPATH=/path/to/stx-v3 python3 -m cli ls
-# optional: put it on PATH
-ln -s "$PWD/bin/stx" ~/.local/bin/stx
+./bin/stx ls                       # from the repo root (any CWD works)
+ln -s "$PWD/bin/stx" ~/.local/bin/stx   # optional: put it on PATH
 ```
 
-Daemon location: `--base-url` flag or `STX_URL` env (default `http://127.0.0.1:8420`).
+### Python CLI — the reference/oracle
+
+`bin/stx-py` runs the original Python implementation (`python3 -m cli`), kept for
+cross-checking. No Go required; the launcher sets `PYTHONPATH` so the repo's `stxc` client
+is importable regardless of CWD.
+
+```bash
+./bin/stx-py ls                    # from the repo root
+PYTHONPATH=/path/to/stx python3 -m cli ls   # or invoke the module directly
+```
+
+Daemon location (both CLIs): `--base-url` flag or `STX_URL` env (default
+`http://127.0.0.1:8420`).
 
 ## Stateless by design — always pass `-w`
 
