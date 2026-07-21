@@ -23,6 +23,9 @@ command -v jq >/dev/null || { echo "need jq"; exit 1; }
 
 hr "0. scaffold a workspace (Python: ws/track/segment not yet in Go)"
 WID=$("$PY" ws new "$W" --json | jq -r .id)     # capture id — archive needs it, not the name
+# safety net: archive the throwaway workspace even if the run is interrupted (e.g. xclip SIGPIPE)
+cleanup() { [ -n "${WID:-}" ] && "$GO" archive workspace "$WID" --yes >/dev/null 2>&1; }
+trap cleanup EXIT
 scaf track new build -w "$W"
 SEG=$("$PY" segment new api -w "$W" -t build --json | jq -r .id)
 echo "workspace=$W (#$WID)  segment(api)=$SEG"
