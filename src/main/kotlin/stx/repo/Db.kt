@@ -119,15 +119,26 @@ class Db(private val url: String) {
             check(fkViolations.isEmpty()) {
                 "stx integrity check failed: foreign-key violations in table(s) $fkViolations"
             }
-            val orphans = mutableListOf<Long>()
-            c.createStatement().use { st ->
-                st.executeQuery(ORPHAN_QUERY).use { rs -> while (rs.next()) orphans += rs.getLong(1) }
-            }
+            val orphans = scanIds(c, ORPHAN_QUERY)
             check(orphans.isEmpty()) {
                 "stx integrity check failed: live task(s) under an archived container (cascade bug): $orphans"
             }
+            // #8 defense-in-depth (symmetric with the orphan scan for #6): the denormalized
+            // workspace_id on task/segment must equal the workspace reached via the track chain.
+            // The daemon enforces this on every write, but the live_task view joins task.workspace_id
+            // AND segment->track->workspace WITHOUT asserting they are equal — so a drift would serve
+            // wrong-workspace rows silently. Surface it loudly at boot instead.
+            val drifted = scanIds(c, COHERENCE_QUERY)
+            check(drifted.isEmpty()) {
+                "stx integrity check failed: live task(s) whose workspace_id drifted from the track chain (#8): $drifted"
+            }
         }
     }
+
+    private fun scanIds(c: Connection, query: String): List<Long> =
+        c.createStatement().use { st ->
+            st.executeQuery(query).use { rs -> buildList { while (rs.next()) add(rs.getLong(1)) } }
+        }
 
     private fun loadResource(path: String): String =
         Db::class.java.getResourceAsStream(path)
@@ -222,6 +233,22 @@ class Db(private val url: String) {
                 OR EXISTS (SELECT 1 FROM segment s JOIN track k ON k.id = s.track_id WHERE s.id = t.segment_id AND k.archived = 1)
                 OR EXISTS (SELECT 1 FROM seg_anc sa JOIN segment s ON s.id = sa.seg_id WHERE sa.task_id = t.id AND s.archived = 1)
             )
+            """.trimIndent()
+
+        /**
+         * #8 coherence: live tasks whose denormalized workspace_id disagrees with the workspace
+         * reached through segment->track (or whose own segment's workspace_id disagrees with its
+         * track). The daemon derives these on write so they can't drift in normal operation; this
+         * catches a legacy/tampered/buggy DB before it serves cross-workspace rows.
+         */
+        private val COHERENCE_QUERY =
+            """
+            SELECT t.id
+            FROM task t
+            JOIN segment s ON s.id = t.segment_id
+            JOIN track   k ON k.id = s.track_id
+            WHERE t.archived = 0
+              AND (t.workspace_id <> k.workspace_id OR s.workspace_id <> k.workspace_id)
             """.trimIndent()
     }
 }

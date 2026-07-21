@@ -343,7 +343,10 @@ object RelatesRepo {
     fun distinctKinds(c: Connection, workspaceId: Long): List<String> =
         c.queryList("SELECT DISTINCT kind FROM relates_to WHERE workspace_id=? AND archived=0 ORDER BY kind", workspaceId) { it.getString("kind") }
 
-    /** All live relates_to edges in a workspace — bulk read for graph export. */
+    /** All live relates_to edges in a workspace — bulk read for graph export. Intentionally NOT
+     *  deduped: a reciprocal symmetric pair (A→B and B→A) returns as two rows (decision D7). The
+     *  daemon can't know which kinds are symmetric (kind is free text, D6), so it stays dumb and
+     *  the renderer collapses symmetric edges at view time. Do not add distinctBy here. */
     fun liveByWorkspace(c: Connection, workspaceId: Long): List<RelatesDto> =
         c.queryList("SELECT * FROM relates_to WHERE workspace_id=? AND archived=0", workspaceId) { it.toRelates() }
 

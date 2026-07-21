@@ -1,5 +1,7 @@
 package stx.service
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import stx.dto.TaskDto
 import stx.error.StxError
 import stx.repo.BlocksRepo
@@ -19,6 +21,28 @@ import java.sql.Connection
  *    only at create (where the new node has no descendants, so no cycle is possible) and never
  *    updated. [segmentReparentWouldCycle] is provided for the day a move-segment verb lands.
  */
+
+/**
+ * `metadata_json` must parse to a JSON *object* — the `{}`-shaped k/v contract every reader
+ * (the `meta` verb, any future consumer) relies on. The schema `CHECK (json_valid AND
+ * json_type='object')` is the durable backstop; this daemon-side gate exists so a bad blob
+ * returns a clean [StxError.Validation] instead of a raw CHECK-constraint failure surfacing as a
+ * Defect -> 500. Called at every metadata write (create/edit of workspace/track/task).
+ */
+fun requireJsonObject(field: String, value: String): Res<Unit, StxError> = rail {
+    val el = runCatching { Json.parseToJsonElement(value) }.getOrNull()
+        ?: raise(StxError.Validation("$field must be valid JSON"))
+    if (el !is JsonObject) raise(StxError.Validation("$field must be a JSON object"))
+}
+
+/**
+ * A human-facing name/title must carry at least one non-whitespace char — an empty or all-blank
+ * label is a valid-but-useless row (id-addressed entities have no name uniqueness to lean on).
+ * The schema `CHECK (length(trim(...)) > 0)` is the backstop; this is the clean-error gate.
+ */
+fun requireNonBlank(field: String, value: String): Res<Unit, StxError> = rail {
+    if (value.isBlank()) raise(StxError.Validation("$field must not be blank"))
+}
 
 /** Load a task that must be visible (live row + live container chain). NotFound vs Gone per D4. */
 fun loadVisibleTask(c: Connection, id: Long): Res<TaskDto, StxError> = rail {

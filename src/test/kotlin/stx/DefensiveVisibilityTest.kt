@@ -129,6 +129,19 @@ class DefensiveVisibilityTest {
         assertTrue(ex.message!!.contains(orphan.toString()), "error must name the offending task: ${ex.message}")
     }
 
+    @Test fun `assertConsistent throws on a live task whose workspace_id drifted from its track chain`() {
+        val ws = id(w(CreateWorkspace("ws")))
+        val other = id(w(CreateWorkspace("other")))
+        val track = id(w(CreateTrack(ws, "t")))
+        val drift = id(w(CreateTask(trackId = track, title = "x")))
+        db.assertConsistent() // clean: task.workspace_id agrees with its track chain
+        // Force #8 drift: repoint the task at another REAL, live workspace (so no FK/orphan violation)
+        // while its segment/track stay in `ws` — exactly the case live_task cannot see.
+        execRaw("UPDATE task SET workspace_id = $other WHERE id = $drift")
+        val ex = assertFailsWith<IllegalStateException> { db.assertConsistent() }
+        assertTrue(ex.message!!.contains(drift.toString()), "error must name the drifted task: ${ex.message}")
+    }
+
     @Test fun `relates_to symmetric read dedups - reciprocal directional rows both persist`() {
         val ws = id(w(CreateWorkspace("ws")))
         val track = id(w(CreateTrack(ws, "t")))

@@ -50,4 +50,19 @@ class EdgesTest {
         assertEquals(emptyList(), e2.blocks)
         assertEquals(1, e2.relates.size)
     }
+
+    /** #4 corollary: archiving a task cascades its incident relates_to rows (both directions),
+     *  symmetric with the blocks cascade — so a live edge never dangles off an archived task. */
+    @Test fun `archiving a task cascades its incident relates edges`() {
+        val ws = idOf(w(CreateWorkspace("ws")))
+        val track = idOf(w(CreateTrack(ws, "main")))
+        val t = (1..3).map { idOf(w(CreateTask(trackId = track, title = "T$it"))) }
+        w(AddRelates("spawns", t[0], t[1])).getOrThrow()   // t0 as source
+        w(AddRelates("mentions", t[2], t[0])).getOrThrow() // t0 as target
+        assertEquals(2, edges(ws).relates.size)
+
+        w(ArchiveTask(t[0])).getOrThrow()
+        // both the source-side and target-side relations incident to t0 are archived out.
+        assertEquals(emptyList(), edges(ws).relates)
+    }
 }

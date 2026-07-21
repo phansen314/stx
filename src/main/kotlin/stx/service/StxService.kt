@@ -74,6 +74,8 @@ class StxService {
     // ── bootstrap (brief §3) ─────────────────────────────────────────────────────────────────
 
     private fun createWorkspace(c: Connection, cmd: CreateWorkspace): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
+        requireJsonObject("metadata_json", cmd.metadataJson).bind()
         val wsId = WorkspaceRepo.insert(c, cmd.name, cmd.metadataJson).bind()
         val backlog = StatusRepo.insert(c, wsId, "Backlog", 0, terminal = false, isDefault = true).bind()
         val impl = StatusRepo.insert(c, wsId, "Implementation", 1, terminal = false, isDefault = false).bind()
@@ -92,6 +94,7 @@ class StxService {
     }
 
     private fun createStatus(c: Connection, cmd: CreateStatus): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
         WorkspaceRepo.getLive(c, cmd.workspaceId) ?: raise(StxError.NotFound("workspace", cmd.workspaceId))
         // Reject case-insensitive near-duplicates (e.g. "done" when "Done" exists) up front — the SQL
         // uniqueness index is byte-exact, so without this guard both would coexist and confuse the CLI.
@@ -106,12 +109,15 @@ class StxService {
     private fun setDefaultStatus(c: Connection, cmd: SetDefaultStatus): Res<Reply, StxError> = rail {
         val st = StatusRepo.getLive(c, cmd.statusId) ?: raise(StxError.NotFound("status", cmd.statusId))
         ensure(st.workspaceId == cmd.workspaceId) { StxError.CrossWorkspace(st.id, cmd.workspaceId) }
+        // A terminal status as the default would birth every new task "done" and invisible to `next`.
+        ensure(!st.terminal) { StxError.Validation("a terminal status cannot be the default") }
         StatusRepo.clearDefault(c, cmd.workspaceId)
         StatusRepo.setDefault(c, st.id).bind()
         IdReply("status", st.id)
     }
 
     private fun createKind(c: Connection, cmd: CreateKind): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
         WorkspaceRepo.getLive(c, cmd.workspaceId) ?: raise(StxError.NotFound("workspace", cmd.workspaceId))
         // Reject case-insensitive near-duplicates (e.g. "Impl" when "impl" exists) so `next --kind`
         // can't fragment — the SQL uniqueness index is byte-exact and won't catch this on its own.
@@ -135,6 +141,8 @@ class StxService {
     }
 
     private fun createTrack(c: Connection, cmd: CreateTrack): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
+        requireJsonObject("metadata_json", cmd.metadataJson).bind()
         val ws = WorkspaceRepo.getLive(c, cmd.workspaceId) ?: raise(StxError.NotFound("workspace", cmd.workspaceId))
         val trackId = TrackRepo.insert(c, ws.id, cmd.name, cmd.description, cmd.metadataJson).bind()
         SegmentRepo.insert(c, ws.id, trackId, parentSegmentId = null, name = "(root)", isRoot = true).bind() // #3
@@ -142,6 +150,7 @@ class StxService {
     }
 
     private fun createSegment(c: Connection, cmd: CreateSegment): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
         val track = TrackRepo.getLive(c, cmd.trackId) ?: raise(StxError.NotFound("track", cmd.trackId))
         val parentId = if (cmd.parentSegmentId != null) {
             val parent = SegmentRepo.getLive(c, cmd.parentSegmentId) ?: raise(StxError.NotFound("segment", cmd.parentSegmentId))
@@ -160,6 +169,8 @@ class StxService {
     // ── tasks ────────────────────────────────────────────────────────────────────────────────
 
     private fun createTask(c: Connection, cmd: CreateTask): Res<Reply, StxError> = rail {
+        requireNonBlank("title", cmd.title).bind()
+        requireJsonObject("metadata_json", cmd.metadataJson).bind()
         val seg = when {
             cmd.segmentId != null -> SegmentRepo.getLive(c, cmd.segmentId) ?: raise(StxError.NotFound("segment", cmd.segmentId))
             cmd.trackId != null -> {
@@ -207,6 +218,8 @@ class StxService {
     }
 
     private fun editTask(c: Connection, cmd: EditTask): Res<Reply, StxError> = rail {
+        cmd.title?.let { requireNonBlank("title", it).bind() }
+        cmd.metadataJson?.let { requireJsonObject("metadata_json", it).bind() }
         val task = loadVisibleTask(c, cmd.taskId).bind()
         // clearKind wins in casEdit, so don't validate a (possibly stale) kindId that is being cleared.
         if (!cmd.clearKind && cmd.kindId != null) {
@@ -219,12 +232,16 @@ class StxService {
     }
 
     private fun editWorkspace(c: Connection, cmd: EditWorkspace): Res<Reply, StxError> = rail {
+        cmd.name?.let { requireNonBlank("name", it).bind() }
+        cmd.metadataJson?.let { requireJsonObject("metadata_json", it).bind() }
         val changes = WorkspaceRepo.casEdit(c, cmd.id, cmd.expectedVersion, cmd.name, cmd.metadataJson)
         interpretCas(c, "workspace", "workspace", cmd.id, cmd.expectedVersion, changes).bind()
         WorkspaceRepo.getById(c, cmd.id) ?: raise(StxError.NotFound("workspace", cmd.id))
     }
 
     private fun editTrack(c: Connection, cmd: EditTrack): Res<Reply, StxError> = rail {
+        cmd.name?.let { requireNonBlank("name", it).bind() }
+        cmd.metadataJson?.let { requireJsonObject("metadata_json", it).bind() }
         val changes = TrackRepo.casEdit(c, cmd.id, cmd.expectedVersion, cmd.name, cmd.description, cmd.metadataJson)
         interpretCas(c, "track", "track", cmd.id, cmd.expectedVersion, changes).bind()
         TrackRepo.getById(c, cmd.id) ?: raise(StxError.NotFound("track", cmd.id))

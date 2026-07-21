@@ -73,3 +73,27 @@ Considered and rejected:
 Mitigation for the one real downside (typo drift, e.g. `relates-to` vs `relates_to`): a **read-only**
 `stx relate-kinds -w <ws>` (`GET /workspaces/{id}/relates-kinds`) lists the distinct `kind` values in
 live use, so a user can self-check without a hard constraint. It reports drift; it does not prevent it.
+
+## D7 — Reciprocal relates_to rows are stored as-is; the daemon does NOT dedup them
+`ux_relates_live` is on the **ordered** triple `(kind, source_task_id, target_task_id)`
+(`schema.sql`), so a reciprocal pair — `(relates-to, A→B)` and `(relates-to, B→A)` — persists as **two
+live rows**. This is **intended, not a bug**: for a *symmetric* kind they are the same fact, but for a
+*directional* kind (`spawns A→B` ≠ `spawns B→A`, D2 tracks `outgoing`) they are distinct, and because
+`kind` is free text (D6) the daemon **cannot know which kinds are symmetric** — so it stores exactly
+what it was told and stays dumb.
+
+Consequence, deliberately accepted: reads are **not uniformly deduped**. `GET /tasks/{id}` dedups from
+that one task's vantage (`distinctBy { kind to otherTaskId }`, D2), but the **bulk** edge read
+`GET /workspaces/{id}/edges` (`RelatesRepo.liveByWorkspace`, backing `stx graph`) returns the raw
+rows — so a symmetric relation appears as two edges there.
+
+Considered and rejected:
+- **Canonicalize on write** (`min→max`): destroys direction for directional kinds. Rejected.
+- **Symmetric unique index / per-kind symmetry flag**: needs a kind registry, which D6 killed.
+- **Dedup the bulk read in the daemon**: would collapse `(kind, {s,t})` unordered, losing direction
+  for directional kinds, and pushes presentation policy into the write-actor's read path.
+
+Resolution: **keep the daemon dumb.** Storage is directional and honest; collapsing symmetric
+relations to a single (typically undirected) edge is the **renderer's** job — e.g. graphviz
+`concentrate=true`, or drawing relates_to undirected — decided at view time where kind-symmetry
+intent actually lives. Do not "fix" the un-deduped bulk read; it is deduping-free on purpose.

@@ -34,7 +34,10 @@ CREATE TABLE workspace (
     archived      INTEGER NOT NULL DEFAULT 0,
     version       INTEGER NOT NULL DEFAULT 0,       -- optimistic-lock token (see CAS note at foot)
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    CHECK (archived IN (0, 1)),
+    CHECK (length(trim(name)) > 0),
+    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object')  -- object-shaped k/v (the daemon gate mirrors this)
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +62,13 @@ CREATE TABLE status (
     terminal     INTEGER NOT NULL DEFAULT 0,        -- terminal == "done"
     is_default   INTEGER NOT NULL DEFAULT 0,        -- create-time entry status; exactly one live per ws (see index)
     archived     INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    CHECK (terminal IN (0, 1) AND is_default IN (0, 1) AND archived IN (0, 1)),
+    CHECK (length(trim(name)) > 0),
+    -- The create-time default status is where tasks are BORN, so it must not be terminal:
+    -- a terminal default births every task "done" and instantly invisible to `next`. The
+    -- daemon (setDefaultStatus) rejects it with a clean error; this CHECK is the backstop.
+    CHECK (NOT (is_default = 1 AND terminal = 1))
 );
 CREATE UNIQUE INDEX ux_status_ws_name_live
     ON status(workspace_id, name) WHERE archived = 0;
@@ -77,7 +86,8 @@ CREATE TABLE status_transition (
     from_status_id INTEGER NOT NULL REFERENCES status(id)    ON DELETE RESTRICT,
     to_status_id   INTEGER NOT NULL REFERENCES status(id)    ON DELETE RESTRICT,
     archived       INTEGER NOT NULL DEFAULT 0,
-    CHECK (from_status_id <> to_status_id)
+    CHECK (from_status_id <> to_status_id),
+    CHECK (archived IN (0, 1))
 );
 CREATE UNIQUE INDEX ux_transition_live
     ON status_transition(workspace_id, from_status_id, to_status_id)
@@ -94,8 +104,11 @@ CREATE TABLE track (
     archived      INTEGER NOT NULL DEFAULT 0,
     version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token (see CAS note at foot)
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     -- No parent: tracks exist only at the root level.
+    CHECK (archived IN (0, 1)),
+    CHECK (length(trim(name)) > 0),
+    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -113,8 +126,10 @@ CREATE TABLE segment (
     is_root           INTEGER NOT NULL DEFAULT 0,
     archived          INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
-    CHECK (parent_segment_id IS NULL OR parent_segment_id <> id)   -- no self-parent
+    CHECK (parent_segment_id IS NULL OR parent_segment_id <> id),   -- no self-parent
     -- A root segment has parent_segment_id IS NULL. Deeper cycle prevention: daemon.
+    CHECK (is_root IN (0, 1) AND archived IN (0, 1)),
+    CHECK (length(trim(name)) > 0)
 );
 CREATE INDEX ix_segment_track  ON segment(track_id)          WHERE archived = 0;
 CREATE INDEX ix_segment_parent ON segment(parent_segment_id) WHERE archived = 0;
@@ -135,7 +150,9 @@ CREATE TABLE task_kind (
     workspace_id INTEGER NOT NULL REFERENCES workspace(id) ON DELETE RESTRICT,
     name         TEXT    NOT NULL,
     archived     INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    CHECK (archived IN (0, 1)),
+    CHECK (length(trim(name)) > 0)
 );
 CREATE UNIQUE INDEX ux_task_kind_ws_name_live
     ON task_kind(workspace_id, name) WHERE archived = 0;
@@ -155,7 +172,10 @@ CREATE TABLE task (
     archived      INTEGER NOT NULL DEFAULT 0,
     version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token (see CAS note at foot)
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    CHECK (archived IN (0, 1)),
+    CHECK (length(trim(title)) > 0),
+    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
 );
 CREATE INDEX ix_task_workspace ON task(workspace_id) WHERE archived = 0;  -- hot path: every `next` filters workspace_id first
 CREATE INDEX ix_task_segment   ON task(segment_id)   WHERE archived = 0;
@@ -192,7 +212,8 @@ CREATE TABLE blocks (
     source_task_id INTEGER NOT NULL REFERENCES task(id)      ON DELETE RESTRICT, -- blocker
     target_task_id INTEGER NOT NULL REFERENCES task(id)      ON DELETE RESTRICT, -- blocked
     archived       INTEGER NOT NULL DEFAULT 0,
-    CHECK (source_task_id <> target_task_id)
+    CHECK (source_task_id <> target_task_id),
+    CHECK (archived IN (0, 1))
 );
 CREATE UNIQUE INDEX ux_blocks_live
     ON blocks(source_task_id, target_task_id) WHERE archived = 0;
@@ -208,7 +229,8 @@ CREATE TABLE relates_to (
     source_task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE RESTRICT,
     target_task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE RESTRICT,
     archived       INTEGER NOT NULL DEFAULT 0,
-    CHECK (source_task_id <> target_task_id)
+    CHECK (source_task_id <> target_task_id),
+    CHECK (archived IN (0, 1))
 );
 CREATE UNIQUE INDEX ux_relates_live
     ON relates_to(kind, source_task_id, target_task_id) WHERE archived = 0;

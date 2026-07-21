@@ -43,6 +43,7 @@ class ServiceTest {
 
     private fun statuses(ws: Long): List<StatusDto> = (r(ListStatuses(ws)).getOrThrow() as StatusList).items
     private fun statusId(ws: Long, name: String): Long = statuses(ws).first { it.name == name }.id
+    private fun transitions(ws: Long): List<TransitionDto> = (r(ListTransitions(ws)).getOrThrow() as TransitionList).items
     private fun frontierIds(ws: Long): List<Long> = (r(Next(ws)).getOrThrow() as FrontierList).items.map { it.id }
 
     /** A workspace with one track; returns (workspaceId, trackId). */
@@ -79,6 +80,13 @@ class ServiceTest {
         assertIs<StxError.Validation>(res.failureOrNull())
     }
 
+    @Test fun `terminal status cannot be set as default`() {
+        val (ws, _) = seedTrack()
+        // Done is terminal -> rejected; the default is left untouched (still Backlog).
+        assertIs<StxError.Validation>(w(SetDefaultStatus(ws, statusId(ws, "Done"))).failureOrNull())
+        assertEquals("Backlog", statuses(ws).first { it.isDefault }.name)
+    }
+
     // ── workspace coherence (#7/#8) ──────────────────────────────────────────────────────────
 
     @Test fun `cross-workspace edge and cross-workspace status are rejected`() {
@@ -91,6 +99,72 @@ class ServiceTest {
         // create task pointing at another workspace's status
         val foreignStatus = statusId(ws2, "Backlog")
         assertIs<StxError.CrossWorkspace>(w(CreateTask(trackId = track1, title = "c", statusId = foreignStatus)).failureOrNull())
+    }
+
+    @Test fun `#8 coherence - foreign kind, transition endpoints, and segment parent are rejected`() {
+        val (ws1, track1) = seedTrack()
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        val track2 = w(CreateTrack(ws2, "t2")).id()
+
+        // task create/edit pointing at another workspace's KIND
+        val foreignKind = w(CreateKind(ws2, "impl")).id()
+        assertIs<StxError.CrossWorkspace>(
+            w(CreateTask(trackId = track1, title = "a", kindId = foreignKind)).failureOrNull(),
+        )
+        val local = w(CreateTask(trackId = track1, title = "b")).getOrThrow() as TaskDto
+        assertIs<StxError.CrossWorkspace>(
+            w(EditTask(local.id, local.version, kindId = foreignKind)).failureOrNull(),
+        )
+
+        // transition with an endpoint in another workspace
+        assertIs<StxError.CrossWorkspace>(
+            w(CreateTransition(ws1, statusId(ws1, "Backlog"), statusId(ws2, "Backlog"))).failureOrNull(),
+        )
+
+        // segment whose parent belongs to another track/workspace
+        val foreignSeg = w(CreateSegment(track2, "s2")).id()
+        assertIs<StxError.CrossWorkspace>(
+            w(CreateSegment(track1, "s1", parentSegmentId = foreignSeg)).failureOrNull(),
+        )
+    }
+
+    @Test fun `#8 task workspace_id is derived from its segment, never drifts`() {
+        val (_, _) = seedTrack()
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        val track2 = w(CreateTrack(ws2, "t2")).id()
+        val seg2 = w(CreateSegment(track2, "s2")).id()
+        // Filing a task under ws2's segment lands it in ws2 (derived), not the caller's default.
+        val t = w(CreateTask(segmentId = seg2, title = "x")).getOrThrow() as TaskDto
+        assertEquals(ws2, t.workspaceId)
+        assertEquals(statusId(ws2, "Backlog"), t.statusId) // default resolved in the derived ws
+    }
+
+    // ── metadata_json validity (schema CHECK + daemon gate) ──────────────────────────────────
+
+    @Test fun `metadata_json must be a JSON object`() {
+        val (_, track) = seedTrack()
+        assertIs<StxError.Validation>(w(CreateTask(trackId = track, title = "a", metadataJson = "not json")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateTask(trackId = track, title = "b", metadataJson = "[1,2]")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateWorkspace("x", metadataJson = "42")).failureOrNull())
+        // an object round-trips; then a bad edit is rejected and a good edit sticks.
+        val t = w(CreateTask(trackId = track, title = "c", metadataJson = """{"k":"v"}""")).getOrThrow() as TaskDto
+        assertEquals("""{"k":"v"}""", t.metadataJson)
+        assertIs<StxError.Validation>(w(EditTask(t.id, t.version, metadataJson = "nope")).failureOrNull())
+        val t2 = w(EditTask(t.id, t.version, metadataJson = """{"a":1}""")).getOrThrow() as TaskDto
+        assertEquals("""{"a":1}""", t2.metadataJson)
+    }
+
+    @Test fun `blank names and titles are rejected`() {
+        val (ws, track) = seedTrack()
+        assertIs<StxError.Validation>(w(CreateWorkspace("   ")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateTrack(ws, "")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateStatus(ws, "\t")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateKind(ws, "")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateSegment(track, "  ")).failureOrNull())
+        assertIs<StxError.Validation>(w(CreateTask(trackId = track, title = " ")).failureOrNull())
+        // edit path: a blank title is rejected too (a non-blank one still applies)
+        val t = w(CreateTask(trackId = track, title = "real")).getOrThrow() as TaskDto
+        assertIs<StxError.Validation>(w(EditTask(t.id, t.version, title = " ")).failureOrNull())
     }
 
     // ── blocks DAG (#1) ──────────────────────────────────────────────────────────────────────
@@ -169,19 +243,30 @@ class ServiceTest {
 
     @Test fun `status archive rejected while referenced, allowed after move, cascades transitions`() {
         val (ws, track) = seedTrack()
+        val backlog = statusId(ws, "Backlog")
         w(CreateTask(trackId = track, title = "x")).id() // on Backlog (default)
         w(SetDefaultStatus(ws, statusId(ws, "Implementation"))).getOrThrow() // free 'Backlog' from default
         // still a live task on 'Backlog' -> archive rejected
-        assertIs<StxError.Validation>(w(ArchiveStatus(ws, statusId(ws, "Backlog"))).failureOrNull())
+        assertIs<StxError.Validation>(w(ArchiveStatus(ws, backlog)).failureOrNull())
+        // Backlog is incident to seeded transitions (Backlog->Implementation, Implementation->Backlog)
+        // while still live.
+        assertTrue(transitions(ws).any { it.fromStatusId == backlog || it.toStatusId == backlog })
         // move the task off 'Backlog', then archive succeeds
         val taskId = (r(ListTasks(track)).getOrThrow() as TaskList).items.first().id
         val v = (r(GetTask(taskId)).getOrThrow() as TaskDetail).task.version
         w(MoveStatus(taskId, statusId(ws, "Implementation"), v)).getOrThrow()
-        w(ArchiveStatus(ws, statusId(ws, "Backlog"))).getOrThrow()
-        // incident transition (Backlog->Implementation) archived: it no longer lists
-        val liveTransitionStatuses = (statuses(ws)).map { it.id }
+        w(ArchiveStatus(ws, backlog)).getOrThrow()
         assertFalse(statuses(ws).any { it.name == "Backlog" }, "Backlog archived")
-        assertTrue(liveTransitionStatuses.isNotEmpty())
+        // #9: every live transition incident to the archived status is gone (the actual cascade,
+        // not merely "some transitions remain").
+        assertFalse(
+            transitions(ws).any { it.fromStatusId == backlog || it.toStatusId == backlog },
+            "incident transitions cascaded to archived",
+        )
+        // untouched transitions survive (Implementation->Review still lists).
+        assertTrue(transitions(ws).any {
+            it.fromStatusId == statusId(ws, "Implementation") && it.toStatusId == statusId(ws, "Review")
+        })
     }
 
     @Test fun `kind archive null-cascades referencing tasks`() {
