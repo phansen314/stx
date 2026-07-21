@@ -11,27 +11,30 @@ import (
 // `stx` function forwards to the real binary (`command stx`). v1 covers the daily loop; other
 // commands fall back to placing `stx <cmd> ` on the prompt for you to finish (TAB completes).
 const bashWizard = `# stx guided builder — bare 'stx' (terminal, no args) → fzf chain → command on your prompt.
-# Each picker shows the command-so-far as its fzf header ($1), so you always see what you build.
-_stxb_ws() {      # $1=header -> workspace name
+# Every picker frames the command-so-far as a bold label on the fzf box's top border, so you
+# always see what you're building — not just the field you're on.
+_sb_fzf() { fzf --reverse --border=rounded --border-label-pos=3 --color=label:bold "$@"; }
+
+_stxb_ws() {      # $1=label -> workspace name
     command stx ls --json 2>/dev/null \
         | jq -r '.[] | "\(.name)\t\(.tracks) track(s)"' \
-        | fzf --delimiter='\t' --with-nth=1,2 --height=45% --reverse --prompt='workspace> ' \
-              --header="$1" | cut -f1
+        | _sb_fzf --height=45% --delimiter='\t' --with-nth=1,2 --prompt='workspace> ' \
+              --border-label=" $1 " | cut -f1
 }
-_stxb_track() {   # $1=ws $2=header -> track name
+_stxb_track() {   # $1=ws $2=label -> track name
     command stx tree -w "$1" --json 2>/dev/null | jq -r '.tracks[].track' \
-        | fzf --height=45% --reverse --prompt='track> ' --header="$2"
+        | _sb_fzf --height=45% --prompt='track> ' --border-label=" $2 "
 }
-_stxb_task() {    # $1=ws $2=header -> task id
+_stxb_task() {    # $1=ws $2=label -> task id
     command stx tree -w "$1" --json 2>/dev/null \
         | jq -r '.tracks[].tasks[] | "\(.id)\t[\(.status)] \(.title)"' \
-        | fzf --delimiter='\t' --with-nth=2 --height=55% --reverse \
-              --preview 'stx show {1}' --preview-window=right:55%:wrap --prompt='task> ' \
-              --header="$2" | cut -f1
+        | _sb_fzf --height=55% --delimiter='\t' --with-nth=2 --prompt='task> ' \
+              --preview 'stx show {1}' --preview-window=right:55%:wrap \
+              --border-label=" $2 " | cut -f1
 }
-_stxb_status() {  # $1=ws $2=header -> status name
+_stxb_status() {  # $1=ws $2=label -> status name
     command stx status ls -w "$1" --json 2>/dev/null | jq -r '.[].name' \
-        | fzf --height=45% --reverse --prompt='status> ' --header="$2"
+        | _sb_fzf --height=45% --prompt='status> ' --border-label=" $2 "
 }
 
 _stx_build() {
@@ -39,9 +42,9 @@ _stx_build() {
     command -v jq  >/dev/null 2>&1 || { echo "stx builder needs jq" >&2; return; }
     local cmd
     cmd="$(command stx __commands \
-        | fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=60% --reverse \
+        | _sb_fzf --delimiter='\t' --nth=1,2 --with-nth=1,2 --height=60% \
               --preview 'stx {1} -h' --preview-window=right:55%:wrap \
-              --prompt='stx> ' --header='building:  stx …' | cut -f1)"
+              --prompt='stx> ' --border-label=' building:  stx … ' | cut -f1)"
     [ -z "$cmd" ] && return
 
     local line='' ws id st tr title field val h
@@ -70,7 +73,7 @@ _stx_build() {
             id="$(_stxb_task "$ws" "building:  stx edit …   (workspace: $ws)")";  [ -z "$id" ] && return
             h="building:  stx edit $id …"
             field="$(printf 'title\ndesc\npriority' \
-                | fzf --height=30% --reverse --prompt='field> ' --header="$h")"; [ -z "$field" ] && return
+                | _sb_fzf --height=30% --prompt='field> ' --border-label=" $h ")"; [ -z "$field" ] && return
             printf 'building:  stx edit %s --%s …\n' "$id" "$field"
             read -r -e -p "$field> " val;                                        [ -z "$val" ] && return
             printf -v line 'stx edit %s --%s %q' "$id" "$field" "$val" ;;
