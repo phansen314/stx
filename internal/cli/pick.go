@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -325,7 +326,6 @@ func buildGraph(c *client.Client) ([]string, error) {
 		"blocks-only\tomit relates_to edges",
 		"vertical\ttop-to-bottom layout",
 		"out\trender to a file (-o)",
-		"format\toutput format for -o",
 	}, fzfOpts{prompt: "options> ", header: "building:  stx graph -w " + ws.Name + " …"})
 	if err != nil {
 		if errors.Is(err, errPickCancelled) {
@@ -350,14 +350,14 @@ func buildGraph(c *client.Client) ([]string, error) {
 	if sel["vertical"] {
 		argv = append(argv, "--vertical")
 	}
-	// --format requires -o, so collect an out path whenever either is chosen.
-	if sel["out"] || sel["format"] {
+	if sel["out"] {
 		out, err := promptRequired("out file (e.g. graph.svg)> ")
 		if err != nil {
 			return nil, err
 		}
 		argv = append(argv, "-o", out)
-		if sel["format"] {
+		// The extension picks the format; only ask when the path has none (e.g. `mygraph`).
+		if filepath.Ext(out) == "" {
 			f, err := pickOne("format> ", "building:  stx graph … -o "+out+" --format …", "svg", "png", "pdf")
 			if err != nil {
 				return nil, err

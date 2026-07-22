@@ -36,15 +36,27 @@ func TestRenderGraphDotVertical(t *testing.T) {
 }
 
 func TestRenderFormat(t *testing.T) {
-	cases := []struct{ explicit, out, want string }{
-		{"png", "g.svg", "png"}, // explicit wins over extension
-		{"", "g.svg", "svg"},
-		{"", "g.PNG", "png"}, // extension lower-cased
-		{"", "noext", "svg"}, // fallback
+	cases := []struct {
+		explicit, out, want string
+		wantErr             bool
+	}{
+		{explicit: "svg", out: "g.svg", want: "svg"}, // agree
+		{out: "g.svg", want: "svg"},
+		{out: "g.PNG", want: "png"},                    // extension lower-cased
+		{out: "noext", want: "svg"},                    // no extension → default
+		{explicit: "png", out: "g", want: "png"},       // no extension → --format used
+		{explicit: "svg", out: "g.png", wantErr: true}, // conflict
 	}
 	for _, c := range cases {
-		if got := renderFormat(c.explicit, c.out); got != c.want {
-			t.Errorf("renderFormat(%q,%q)=%q want %q", c.explicit, c.out, got, c.want)
+		got, err := renderFormat(c.explicit, c.out)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("renderFormat(%q,%q) expected conflict error, got %q", c.explicit, c.out, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("renderFormat(%q,%q)=(%q,%v) want %q", c.explicit, c.out, got, err, c.want)
 		}
 	}
 }

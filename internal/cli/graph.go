@@ -127,7 +127,10 @@ func newGraphCmd() *cobra.Command {
 				if flagJSON {
 					return errors.New("-o/--out and --json are mutually exclusive")
 				}
-				format := renderFormat(formatFlag, outFlag)
+				format, err := renderFormat(formatFlag, outFlag)
+				if err != nil {
+					return err
+				}
 				if err := renderWithDot(dotSrc, format, outFlag); err != nil {
 					return err
 				}
@@ -153,16 +156,22 @@ func newGraphCmd() *cobra.Command {
 	return cmd
 }
 
-// renderFormat picks the dot -T format: the explicit --format wins, else the file extension,
-// else svg.
-func renderFormat(explicit, outPath string) string {
-	if explicit != "" {
-		return strings.ToLower(explicit)
+// renderFormat picks the dot -T format from --format and/or the file extension. `dot` ignores the
+// filename, so a mismatch (e.g. -o graph.png --format svg) would write svg bytes into a .png file:
+// reject it. With only one signal that one wins; with neither, default svg.
+func renderFormat(explicit, outPath string) (string, error) {
+	explicit = strings.ToLower(explicit)
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(outPath), "."))
+	switch {
+	case explicit != "" && ext != "" && explicit != ext:
+		return "", fmt.Errorf("format conflict: %q implies %q but --format is %q — drop one", outPath, ext, explicit)
+	case explicit != "":
+		return explicit, nil
+	case ext != "":
+		return ext, nil
+	default:
+		return "svg", nil
 	}
-	if ext := strings.TrimPrefix(filepath.Ext(outPath), "."); ext != "" {
-		return strings.ToLower(ext)
-	}
-	return "svg"
 }
 
 // renderWithDot pipes DOT source through Graphviz `dot -T<format> -o <outPath>`.
