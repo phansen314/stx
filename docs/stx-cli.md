@@ -68,15 +68,17 @@ retry on conflict). Illegal status moves print the legal targets.
 Two conveniences that surface live daemon data so you never hand-copy an id — both are Go-only and
 degrade gracefully when their dependency (fzf / the daemon) is absent.
 
-### `stx pick` — guided fzf builder
+### Bare `stx` — guided fzf builder
 
-`stx pick` walks you through assembling a command: an fzf menu of the daily-loop commands (`add`,
-`mv`, `done`, `edit`, `show`, `next`, `tree`), then live pickers for each argument — workspace,
-task (`#id [status] title`, with `stx show` in the preview pane), and for `mv` **only the legal
-next statuses** for the chosen task. Each pane's header shows the command as built so far. The
-assembled `stx …` is printed for a `run? [Y/n]` confirm, then executed. fzf drives everything from
-inside the binary (via `os/exec`) — no shell wrapper. Without fzf on PATH it prints an install hint
-and exits cleanly.
+Run **`stx`** with no arguments in a terminal and it walks you through assembling a command: an fzf
+menu of the daily-loop commands (`add`, `mv`, `done`, `edit`, `show`, `next`, `tree`), then live
+pickers for each argument — workspace, task (`#id [status] title`, with `stx show` in the preview
+pane), and for `mv` **only the legal next statuses** for the chosen task. Each pane frames the
+command as built so far on its border. The assembled `stx …` is printed for a `run? [Y/n]` confirm,
+then executed. fzf drives everything from inside the binary (via `os/exec`) — no shell wrapper.
+
+Non-interactive (piped or scripted) `stx` prints help instead; without fzf on PATH the builder
+prints an install hint and exits cleanly.
 
 ### Dynamic shell completion
 

@@ -44,15 +44,6 @@ var builders = map[string]func(*client.Client) ([]string, error){
 	"tree": buildTree,
 }
 
-func newPickCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pick",
-		Short: "interactive fzf command builder (surfaces live IDs, no memorizing)",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runPick(cmd) },
-	}
-}
-
 func runPick(cmd *cobra.Command) error {
 	if _, err := exec.LookPath("fzf"); err != nil {
 		fmt.Fprintln(cmd.OutOrStdout(),
@@ -526,6 +517,17 @@ var confirm = func(cmdLine string) bool {
 	default:
 		return false
 	}
+}
+
+// interactive reports whether both stdin and stdout are terminals — the guided builder only makes
+// sense then (fzf and the readline prompts need a real TTY). Bare `stx` in a pipe/script skips it.
+func interactive() bool {
+	return isCharDevice(os.Stdin) && isCharDevice(os.Stdout)
+}
+
+func isCharDevice(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // self is the absolute path to the running binary, used in fzf --preview shell commands so the

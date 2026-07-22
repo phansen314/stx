@@ -58,9 +58,10 @@ running.
 Every workspace-scoped command takes `-w <name|id>` explicitly (nothing is stored, so concurrent
 sessions don't clobber each other). Full reference: [`docs/stx-cli.md`](docs/stx-cli.md).
 
-Don't want to memorize ids? `stx pick` is an fzf-driven builder that assembles a command from live
-daemon data; `eval "$(stx completion bash)"` adds `<TAB>` completion for ids/workspaces/statuses.
-Both are Go-only — see [`docs/stx-cli.md`](docs/stx-cli.md#interactive-helpers-go-cli).
+Don't want to memorize ids? Run bare **`stx`** in a terminal — an fzf-driven builder assembles a
+command from live daemon data. `eval "$(stx completion bash)"` adds `<TAB>` completion for
+ids/workspaces/statuses. Both are Go-only — see
+[`docs/stx-cli.md`](docs/stx-cli.md#interactive-helpers-go-cli).
 
 ### Two implementations: Go (default) vs Python (reference)
 

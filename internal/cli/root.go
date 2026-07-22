@@ -22,6 +22,18 @@ func NewRootCmd() *cobra.Command {
 		Short:         "stateless CLI over the stx daemon",
 		SilenceUsage:  true, // errors are ours to print; don't dump usage on RunE failure
 		SilenceErrors: true,
+		// Bare `stx` in an interactive terminal launches the guided fzf builder (issue #54) — the
+		// same flow the old `stx pick` had, minus the typing. Non-interactive (piped/scripted) or an
+		// unrecognized command falls back to help / the usual "unknown command" error.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown command %q for %q — see `stx --help`", args[0], cmd.CommandPath())
+			}
+			if !interactive() {
+				return cmd.Help()
+			}
+			return runPick(cmd)
+		},
 	}
 	def := os.Getenv("STX_URL")
 	if def == "" {
@@ -34,7 +46,7 @@ func NewRootCmd() *cobra.Command {
 		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(),
 		newAddCmd(), newMvCmd(), newEditCmd(), newDoneCmd(),
 		newBlockCmd(), newRelateCmd(), newUnblockCmd(), newUnrelateCmd(), newRelateKindsCmd(),
-		newMetaCmd(), newGraphCmd(), newArchiveCmd(), newPickCmd(),
+		newMetaCmd(), newGraphCmd(), newArchiveCmd(),
 		newWsCmd(), newTrackCmd(), newSegmentCmd(), newStatusCmd(), newKindCmd(), newTransitionCmd(),
 	)
 	registerCompletions(root)
