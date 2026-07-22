@@ -65,6 +65,27 @@ the single source for the command list. In short:
   flag works if it's `.svg/.png/.pdf`, else it errors (no silently mislabeled files). `--json` emits
   `{nodes, blocks, relates}` instead (mutually exclusive with `-o`). Seed a throwaway db and render
   samples with `scripts/graph_demo.sh`.
+  - **Styling** (`--style <file>`, `--no-style`): colors/attributes come from a TOML config at
+    `$XDG_CONFIG_HOME/stx/graph.toml` (fallback `~/.config/stx/graph.toml`), optionally overlaid by
+    `--style <file>` (deep-merged); `--no-style` uses built-in defaults only. Style task nodes by
+    status name, kind, priority, or the terminal fallback, and edges by type/kind — every value is a
+    raw Graphviz attribute. Example:
+    ```toml
+    [status.Done]                # color a task green when it's done
+    style = "rounded,filled"
+    fillcolor = "#cde7cd"
+    [kind.bug]
+    color = "#b00020"
+    [[priority]]
+    min = 5
+      [priority.style]
+      penwidth = "2.5"
+    [relates_kind.spawns]
+    color = "#3355ff"
+    ```
+  - **Clustering** (`--cluster none|track|segment`, default `none`): group task nodes into Graphviz
+    clusters by track or by the nested segment tree; style clusters via `[track]`/`[track_name.<n>]`
+    and `[segment]`/`[segment_name.<n>]`, and the whole graph via `[workspace]`.
 - **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one

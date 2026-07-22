@@ -81,5 +81,28 @@ echo "--- render ---"
 "$STX" graph -w "$W" --blocks-only --vertical -o "$OUTDIR/graph-blocks" --png
 # a typed extension still works when you'd rather be explicit
 "$STX" graph -w "$W"            -o "$OUTDIR/graph.pdf"
+
+# styling: write a sample graph.toml into a throwaway config dir and render styled + clustered.
+CFG="$(mktemp -d)"
+mkdir -p "$CFG/stx"
+cat > "$CFG/stx/graph.toml" <<'TOML'
+[status.Done]
+style = "rounded,filled"
+fillcolor = "#cde7cd"
+[status.Backlog]
+style = "rounded,filled"
+fillcolor = "#eef2ff"
+[track_name.auth]
+color = "steelblue"
+[track_name.billing]
+color = "seagreen"
+[relates_kind.spawns]
+color = "#3355ff"
+TOML
+echo "--- styled + clustered render (config: $CFG/stx/graph.toml) ---"
+XDG_CONFIG_HOME="$CFG" "$STX" graph -w "$W" -o "$OUTDIR/graph-styled" --png
+XDG_CONFIG_HOME="$CFG" "$STX" graph -w "$W" --cluster track   -o "$OUTDIR/graph-cluster-track" --svg
+XDG_CONFIG_HOME="$CFG" "$STX" graph -w "$W" --cluster segment -o "$OUTDIR/graph-cluster-segment" --png
+
 echo "--- output ---"
 ls -la "$OUTDIR"

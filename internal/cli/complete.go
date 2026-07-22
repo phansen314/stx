@@ -81,6 +81,12 @@ func registerCompletions(root *cobra.Command) {
 	flagComp("task", completeTaskFlag, []string{"meta"})
 	flagComp("from", completeStatusFlag, []string{"transition"})
 	flagComp("to", completeStatusFlag, []string{"transition"})
+	flagComp("cluster", completeClusterFlag, []string{"graph"})
+}
+
+// completeClusterFlag offers the grouping modes for `graph --cluster`.
+func completeClusterFlag(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return []string{"none", "track", "segment"}, noComp
 }
 
 // ── positional completions ────────────────────────────────────────────────────

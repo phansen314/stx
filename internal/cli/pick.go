@@ -324,6 +324,8 @@ func buildGraph(c *client.Client) ([]string, error) {
 		"track\tscope to a track (-t)",
 		"blocks-only\tomit relates_to edges",
 		"vertical\ttop-to-bottom layout",
+		"cluster\tgroup nodes by track/segment",
+		"style\toverlay style file (--style)",
 		"out\trender to an image file (-o)",
 	}, fzfOpts{prompt: "options> ", header: "building:  stx graph -w " + ws.Name + " …"})
 	if err != nil {
@@ -348,6 +350,20 @@ func buildGraph(c *client.Client) ([]string, error) {
 	}
 	if sel["vertical"] {
 		argv = append(argv, "--vertical")
+	}
+	if sel["cluster"] {
+		c, err := pickOne("cluster> ", "building:  stx graph … --cluster …", "track", "segment")
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "--cluster", c)
+	}
+	if sel["style"] {
+		p, err := promptRequired("style file> ")
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "--style", p)
 	}
 	if sel["out"] {
 		// Bare name, no extension — the format flag supplies it (graph → graph.png).

@@ -19,6 +19,12 @@ type graphNode struct {
 	Title    string `json:"title"`
 	Status   string `json:"status"`
 	Terminal bool   `json:"terminal"`
+	// styling/clustering inputs — excluded from --json so the wire payload is unchanged.
+	Kind      string `json:"-"`
+	Priority  int    `json:"-"`
+	SegmentID int64  `json:"-"`
+	TrackID   int64  `json:"-"`
+	TrackName string `json:"-"`
 }
 
 type graphPayload struct {
@@ -29,13 +35,23 @@ type graphPayload struct {
 }
 
 func newGraphCmd() *cobra.Command {
-	var wsFlag, trackFlag, outFlag string
-	var blocksOnly, vertical, svg, png, pdf bool
+	var wsFlag, trackFlag, outFlag, styleFlag, clusterFlag string
+	var blocksOnly, vertical, svg, png, pdf, noStyle bool
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "emit the task graph as Graphviz DOT (pipe to `dot`, or render with -o)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			cluster := strings.ToLower(clusterFlag)
+			switch cluster {
+			case "", "none", "track", "segment":
+			default:
+				return fmt.Errorf("--cluster must be none|track|segment, got %q", clusterFlag)
+			}
+			style, err := loadGraphStyle(styleFlag, noStyle)
+			if err != nil {
+				return err
+			}
 			c, err := dial()
 			if err != nil {
 				return err
@@ -51,6 +67,10 @@ func newGraphCmd() *cobra.Command {
 			stByID := map[int64]int{} // id → index into statuses
 			for i, s := range statuses {
 				stByID[s.ID] = i
+			}
+			knByID, err := kindNames(c, ws.ID) // kind id → name for styling
+			if err != nil {
+				return err
 			}
 			tracks, err := c.Tracks(ws.ID)
 			if err != nil {
@@ -70,7 +90,15 @@ func newGraphCmd() *cobra.Command {
 				tracks = filtered
 			}
 			nodes := map[int64]graphNode{}
+			var segments []api.Segment // populated only when clustering by segment
 			for _, t := range tracks {
+				if cluster == "segment" {
+					segs, err := c.Segments(t.ID)
+					if err != nil {
+						return err
+					}
+					segments = append(segments, segs...)
+				}
 				tasks, err := c.TrackTasks(t.ID)
 				if err != nil {
 					return err
@@ -82,7 +110,15 @@ func newGraphCmd() *cobra.Command {
 						name = statuses[idx].Name
 						term = statuses[idx].Terminal
 					}
-					nodes[task.ID] = graphNode{ID: task.ID, Title: task.Title, Status: name, Terminal: term}
+					kindName := ""
+					if task.KindID != nil {
+						kindName = knByID[*task.KindID]
+					}
+					nodes[task.ID] = graphNode{
+						ID: task.ID, Title: task.Title, Status: name, Terminal: term,
+						Kind: kindName, Priority: task.Priority, SegmentID: task.SegmentID,
+						TrackID: t.ID, TrackName: t.Name,
+					}
 				}
 			}
 			edges, err := c.Edges(ws.ID)
@@ -120,7 +156,7 @@ func newGraphCmd() *cobra.Command {
 			for _, id := range ids {
 				ordered = append(ordered, nodes[id])
 			}
-			dotSrc := renderGraphDot(ws.Name, vertical, ordered, blocks, relates)
+			dotSrc := renderGraphDot(ws.Name, vertical, cluster, ordered, blocks, relates, style, segments)
 
 			// -o renders the DOT to an image file via Graphviz; otherwise emit DOT / JSON.
 			if outFlag != "" {
@@ -156,6 +192,9 @@ func newGraphCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&png, "png", false, "render -o as PNG")
 	cmd.Flags().BoolVar(&pdf, "pdf", false, "render -o as PDF")
 	cmd.MarkFlagsMutuallyExclusive("svg", "png", "pdf")
+	cmd.Flags().StringVar(&clusterFlag, "cluster", "none", "group nodes into clusters: none|track|segment")
+	cmd.Flags().StringVar(&styleFlag, "style", "", "overlay style file (TOML) merged over ~/.config/stx/graph.toml")
+	cmd.Flags().BoolVar(&noStyle, "no-style", false, "ignore config files; use built-in default styling")
 	return cmd
 }
 
@@ -227,10 +266,10 @@ func truncRunes(s string, n int) string {
 	return s
 }
 
-// renderGraphDot mirrors render.graph_dot: rounded boxes, terminal nodes filled, blocks solid,
-// relates dashed+labelled. Layout is left-to-right unless vertical (top-to-bottom). Nodes must
-// already be sorted by id.
-func renderGraphDot(wsName string, vertical bool, nodes []graphNode, blocks [][]int64, relates [][]any) string {
+// renderGraphDot emits the task graph as DOT, applying the resolved style and optional clustering.
+// Layout is left-to-right unless vertical (top-to-bottom). Nodes must already be sorted by id. When
+// cluster is "segment", segments carries the segment rows for the included tracks (for names/tree).
+func renderGraphDot(wsName string, vertical bool, cluster string, nodes []graphNode, blocks [][]int64, relates [][]any, style *GraphStyle, segments []api.Segment) string {
 	rankdir := "LR"
 	if vertical {
 		rankdir = "TB"
@@ -238,21 +277,158 @@ func renderGraphDot(wsName string, vertical bool, nodes []graphNode, blocks [][]
 	var b strings.Builder
 	fmt.Fprintf(&b, "digraph \"%s\" {\n", dotEscape(wsName))
 	fmt.Fprintf(&b, "  rankdir=%s;\n", rankdir)
-	b.WriteString("  node [shape=box, style=rounded];\n")
-	for _, n := range nodes {
-		label := dotEscape(truncRunes(fmt.Sprintf("#%d %s", n.ID, n.Title), 40))
-		style := ""
-		if n.Terminal {
-			style = ` style="rounded,filled" fillcolor="#cde7cd"`
-		}
-		fmt.Fprintf(&b, "  \"%d\" [label=\"%s\"%s];\n", n.ID, label, style)
+	if a := emitAttrs(style.Workspace); a != "" {
+		fmt.Fprintf(&b, "  graph [%s];\n", a)
 	}
+	if a := emitAttrs(style.Node); a != "" {
+		fmt.Fprintf(&b, "  node [%s];\n", a)
+	}
+	if a := emitAttrs(style.Edge); a != "" {
+		fmt.Fprintf(&b, "  edge [%s];\n", a)
+	}
+
+	switch cluster {
+	case "track":
+		emitTrackClusters(&b, nodes, style)
+	case "segment":
+		emitSegmentClusters(&b, nodes, style, segments)
+	default:
+		for _, n := range nodes {
+			emitNode(&b, "  ", n, style)
+		}
+	}
+
 	for _, e := range blocks {
-		fmt.Fprintf(&b, "  \"%d\" -> \"%d\";\n", e[0], e[1])
+		emitEdge(&b, e[0], e[1], style.resolveBlockAttrs())
 	}
 	for _, r := range relates {
-		fmt.Fprintf(&b, "  \"%d\" -> \"%d\" [style=dashed, label=\"%s\"];\n", r[0], r[1], dotEscape(r[2].(string)))
+		a := style.resolveRelateAttrs(r[2].(string))
+		a = cloneAttrs(a)
+		a["label"] = r[2].(string)
+		emitEdge(&b, r[0].(int64), r[1].(int64), a)
 	}
 	b.WriteString("}")
 	return b.String()
+}
+
+// emitNode writes one task node line with its label plus the delta of its resolved style over the
+// graph-level node default (so an un-styled node carries only its label).
+func emitNode(b *strings.Builder, indent string, n graphNode, style *GraphStyle) {
+	label := dotEscape(truncRunes(fmt.Sprintf("#%d %s", n.ID, n.Title), 40))
+	a := deltaAttrs(style.resolveNodeAttrs(n.Status, n.Terminal, n.Kind, n.Priority), style.Node)
+	a["label"] = label
+	fmt.Fprintf(b, "%s\"%d\" [%s];\n", indent, n.ID, emitAttrs(a))
+}
+
+// emitEdge writes one edge; the delta over the graph-level edge default keeps un-styled edges bare.
+func emitEdge(b *strings.Builder, src, tgt int64, a attrs) {
+	if s := emitAttrs(a); s != "" {
+		fmt.Fprintf(b, "  \"%d\" -> \"%d\" [%s];\n", src, tgt, s)
+	} else {
+		fmt.Fprintf(b, "  \"%d\" -> \"%d\";\n", src, tgt)
+	}
+}
+
+// emitTrackClusters wraps each track's nodes in a labelled subgraph cluster (nodes keep source order).
+func emitTrackClusters(b *strings.Builder, nodes []graphNode, style *GraphStyle) {
+	var order []int64
+	byTrack := map[int64][]graphNode{}
+	name := map[int64]string{}
+	for _, n := range nodes {
+		if _, seen := byTrack[n.TrackID]; !seen {
+			order = append(order, n.TrackID)
+		}
+		byTrack[n.TrackID] = append(byTrack[n.TrackID], n)
+		name[n.TrackID] = n.TrackName
+	}
+	for _, tid := range order {
+		a := cloneAttrs(style.Track)
+		mergeAttrs(&a, lookupCI(style.TrackName, name[tid]))
+		fmt.Fprintf(b, "  subgraph cluster_track_%d {\n", tid)
+		fmt.Fprintf(b, "    label=\"%s\";\n", dotEscape(name[tid]))
+		emitClusterAttrs(b, "    ", a)
+		for _, n := range byTrack[tid] {
+			emitNode(b, "    ", n, style)
+		}
+		b.WriteString("  }\n")
+	}
+}
+
+// emitSegmentClusters nests segment subclusters within each track cluster, following the segment
+// tree. Tasks in a track's root segment sit directly in the track cluster; deeper segments nest.
+func emitSegmentClusters(b *strings.Builder, nodes []graphNode, style *GraphStyle, segments []api.Segment) {
+	segByID := map[int64]api.Segment{}
+	children := map[int64][]int64{} // parent segment id → child segment ids (0 = track root level)
+	var roots []api.Segment
+	for _, s := range segments {
+		segByID[s.ID] = s
+		if s.IsRoot {
+			roots = append(roots, s)
+		} else if s.ParentSegmentID != nil {
+			children[*s.ParentSegmentID] = append(children[*s.ParentSegmentID], s.ID)
+		}
+	}
+	nodesBySeg := map[int64][]graphNode{}
+	var trackOrder []int64
+	rootBySeenTrack := map[int64]bool{}
+	trackName := map[int64]string{}
+	for _, n := range nodes {
+		nodesBySeg[n.SegmentID] = append(nodesBySeg[n.SegmentID], n)
+		if !rootBySeenTrack[n.TrackID] {
+			rootBySeenTrack[n.TrackID] = true
+			trackOrder = append(trackOrder, n.TrackID)
+		}
+		trackName[n.TrackID] = n.TrackName
+	}
+	rootByTrack := map[int64]api.Segment{}
+	for _, r := range roots {
+		rootByTrack[r.TrackID] = r
+	}
+
+	var emitSeg func(segID int64)
+	emitSeg = func(segID int64) {
+		seg := segByID[segID]
+		a := cloneAttrs(style.Segment)
+		mergeAttrs(&a, lookupCI(style.SegmentName, seg.Name))
+		fmt.Fprintf(b, "    subgraph cluster_seg_%d {\n", segID)
+		fmt.Fprintf(b, "      label=\"%s\";\n", dotEscape(seg.Name))
+		emitClusterAttrs(b, "      ", a)
+		for _, n := range nodesBySeg[segID] {
+			emitNode(b, "      ", n, style)
+		}
+		for _, child := range children[segID] {
+			emitSeg(child)
+		}
+		b.WriteString("    }\n")
+	}
+
+	for _, tid := range trackOrder {
+		a := cloneAttrs(style.Track)
+		mergeAttrs(&a, lookupCI(style.TrackName, trackName[tid]))
+		fmt.Fprintf(b, "  subgraph cluster_track_%d {\n", tid)
+		fmt.Fprintf(b, "    label=\"%s\";\n", dotEscape(trackName[tid]))
+		emitClusterAttrs(b, "    ", a)
+		root, ok := rootByTrack[tid]
+		if ok {
+			for _, n := range nodesBySeg[root.ID] { // root-segment tasks sit at track level
+				emitNode(b, "    ", n, style)
+			}
+			for _, child := range children[root.ID] {
+				emitSeg(child)
+			}
+		}
+		b.WriteString("  }\n")
+	}
+}
+
+// emitClusterAttrs writes each cluster attribute as its own `key="value";` statement.
+func emitClusterAttrs(b *strings.Builder, indent string, a attrs) {
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(b, "%s%s=\"%s\";\n", indent, k, dotEscape(a[k]))
+	}
 }
