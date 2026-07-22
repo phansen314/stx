@@ -96,10 +96,10 @@ type Task struct {
 
 // TaskDetail is GET /tasks/{id}: the task plus its incident edges.
 type TaskDetail struct {
-	Task      Task           `json:"task"`
-	BlocksIn  []int64        `json:"blocksIn"`
-	BlocksOut []int64        `json:"blocksOut"`
-	Relates   []RelatesEdge  `json:"relates"`
+	Task      Task          `json:"task"`
+	BlocksIn  []int64       `json:"blocksIn"`
+	BlocksOut []int64       `json:"blocksOut"`
+	Relates   []RelatesEdge `json:"relates"`
 }
 
 type RelatesEdge struct {
@@ -110,8 +110,8 @@ type RelatesEdge struct {
 
 // Edges is GET /workspaces/{ws}/edges — the bulk edge export used by graph.
 type Edges struct {
-	Blocks  []BlockEdge   `json:"blocks"`
-	Relates []RelatesRow  `json:"relates"`
+	Blocks  []BlockEdge  `json:"blocks"`
+	Relates []RelatesRow `json:"relates"`
 }
 
 type BlockEdge struct {
