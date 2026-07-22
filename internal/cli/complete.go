@@ -81,6 +81,12 @@ func registerCompletions(root *cobra.Command) {
 	flagComp("task", completeTaskFlag, []string{"meta"})
 	flagComp("from", completeStatusFlag, []string{"transition"})
 	flagComp("to", completeStatusFlag, []string{"transition"})
+	flagComp("format", completeGraphFormat, []string{"graph"})
+}
+
+// completeGraphFormat offers the render formats for `graph --format` (a fixed set dot supports).
+func completeGraphFormat(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return []string{"svg", "png", "pdf"}, noComp
 }
 
 // ── positional completions ────────────────────────────────────────────────────

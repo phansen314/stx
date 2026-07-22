@@ -316,7 +316,56 @@ func buildGraph(c *client.Client) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{"graph", "-w", ws.Name}, nil
+	argv := []string{"graph", "-w", ws.Name}
+
+	// optional flags — multi-select which to add, then collect each. Cancelling the pane (Esc)
+	// leaves the bare `graph -w <ws>`.
+	opts, err := fzfMany([]string{
+		"track\tscope to a track (-t)",
+		"blocks-only\tomit relates_to edges",
+		"vertical\ttop-to-bottom layout",
+		"out\trender to a file (-o)",
+		"format\toutput format for -o",
+	}, fzfOpts{prompt: "options> ", header: "building:  stx graph -w " + ws.Name + " …"})
+	if err != nil {
+		if errors.Is(err, errPickCancelled) {
+			return argv, nil
+		}
+		return nil, err
+	}
+	sel := map[string]bool{}
+	for _, o := range opts {
+		sel[o] = true
+	}
+	if sel["track"] {
+		tr, err := pickTrack(c, ws.ID, "building:  stx graph -w "+ws.Name+" -t …")
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "-t", tr.Name)
+	}
+	if sel["blocks-only"] {
+		argv = append(argv, "--blocks-only")
+	}
+	if sel["vertical"] {
+		argv = append(argv, "--vertical")
+	}
+	// --format requires -o, so collect an out path whenever either is chosen.
+	if sel["out"] || sel["format"] {
+		out, err := promptRequired("out file (e.g. graph.svg)> ")
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "-o", out)
+		if sel["format"] {
+			f, err := pickOne("format> ", "building:  stx graph … -o "+out+" --format …", "svg", "png", "pdf")
+			if err != nil {
+				return nil, err
+			}
+			argv = append(argv, "--format", f)
+		}
+	}
+	return argv, nil
 }
 
 // ── archive ───────────────────────────────────────────────────────────────────
