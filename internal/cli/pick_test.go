@@ -52,6 +52,22 @@ func TestArgvAssemblers(t *testing.T) {
 			[]string{"add", "t", "-w", "auth", "-t", "api", "--status", "todo", "--priority", "3"}},
 		{"edit", argvEdit("9", []kv{{"--title", "new"}, {"--priority", "2"}}),
 			[]string{"edit", "9", "--title", "new", "--priority", "2"}},
+
+		// archive: --yes is appended only for the cascading types.
+		{"archive-task", argvArchive("task", "5"), []string{"archive", "task", "5"}},
+		{"archive-segment", argvArchive("segment", "20"), []string{"archive", "segment", "20"}},
+		{"archive-track", argvArchive("track", "10"), []string{"archive", "track", "10", "--yes"}},
+		{"archive-ws", argvArchive("workspace", "1"), []string{"archive", "workspace", "1", "--yes"}},
+
+		// meta: sub, then key/value, then the target flags.
+		{"meta-ls-task", argvMeta("ls", nil, []string{"--task", "5"}),
+			[]string{"meta", "ls", "--task", "5"}},
+		{"meta-get-ws", argvMeta("get", []string{"k"}, []string{"-w", "auth"}),
+			[]string{"meta", "get", "k", "-w", "auth"}},
+		{"meta-set-task", argvMeta("set", []string{"k", "v"}, []string{"--task", "5"}),
+			[]string{"meta", "set", "k", "v", "--task", "5"}},
+		{"meta-del-track", argvMeta("del", []string{"k"}, []string{"-w", "auth", "--track", "api"}),
+			[]string{"meta", "del", "k", "-w", "auth", "--track", "api"}},
 	}
 	for _, tt := range tests {
 		if !reflect.DeepEqual(tt.got, tt.want) {

@@ -23,7 +23,8 @@ import (
 // runPick treats it as a clean abort (no error surfaced).
 var errPickCancelled = errors.New("pick cancelled")
 
-// pickCommands is the v1 "daily loop" catalog. Each entry has a builder in `builders`.
+// pickCommands is the builder catalog shown in the top-level fzf menu, grouped daily-loop →
+// edges → graph/meta/archive → admin. Each entry has a builder in `builders`.
 var pickCommands = []struct{ name, help string }{
 	{"add", "create a task"},
 	{"mv", "move a task's status"},
@@ -32,16 +33,44 @@ var pickCommands = []struct{ name, help string }{
 	{"show", "task detail + edges"},
 	{"next", "ready frontier"},
 	{"tree", "workspace tree"},
+	{"block", "mark a task blocked by another"},
+	{"unblock", "remove a blocks edge"},
+	{"relate", "add a relation between tasks"},
+	{"unrelate", "remove a relation"},
+	{"relate-kinds", "list relation kinds in use"},
+	{"graph", "emit the task graph as DOT"},
+	{"meta", "get/set/delete metadata keys"},
+	{"archive", "archive an entity"},
+	{"ws", "create a workspace"},
+	{"track", "create a track"},
+	{"segment", "create a segment"},
+	{"status", "status admin"},
+	{"kind", "kind admin"},
+	{"transition", "add a status transition"},
 }
 
 var builders = map[string]func(*client.Client) ([]string, error){
-	"add":  buildAdd,
-	"mv":   buildMv,
-	"done": buildDone,
-	"edit": buildEdit,
-	"show": buildShow,
-	"next": buildNext,
-	"tree": buildTree,
+	"add":          buildAdd,
+	"mv":           buildMv,
+	"done":         buildDone,
+	"edit":         buildEdit,
+	"show":         buildShow,
+	"next":         buildNext,
+	"tree":         buildTree,
+	"block":        func(c *client.Client) ([]string, error) { return buildBlockLike(c, "block") },
+	"unblock":      func(c *client.Client) ([]string, error) { return buildBlockLike(c, "unblock") },
+	"relate":       func(c *client.Client) ([]string, error) { return buildRelateLike(c, "relate") },
+	"unrelate":     func(c *client.Client) ([]string, error) { return buildRelateLike(c, "unrelate") },
+	"relate-kinds": buildRelateKinds,
+	"graph":        buildGraph,
+	"meta":         buildMeta,
+	"archive":      buildArchive,
+	"ws":           buildWsNew,
+	"track":        buildTrackNew,
+	"segment":      buildSegmentNew,
+	"status":       buildStatus,
+	"kind":         buildKind,
+	"transition":   buildTransition,
 }
 
 func runPick(cmd *cobra.Command) error {
@@ -234,10 +263,287 @@ func buildTree(c *client.Client) ([]string, error) {
 	return argvTree(ws.Name), nil
 }
 
+// ── edges: block / unblock / relate / unrelate / relate-kinds ─────────────────
+
+// buildBlockLike picks the blocked task then the blocker, both in one workspace.
+func buildBlockLike(c *client.Client, name string) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx "+name+" …")
+	if err != nil {
+		return nil, err
+	}
+	task, err := pickTask(c, ws.ID, "building:  stx "+name+" …   (workspace: "+ws.Name+")")
+	if err != nil {
+		return nil, err
+	}
+	blocker, err := pickTask(c, ws.ID, fmt.Sprintf("building:  stx %s %d --on …   (the blocker)", name, task.ID))
+	if err != nil {
+		return nil, err
+	}
+	return []string{name, itoa(task.ID), "--on", itoa(blocker.ID)}, nil
+}
+
+// buildRelateLike picks two tasks and a relation kind (from live kinds, else free text).
+func buildRelateLike(c *client.Client, name string) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx "+name+" …")
+	if err != nil {
+		return nil, err
+	}
+	task, err := pickTask(c, ws.ID, "building:  stx "+name+" …   (workspace: "+ws.Name+")")
+	if err != nil {
+		return nil, err
+	}
+	other, err := pickTask(c, ws.ID, fmt.Sprintf("building:  stx %s %d --to …   (the other task)", name, task.ID))
+	if err != nil {
+		return nil, err
+	}
+	kind, err := pickRelateKind(c, ws.ID, fmt.Sprintf("building:  stx %s %d --to %d --kind …", name, task.ID, other.ID))
+	if err != nil {
+		return nil, err
+	}
+	return []string{name, itoa(task.ID), "--to", itoa(other.ID), "--kind", kind}, nil
+}
+
+func buildRelateKinds(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx relate-kinds …")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"relate-kinds", "-w", ws.Name}, nil
+}
+
+func buildGraph(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx graph …")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"graph", "-w", ws.Name}, nil
+}
+
+// ── archive ───────────────────────────────────────────────────────────────────
+
+func buildArchive(c *client.Client) ([]string, error) {
+	typ, err := pickOne("type> ", "building:  stx archive …", "task", "segment", "track", "workspace")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := pickWorkspace(c, "building:  stx archive "+typ+" …")
+	if err != nil {
+		return nil, err
+	}
+	switch typ {
+	case "workspace":
+		return argvArchive(typ, itoa(ws.ID)), nil
+	case "task":
+		task, err := pickTask(c, ws.ID, "building:  stx archive task …   (workspace: "+ws.Name+")")
+		if err != nil {
+			return nil, err
+		}
+		return argvArchive(typ, itoa(task.ID)), nil
+	default: // track | segment — both start from a track
+		tr, err := pickTrack(c, ws.ID, "building:  stx archive "+typ+" …")
+		if err != nil {
+			return nil, err
+		}
+		if typ == "track" {
+			return argvArchive(typ, itoa(tr.ID)), nil
+		}
+		seg, err := pickSegment(c, tr.ID, "building:  stx archive segment …")
+		if err != nil {
+			return nil, err
+		}
+		return argvArchive(typ, itoa(seg.ID)), nil
+	}
+}
+
+// ── meta ──────────────────────────────────────────────────────────────────────
+
+func buildMeta(c *client.Client) ([]string, error) {
+	sub, err := pickOne("meta> ", "building:  stx meta …", "ls", "get", "set", "del")
+	if err != nil {
+		return nil, err
+	}
+	target, err := pickMetaTarget(c, "building:  stx meta "+sub+" …")
+	if err != nil {
+		return nil, err
+	}
+	var kvArgs []string
+	switch sub {
+	case "get", "del":
+		key, err := promptRequired("key> ")
+		if err != nil {
+			return nil, err
+		}
+		kvArgs = []string{key}
+	case "set":
+		key, err := promptRequired("key> ")
+		if err != nil {
+			return nil, err
+		}
+		val, err := promptRequired("value> ")
+		if err != nil {
+			return nil, err
+		}
+		kvArgs = []string{key, val}
+	}
+	return argvMeta(sub, kvArgs, target), nil
+}
+
+// pickMetaTarget returns the `--task <id>` / `-w <ws>` / `-w <ws> --track <t>` flags identifying
+// the entity whose metadata is being edited.
+func pickMetaTarget(c *client.Client, header string) ([]string, error) {
+	typ, err := pickOne("target> ", header, "task", "workspace", "track")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := pickWorkspace(c, header)
+	if err != nil {
+		return nil, err
+	}
+	switch typ {
+	case "task":
+		task, err := pickTask(c, ws.ID, header)
+		if err != nil {
+			return nil, err
+		}
+		return []string{"--task", itoa(task.ID)}, nil
+	case "workspace":
+		return []string{"-w", ws.Name}, nil
+	default: // track
+		tr, err := pickTrack(c, ws.ID, header)
+		if err != nil {
+			return nil, err
+		}
+		return []string{"-w", ws.Name, "--track", tr.Name}, nil
+	}
+}
+
+// ── admin: ws / track / segment / status / kind / transition ──────────────────
+
+func buildWsNew(c *client.Client) ([]string, error) {
+	name, err := promptRequired("workspace name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"ws", "new", name}, nil
+}
+
+func buildTrackNew(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx track new …")
+	if err != nil {
+		return nil, err
+	}
+	name, err := promptRequired("track name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"track", "new", name, "-w", ws.Name}, nil
+}
+
+func buildSegmentNew(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx segment new …")
+	if err != nil {
+		return nil, err
+	}
+	tr, err := pickTrack(c, ws.ID, "building:  stx segment new -w "+ws.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	name, err := promptRequired("segment name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"segment", "new", name, "-w", ws.Name, "-t", tr.Name}, nil
+}
+
+func buildStatus(c *client.Client) ([]string, error) {
+	sub, err := pickOne("status> ", "building:  stx status …", "new", "ls", "default", "archive")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := pickWorkspace(c, "building:  stx status "+sub+" …")
+	if err != nil {
+		return nil, err
+	}
+	switch sub {
+	case "ls":
+		return []string{"status", "ls", "-w", ws.Name}, nil
+	case "new":
+		name, err := promptRequired("status name> ")
+		if err != nil {
+			return nil, err
+		}
+		order, err := promptInt("kanban order> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"status", "new", name, "-w", ws.Name, "--order", order}, nil
+	default: // default | archive — pick an existing status
+		st, err := pickStatusName(c, ws.ID, "building:  stx status "+sub+" -w "+ws.Name+" …")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"status", sub, st, "-w", ws.Name}, nil
+	}
+}
+
+func buildKind(c *client.Client) ([]string, error) {
+	sub, err := pickOne("kind> ", "building:  stx kind …", "new", "archive")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := pickWorkspace(c, "building:  stx kind "+sub+" …")
+	if err != nil {
+		return nil, err
+	}
+	if sub == "new" {
+		name, err := promptRequired("kind name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"kind", "new", name, "-w", ws.Name}, nil
+	}
+	k, err := pickKindName(c, ws.ID, "building:  stx kind archive -w "+ws.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"kind", "archive", k, "-w", ws.Name}, nil
+}
+
+func buildTransition(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx transition …")
+	if err != nil {
+		return nil, err
+	}
+	from, err := pickStatusName(c, ws.ID, "building:  stx transition -w "+ws.Name+" --from …")
+	if err != nil {
+		return nil, err
+	}
+	to, err := pickStatusName(c, ws.ID, "building:  stx transition -w "+ws.Name+" --from "+from+" --to …")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"transition", "-w", ws.Name, "--from", from, "--to", to}, nil
+}
+
 // ── pure argv assemblers (no I/O — unit-tested directly) ──────────────────────
 
 // kv is a resolved flag/value pair collected from an optional-field pass.
 type kv struct{ flag, value string }
+
+// argvArchive appends --yes for the cascading types (track/workspace), matching archive.go's gate.
+func argvArchive(typ, id string) []string {
+	argv := []string{"archive", typ, id}
+	if typ == "track" || typ == "workspace" {
+		argv = append(argv, "--yes")
+	}
+	return argv
+}
+
+// argvMeta assembles `meta <sub> [key [value]] <target-flags…>`.
+func argvMeta(sub string, kvArgs, target []string) []string {
+	argv := append([]string{"meta", sub}, kvArgs...)
+	return append(argv, target...)
+}
 
 func argvAdd(title, ws, track string, extras []kv) []string {
 	argv := []string{"add", title, "-w", ws, "-t", track}
@@ -414,6 +720,49 @@ func pickStatusName(c *client.Client, wsID int64, header string) (string, error)
 	return fzfOne(lines, fzfOpts{prompt: "status> ", header: header})
 }
 
+func pickSegment(c *client.Client, trackID int64, header string) (api.Segment, error) {
+	segs, err := c.Segments(trackID)
+	if err != nil {
+		return api.Segment{}, err
+	}
+	if len(segs) == 0 {
+		return api.Segment{}, fmt.Errorf("no segments in this track")
+	}
+	byID := map[string]api.Segment{}
+	lines := make([]string, 0, len(segs))
+	for _, s := range segs {
+		id := itoa(s.ID)
+		byID[id] = s
+		tag := ""
+		if s.IsRoot {
+			tag = " (root)"
+		}
+		lines = append(lines, fmt.Sprintf("%s\t#%s  %s%s", id, id, s.Name, tag))
+	}
+	id, err := fzfOne(lines, fzfOpts{prompt: "segment> ", header: header})
+	if err != nil {
+		return api.Segment{}, err
+	}
+	return byID[id], nil
+}
+
+// pickRelateKind offers the relation kinds already in use (free-text edges), falling back to a
+// readline prompt when none exist yet — relate --kind is arbitrary text.
+func pickRelateKind(c *client.Client, wsID int64, header string) (string, error) {
+	kinds, err := c.RelatesKinds(wsID)
+	if err != nil {
+		return "", err
+	}
+	if len(kinds) == 0 {
+		return promptRequired("kind> ")
+	}
+	lines := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		lines = append(lines, k+"\t"+k)
+	}
+	return fzfOne(lines, fzfOpts{prompt: "kind> ", header: header})
+}
+
 func pickKindName(c *client.Client, wsID int64, header string) (string, error) {
 	kinds, err := c.Kinds(wsID)
 	if err != nil {
@@ -493,6 +842,41 @@ func fzfOne(lines []string, o fzfOpts) (string, error) {
 func fzfMany(lines []string, o fzfOpts) ([]string, error) {
 	o.multi = true
 	return fzfRun(lines, o)
+}
+
+func itoa(id int64) string { return strconv.FormatInt(id, 10) }
+
+// pickOne presents a fixed set of literal choices (value == label) in an fzf pane.
+func pickOne(prompt, header string, opts ...string) (string, error) {
+	lines := make([]string, len(opts))
+	for i, o := range opts {
+		lines[i] = o + "\t" + o
+	}
+	return fzfOne(lines, fzfOpts{prompt: prompt, header: header})
+}
+
+// promptRequired reads a non-empty line; empty input aborts the build (like an Esc).
+func promptRequired(label string) (string, error) {
+	v, err := promptLine(label)
+	if err != nil {
+		return "", err
+	}
+	if v == "" {
+		return "", errPickCancelled
+	}
+	return v, nil
+}
+
+// promptInt reads a required integer (for flags like status --order).
+func promptInt(label string) (string, error) {
+	v, err := promptRequired(label)
+	if err != nil {
+		return "", err
+	}
+	if _, e := strconv.Atoi(v); e != nil {
+		return "", fmt.Errorf("expected an integer, got %q", v)
+	}
+	return v, nil
 }
 
 var stdin = bufio.NewReader(os.Stdin)

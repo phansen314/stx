@@ -28,8 +28,9 @@ func TestBuilders_NoDrift(t *testing.T) {
 		}
 		return fzfRunReal(lines[:1]), nil // value = first line's value column
 	})()
+	// "1" is non-empty (satisfies text/name/key prompts) and parses as an int (status --order).
 	origPrompt := promptLine
-	promptLine = func(string) (string, error) { return "seed text", nil }
+	promptLine = func(string) (string, error) { return "1", nil }
 	defer func() { promptLine = origPrompt }()
 
 	for name, build := range builders {
@@ -111,10 +112,36 @@ func driftServer(t *testing.T) string {
 	mux.HandleFunc("GET /next", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, items([]map[string]any{{"id": 5, "title": "seed", "statusId": 100, "segmentId": 20}}))
 	})
-	// writes: return a task verbatim; the fixture is enough for RunE to complete.
-	mux.HandleFunc("POST /tracks/10/tasks", func(w http.ResponseWriter, _ *http.Request) { write(w, task) })
-	mux.HandleFunc("POST /tasks/5/status", func(w http.ResponseWriter, _ *http.Request) { write(w, task) })
-	mux.HandleFunc("PATCH /tasks/5", func(w http.ResponseWriter, _ *http.Request) { write(w, task) })
+	mux.HandleFunc("GET /workspaces/1/relates-kinds", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, items([]string{}))
+	})
+	mux.HandleFunc("GET /workspaces/1/edges", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, map[string]any{"blocks": []any{}, "relates": []any{}})
+	})
+	// writes: return a plausible entity/edge; the fixture is enough for RunE to complete.
+	ws := map[string]any{"id": 1, "name": "auth", "version": 1}
+	track := map[string]any{"id": 10, "workspaceId": 1, "name": "api", "version": 1}
+	seg := map[string]any{"id": 20, "workspaceId": 1, "trackId": 10, "isRoot": true, "name": "root"}
+	status := map[string]any{"id": 103, "workspaceId": 1, "name": "New", "kanbanOrder": 3}
+	kind := map[string]any{"id": 201, "workspaceId": 1, "name": "chore"}
+	transition := map[string]any{"id": 3, "workspaceId": 1, "fromStatusId": 100, "toStatusId": 100}
+	ok := func(v any) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { write(w, v) }
+	}
+	mux.HandleFunc("POST /tracks/10/tasks", ok(task))
+	mux.HandleFunc("POST /tasks/5/status", ok(task))
+	mux.HandleFunc("PATCH /tasks/5", ok(task))
+	mux.HandleFunc("POST /blocks", ok(map[string]any{}))
+	mux.HandleFunc("POST /blocks/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /relates", ok(map[string]any{}))
+	mux.HandleFunc("POST /relates/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /tasks/5/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /workspaces", ok(ws))
+	mux.HandleFunc("POST /workspaces/1/tracks", ok(track))
+	mux.HandleFunc("POST /tracks/10/segments", ok(seg))
+	mux.HandleFunc("POST /workspaces/1/statuses", ok(status))
+	mux.HandleFunc("POST /workspaces/1/kinds", ok(kind))
+	mux.HandleFunc("POST /workspaces/1/transitions", ok(transition))
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

@@ -71,11 +71,15 @@ degrade gracefully when their dependency (fzf / the daemon) is absent.
 ### Bare `stx` — guided fzf builder
 
 Run **`stx`** with no arguments in a terminal and it walks you through assembling a command: an fzf
-menu of the daily-loop commands (`add`, `mv`, `done`, `edit`, `show`, `next`, `tree`), then live
-pickers for each argument — workspace, task (`#id [status] title`, with `stx show` in the preview
-pane), and for `mv` **only the legal next statuses** for the chosen task. Each pane frames the
-command as built so far on its border. The assembled `stx …` is printed for a `run? [Y/n]` confirm,
-then executed. fzf drives everything from inside the binary (via `os/exec`) — no shell wrapper.
+menu of every builder-covered command (the task loop `add`/`mv`/`done`/`edit`/`show`/`next`/`tree`,
+edges `block`/`unblock`/`relate`/`unrelate`/`relate-kinds`, plus `graph`, `meta`, `archive`, and the
+`ws`/`track`/`segment`/`status`/`kind`/`transition` admin), then live pickers for each argument —
+workspace, task (`#id [status] title`, with `stx show` in the preview pane), segments, statuses,
+kinds — and for `mv` **only the legal next statuses** for the chosen task. Commands with
+subcommands (`meta`, `status`, `kind`, `archive` types) pick the sub/target first. Each pane frames
+the command as built so far on its border. The assembled `stx …` is printed for a `run? [Y/n]`
+confirm, then executed. fzf drives everything from inside the binary (via `os/exec`) — no shell
+wrapper.
 
 Non-interactive (piped or scripted) `stx` prints help instead; without fzf on PATH the builder
 prints an install hint and exits cleanly.
