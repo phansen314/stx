@@ -37,7 +37,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
 | `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin) |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
-| `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k] [--clear-kind] [--due …]` | edit fields |
+| `stx edit <id> [--title …] [--desc …] [--priority N] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |
 | `stx done <id>` | move to the workspace's terminal status |
 | `stx block <id> --on <blocker-id>` | make a task blocked by another (feeds `next`) |
 | `stx relate <a> --to <b> --kind <k>` | relation edge (e.g. `relates_to`, `spawns`) |

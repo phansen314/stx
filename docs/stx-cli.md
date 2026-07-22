@@ -134,6 +134,47 @@ the single source for the command list. In short:
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
 retry on conflict). Illegal status moves print the legal targets.
 
+## Editing a description in $EDITOR
+
+Typing markdown into a shell argument is miserable, so `stx edit` hands the description to your
+editor. **The whole buffer is the description** — nothing is parsed or stripped, so `#` headings
+survive byte-for-byte. The temp file is `stx-edit-<id>-*.md` (the `.md` gets you highlighting; the
+id in the name is your "which task" cue in the editor's tab).
+
+| Invocation | What happens |
+|---|---|
+| `stx edit 42` on a terminal, no field flags | opens the editor |
+| `stx edit 42 -e` / `--editor` | forces it — works piped too, if the editor is a windowed one |
+| `stx edit 42 --desc x` (any field flag) | flags win; the editor stays out of it |
+| `stx edit 42` piped/scripted, no `-e` | `error: nothing to edit …` — scripts never hang |
+| `stx next … -q \| stx edit - -e` | error: editor mode edits exactly one task |
+
+Save and close and the text is written (one trailing newline trimmed); close without touching it and
+stx prints `unchanged #42` and writes nothing. An emptied buffer clears the description. If the
+editor exits non-zero — or the daemon rejects the write — the temp file is **kept** and its path is
+printed, so a long description is never lost.
+
+**Which editor:** `$STX_EDITOR` → `$VISUAL` → `$EDITOR` → first of `zed`, `code`, `vi` on PATH.
+
+GUI editors fork and return immediately unless told to wait, which would make every edit look
+"unchanged", so stx adds the wait flag for editors it knows (`zed`, `code`, `code-insiders`,
+`codium`, `cursor`, `subl`). Flags you typed yourself are never rewritten:
+
+| Resolved value | Launched as |
+|---|---|
+| *(unset,* `zed` *on PATH)* | `zed -n -w <file>` — new window, blocks until you close it |
+| `code` | `code -n -w <file>` |
+| `code --wait` | `code --wait <file>` (you passed flags; only a missing wait is added) |
+| `zed -w` | `zed -w <file>` |
+| `vim` | `vim <file>` (terminal editor — never flagged, and requires a tty) |
+
+A value containing shell metacharacters runs through `sh -c` verbatim, git-style, with no
+auto-flagging. Set `STX_EDITOR` to take full control:
+
+```bash
+export STX_EDITOR="zed -n -w"      # or: code -n -w
+```
+
 ## Interactive helpers
 
 Two conveniences that surface live daemon data so you never hand-copy an id — both

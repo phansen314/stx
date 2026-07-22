@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`meta {ls|get|set|del}` on a task, workspace, or track; `set` value parses as JSON with a
   string fallback, `--string` forces a literal). Client-side read-modify-write over the CAS
   `edit_*` methods; no daemon change.
+- **`stx edit` round-trips the description through `$EDITOR`.** `stx edit <id>` with no field
+  flags on a terminal (or `-e/--editor` anywhere) opens the description in your editor; the whole
+  buffer is the description, so markdown survives verbatim. Closing it untouched prints
+  `unchanged #<id>` and writes nothing; a failed write keeps the temp file and names it. Editor
+  resolution is `$STX_EDITOR` → `$VISUAL` → `$EDITOR` → `zed`/`code`/`vi` on PATH, and stx adds the
+  wait flag GUI editors need (`zed -n -w`, `code -n -w`) unless you passed flags yourself.
 - **Pipeline conventions — `-q`, `-`, grep exit codes.** `-q/--quiet` prints only the ids a
   command produced or acted on, one per line (`meta get -q` prints the bare value, unquoted for
   strings; `meta ls -q` the keys); mutually exclusive with `--json`. `-` in place of a positional

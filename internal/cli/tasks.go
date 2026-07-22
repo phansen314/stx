@@ -235,9 +235,10 @@ func illegalTransitionErr(c *client.Client, wsID, curStatusID int64, statuses []
 func newEditCmd() *cobra.Command {
 	var title, desc string
 	var priority int
+	var useEditor bool
 	cmd := &cobra.Command{
 		Use:   "edit <id|->",
-		Short: "edit a task (`-` reads ids from stdin; `--desc -` reads the text from stdin)",
+		Short: "edit a task (no field flags opens $EDITOR; `-` reads ids from stdin)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := readIDs(cmd, args[0])
@@ -259,12 +260,32 @@ func newEditCmd() *cobra.Command {
 			if cmd.Flags().Changed("priority") {
 				changes["priority"] = priority
 			}
-			if len(changes) == 0 {
-				return errors.New("nothing to edit — pass --title/--desc/--priority")
-			}
 			c, err := dial()
 			if err != nil {
 				return err
+			}
+			// No field flags: hand the description to the user's editor when there's a terminal to
+			// ask on (or when -e demands it); otherwise keep the old error so scripts never hang.
+			var buf editedBuffer
+			if len(changes) == 0 {
+				if !useEditor && !interactive() {
+					return errors.New("nothing to edit — pass --title/--desc/--priority, or -e for $EDITOR")
+				}
+				if len(ids) != 1 || stdinClaimed != "" {
+					return errors.New("editor mode edits one task — pass a single id, not `-`")
+				}
+				detail, err := c.TaskDetail(ids[0])
+				if err != nil {
+					return err
+				}
+				buf, err = editDescription(cmd, ids[0], detail.Task.Description)
+				if err != nil {
+					return err
+				}
+				if !buf.changed {
+					return emit(cmd, ids, detail.Task, fmt.Sprintf("unchanged #%d", ids[0]))
+				}
+				changes["description"] = buf.text
 			}
 			var edited []int64
 			var res []any
@@ -287,11 +308,17 @@ func newEditCmd() *cobra.Command {
 				lines = append(lines, fmt.Sprintf("edited #%d  %s", task.ID, task.Title))
 				return nil
 			})
-			return emitBatch(cmd, edited, res, lines, runErr)
+			if runErr != nil {
+				return fmt.Errorf("%w%s", runErr, buf.keep()) // the daemon refused — don't drop the text
+			}
+			buf.discard()
+			return emitBatch(cmd, edited, res, lines, nil)
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "new title")
-	cmd.Flags().StringVar(&desc, "desc", "", "new description")
+	cmd.Flags().StringVar(&desc, "desc", "", "new description (`-` reads it from stdin)")
 	cmd.Flags().IntVar(&priority, "priority", 0, "new priority")
+	cmd.Flags().BoolVarP(&useEditor, "editor", "e", false,
+		"edit the description in $EDITOR (implied when no field flag is given on a terminal)")
 	return cmd
 }
