@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -20,6 +21,46 @@ func TestCompletion_DaemonDownDegradesToNoOp(t *testing.T) {
 	}
 	if got, dir := completeWorkspaceFlag(nil, nil, ""); got != nil || dir != noComp {
 		t.Errorf("completeWorkspaceFlag want (nil, noComp), got (%v, %v)", got, dir)
+	}
+	if got := allWorkspaceCandidates(); got != nil {
+		t.Errorf("allWorkspaceCandidates want nil, got %v", got)
+	}
+	if got := allTrackCandidates(); got != nil {
+		t.Errorf("allTrackCandidates want nil, got %v", got)
+	}
+	if got := allSegmentCandidates(); got != nil {
+		t.Errorf("allSegmentCandidates want nil, got %v", got)
+	}
+}
+
+// archive: arg0 → the four entity types; arg1 → live ids of the chosen type.
+func TestCompleteArchiveArgs(t *testing.T) {
+	defer setBaseURL(completionServer(t))()
+
+	types, _ := completeArchiveArgs(nil, nil, "")
+	if want := []string{"task", "segment", "track", "workspace"}; !reflect.DeepEqual(types, want) {
+		t.Fatalf("arg0 types: got %v, want %v", types, want)
+	}
+	tracks, _ := completeArchiveArgs(nil, []string{"track"}, "")
+	if want := []string{"10\tauth / api"}; !reflect.DeepEqual(tracks, want) {
+		t.Fatalf("arg1 track ids: got %v, want %v", tracks, want)
+	}
+	if got, _ := completeArchiveArgs(nil, []string{"task", "5"}, ""); got != nil {
+		t.Fatalf("arg2 offers nothing, got %v", got)
+	}
+}
+
+func TestMetaKeysFromJSON(t *testing.T) {
+	got := metaKeysFromJSON(`{"owner":"alice","prio":3}`)
+	sort.Strings(got)
+	if want := []string{"owner", "prio"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys: got %v, want %v", got, want)
+	}
+	if got := metaKeysFromJSON(""); got != nil {
+		t.Fatalf("empty metadata → nil, got %v", got)
+	}
+	if got := metaKeysFromJSON("not json"); got != nil {
+		t.Fatalf("bad json → nil, got %v", got)
 	}
 }
 

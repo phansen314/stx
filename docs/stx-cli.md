@@ -92,7 +92,13 @@ Cobra's stock completion, wired to live data:
 eval "$(stx completion bash)"      # or: zsh | fish  (add to ~/.bashrc)
 ```
 
-`stx show <TAB>` / `stx mv <TAB>` offer real task ids; `stx mv <id> <TAB>` offers the legal target
-statuses; `stx add -w <TAB>` offers workspaces, `--track`/`--status`/`--kind <TAB>` offer that
-workspace's values. Completion dials fresh each time and offers nothing (never errors) when the
-daemon is down.
+Completion covers every command's live arguments, for example:
+
+- **task ids** — `show`/`edit`/`done`/`mv` first arg, and `block`/`unblock --on`, `relate`/`unrelate --to`, `meta --task`
+- **`mv <id> <TAB>`** — only the *legal* target statuses for that task
+- **workspaces** — every `-w/--workspace`; **`--track`** — that workspace's tracks
+- **enums** — `add --status`/`--kind`, `transition --from`/`--to`, `status default|archive <status>`, `kind archive <name>`, `relate --kind` (kinds already in use)
+- **`archive <TAB>`** — the entity type, then live ids of that type across workspaces
+- **`meta get|set|del <TAB>`** — the metadata keys already set on the target entity
+
+Completion dials fresh each time and offers nothing (never errors) when the daemon is down.

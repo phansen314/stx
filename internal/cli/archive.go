@@ -14,10 +14,11 @@ var archivePath = map[string]string{
 func newArchiveCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:       "archive <task|segment|track|workspace> <id>",
-		Short:     "archive an entity",
-		Args:      cobra.ExactArgs(2),
-		ValidArgs: []string{"task", "segment", "track", "workspace"},
+		Use:   "archive <task|segment|track|workspace> <id>",
+		Short: "archive an entity",
+		Args:  cobra.ExactArgs(2),
+		// completion (types for arg0, live ids-of-type for arg1) is wired in registerCompletions;
+		// no static ValidArgs — cobra ignores ValidArgsFunction when ValidArgs is also set.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			typ := args[0]
 			path, ok := archivePath[typ]
