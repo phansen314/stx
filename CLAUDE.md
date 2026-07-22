@@ -24,7 +24,8 @@ Authoritative design lives in `docs/` — start with
 | `tui/`    | Python Textual TUI (`python3 -m tui`)                        |
 | `bin/stx` | Bash launcher → Go CLI (`bin/stx-go`), auto-builds on first use, works from any CWD |
 | `bin/stx-py` | Bash launcher → Python CLI (sets `PYTHONPATH`)           |
-| `scripts/`| `dev_sim.py` — Python integration test / demo               |
+| `scripts/`| `dev_sim.py` — Python integration test / demo; `graph_demo.sh` / `graph_bigdemo.sh` — seed an isolated daemon and render styled/clustered graphs |
+| `examples/`| `graph.toml` — annotated `stx graph` styling config (copy to `~/.config/stx/graph.toml`) |
 | `tests/`  | Python pytest suite (cli / client / tui)                    |
 | `packaging/systemd/` | `stx.service` user unit (autostart)              |
 | `docs/`   | Authoritative design, schema, decisions                     |

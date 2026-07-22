@@ -67,9 +67,22 @@ the single source for the command list. In short:
   samples with `scripts/graph_demo.sh`.
   - **Styling** (`--style <file>`, `--no-style`): colors/attributes come from a TOML config at
     `$XDG_CONFIG_HOME/stx/graph.toml` (fallback `~/.config/stx/graph.toml`), optionally overlaid by
-    `--style <file>` (deep-merged); `--no-style` uses built-in defaults only. Style task nodes by
-    status name, kind, priority, or the terminal fallback, and edges by type/kind — every value is a
-    raw Graphviz attribute. Example:
+    `--style <file>` (deep-merged over the base over built-in defaults); `--no-style` uses built-in
+    defaults only. Every value is a **raw Graphviz attribute** passed through verbatim, so anything
+    `dot` understands works. Config sections:
+    | section | styles |
+    |---------|--------|
+    | `[workspace]` | the whole graph (bgcolor, fontname…) |
+    | `[node]` / `[edge]` | default node / edge look |
+    | `[status.<name>]` | task nodes by status name (case-insensitive) |
+    | `[terminal]` | fallback for any terminal status with no `[status.*]` rule |
+    | `[kind.<name>]` | task nodes by kind |
+    | `[[priority]]` (`min` + `[priority.style]`) | task nodes at/above a priority (highest match wins) |
+    | `[blocks]` / `[relates]` / `[relates_kind.<k>]` | edges |
+    | `[track]` / `[track_name.<n>]`, `[segment]` / `[segment_name.<n>]` | clusters (see below) |
+
+    A node layers `[node]` → kind → priority → terminal → status (later wins, attrs coexist), so a
+    status fill and a kind border combine. Example:
     ```toml
     [status.Done]                # color a task green when it's done
     style = "rounded,filled"
@@ -80,12 +93,16 @@ the single source for the command list. In short:
     min = 5
       [priority.style]
       penwidth = "2.5"
-    [relates_kind.spawns]
-    color = "#3355ff"
     ```
+    A full annotated config lives at [`examples/graph.toml`](../examples/graph.toml) — install it with
+    `cp examples/graph.toml ~/.config/stx/graph.toml`.
   - **Clustering** (`--cluster none|track|segment`, default `none`): group task nodes into Graphviz
     clusters by track or by the nested segment tree; style clusters via `[track]`/`[track_name.<n>]`
     and `[segment]`/`[segment_name.<n>]`, and the whole graph via `[workspace]`.
+  - **Demos:** `scripts/graph_demo.sh` (small graph, format/orientation) and
+    `scripts/graph_bigdemo.sh` (a 13-task cross-track DAG in mixed statuses/kinds/priorities,
+    rendered with `examples/graph.toml` in every cluster mode) each spin an isolated throwaway daemon
+    and render into `build/`.
 - **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one

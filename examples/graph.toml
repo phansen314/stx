@@ -1,0 +1,74 @@
+# stx graph styling — copy to ~/.config/stx/graph.toml, or pass with `stx graph --style`.
+# Every value is a raw Graphviz attribute, so anything dot understands works here.
+
+[workspace]                 # whole-graph attributes
+bgcolor = "white"
+fontname = "Helvetica"
+
+[node]                      # default node look (the `node [...]` line)
+shape = "box"
+style = "rounded"
+fontname = "Helvetica"
+
+[edge]                      # default edge look
+color = "#555555"
+
+# ── task color by STATUS name (case-insensitive; statuses vary per install) ──
+[status.Backlog]
+style = "rounded,filled"
+fillcolor = "#eef2ff"
+[status.Implementation]
+style = "rounded,filled"
+fillcolor = "#fff3cd"
+[status.Review]
+style = "rounded,filled"
+fillcolor = "#ffe08a"
+[status.Done]
+style = "rounded,filled"
+fillcolor = "#cde7cd"
+fontcolor = "#2f6f3e"
+
+[terminal]                  # fallback for any terminal status without an explicit rule
+style = "rounded,filled"
+fillcolor = "#cde7cd"
+
+# ── border color by KIND (coexists with the status fill) ──
+[kind.feature]
+color = "#3355ff"
+[kind.bug]
+color = "#b00020"
+penwidth = "2"
+[kind.chore]
+color = "#8a8a8a"
+
+# ── priority: the highest matching `min` wins; here p>=7 gets a heavy border ──
+[[priority]]
+min = 7
+  [priority.style]
+  penwidth = "3"
+
+# ── edges ──
+[blocks]
+color = "#333333"
+[relates]
+style = "dashed"
+color = "#999999"
+[relates_kind.spawns]
+style = "dashed"
+color = "#3355ff"
+
+# ── clusters (shown with --cluster track|segment) ──
+[track]
+style = "rounded"
+color = "gray70"
+fontname = "Helvetica-Bold"
+[track_name.backend]
+color = "steelblue"
+[track_name.frontend]
+color = "seagreen"
+[track_name.infra]
+color = "darkorange"
+
+[segment]
+style = "rounded,dashed"
+color = "gray80"
