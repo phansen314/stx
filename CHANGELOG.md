@@ -13,12 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`meta {ls|get|set|del}` on a task, workspace, or track; `set` value parses as JSON with a
   string fallback, `--string` forces a literal). Client-side read-modify-write over the CAS
   `edit_*` methods; no daemon change.
-- **`stx edit` round-trips the description through `$EDITOR`.** `stx edit <id>` with no field
-  flags on a terminal (or `-e/--editor` anywhere) opens the description in your editor; the whole
-  buffer is the description, so markdown survives verbatim. Closing it untouched prints
-  `unchanged #<id>` and writes nothing; a failed write keeps the temp file and names it. Editor
-  resolution is `$STX_EDITOR` → `$VISUAL` → `$EDITOR` → `zed`/`code`/`vi` on PATH, and stx adds the
-  wait flag GUI editors need (`zed -n -w`, `code -n -w`) unless you passed flags yourself.
+- **`$EDITOR` round-trips.** `stx edit <id>` with no field flags on a terminal (or `-e/--editor`) `stx edit <id>` with no field
+  opens the description in your editor; the whole buffer is the description, so markdown survives
+  verbatim. `stx add … -e` does the same for a new task (never implied — `add` stays a one-liner),
+  and `stx meta set <key> -e` edits a metadata value as pretty JSON, or as raw text with `--string`.
+  Closing a buffer untouched prints `unchanged …` and writes nothing; a failed write keeps the temp
+  file and names it. Editor resolution is `$STX_EDITOR` → `$VISUAL` → `$EDITOR` → `zed`/`code`/`vi`
+  on PATH, and stx adds the wait flag GUI editors need (`zed -n -w`, `code -n -w`) unless you passed
+  flags yourself. The fzf builder offers `$EDITOR` wherever it used to prompt for free text on a
+  single line.
 - **Pipeline conventions — `-q`, `-`, grep exit codes.** `-q/--quiet` prints only the ids a
   command produced or acted on, one per line (`meta get -q` prints the bare value, unquoted for
   strings; `meta ls -q` the keys); mutually exclusive with `--json`. `-` in place of a positional

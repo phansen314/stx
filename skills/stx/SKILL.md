@@ -35,13 +35,13 @@ to any command for machine-readable output; text is the compact default.
 | `stx tree -w <ws>` | whole workspace as a tree — the "orient me" view |
 | `stx next -w <ws> [-t <track>] [--limit N]` | ready tasks (frontier: unblocked, non-terminal) |
 | `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
-| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin) |
+| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …] [-e]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin, `-e` writes the description in `$EDITOR`) |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
 | `stx edit <id> [--title …] [--desc …] [--priority N] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |
 | `stx done <id>` | move to the workspace's terminal status |
 | `stx block <id> --on <blocker-id>` | make a task blocked by another (feeds `next`) |
 | `stx relate <a> --to <b> --kind <k>` | relation edge (e.g. `relates_to`, `spawns`) |
-| `stx meta {ls\|get\|set\|del} (--task <id> \| -w <ws> [--track <t>]) [key] [value]` | free-form JSON metadata keys on a task/workspace/track (`set` value is JSON, or `--string` for a literal) |
+| `stx meta {ls\|get\|set\|del} (--task <id> \| -w <ws> [--track <t>]) [key] [value]` | free-form JSON metadata keys on a task/workspace/track (`set` value is JSON, or `--string` for a literal; `set … -e` edits the value in `$EDITOR` — JSON by default, raw text with `--string`) |
 | `stx graph -w <ws> [-t <track>] [--blocks-only]` | task graph as Graphviz DOT on stdout (pipe to `dot`); `--json` for `{nodes, blocks, relates}` |
 | `stx archive task\|segment\|track\|workspace <id> [--yes]` | archive (`--yes` required for track/workspace — cascades) |
 | `stx ws new <name>` | new workspace |

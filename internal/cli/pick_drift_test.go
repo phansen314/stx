@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/phansen314/stx/internal/client"
+	"github.com/spf13/cobra"
 )
 
 // TestBuilders_NoDrift is the guard against a builder drifting from its real command's required
@@ -32,6 +33,12 @@ func TestBuilders_NoDrift(t *testing.T) {
 	origPrompt := promptLine
 	promptLine = func(string) (string, error) { return "1", nil }
 	defer func() { promptLine = origPrompt }()
+	// Picking the first candidate everywhere lands on the "$EDITOR" choice wherever a builder
+	// offers one, so no builder may actually spawn an editor here. Leaving the buffer untouched
+	// takes each command's "unchanged" path.
+	origEditor := runEditor
+	runEditor = func(*cobra.Command, string) error { return nil }
+	defer func() { runEditor = origEditor }()
 
 	for name, build := range builders {
 		t.Run(name, func(t *testing.T) {

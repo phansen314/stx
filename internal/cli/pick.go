@@ -147,6 +147,7 @@ func buildAdd(c *client.Client) ([]string, error) {
 	}
 	// optional extras: status, kind, priority — multi-select then collect each.
 	extras, err := collectFields(c, ws.ID, []fieldSpec{
+		{flag: "-e", kind: "flag", label: editorChoice + " (description)"}, // no value to prompt for
 		{flag: "--status", kind: "status"},
 		{flag: "--kind", kind: "kind"},
 		{flag: "--priority", kind: "int"},
@@ -233,6 +234,15 @@ func buildEdit(c *client.Client) ([]string, error) {
 		return nil, err
 	}
 	id := strconv.FormatInt(task.ID, 10)
+	// The field prompts are single-line, so the description is the one thing they can't really
+	// write — offer the editor as its own path rather than as a field among fields.
+	how, err := pickOne("how> ", "building:  stx edit "+id+" …", editorChoice, "fields (title/desc/priority)")
+	if err != nil {
+		return nil, err
+	}
+	if how == editorChoice {
+		return argvEdit(id, []kv{{flag: "-e"}}), nil
+	}
 	fields, err := collectFields(c, ws.ID, []fieldSpec{
 		{flag: "--title", kind: "text"},
 		{flag: "--desc", kind: "text"},
@@ -440,6 +450,13 @@ func buildMeta(c *client.Client) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		how, err := pickOne("value> ", "building:  stx meta set "+key+" …", editorChoice, "type it")
+		if err != nil {
+			return nil, err
+		}
+		if how == editorChoice {
+			return append(argvMeta(sub, []string{key}, target), "-e"), nil
+		}
 		val, err := promptRequired("value> ")
 		if err != nil {
 			return nil, err
@@ -607,9 +624,16 @@ func argvMeta(sub string, kvArgs, target []string) []string {
 }
 
 func argvAdd(title, ws, track string, extras []kv) []string {
-	argv := []string{"add", title, "-w", ws, "-t", track}
-	for _, e := range extras {
-		argv = append(argv, e.flag, e.value)
+	return appendFields([]string{"add", title, "-w", ws, "-t", track}, extras)
+}
+
+// appendFields appends `--flag value` pairs, or a bare `--flag` for valueless (kind "flag") fields.
+func appendFields(argv []string, fields []kv) []string {
+	for _, f := range fields {
+		argv = append(argv, f.flag)
+		if f.value != "" {
+			argv = append(argv, f.value)
+		}
 	}
 	return argv
 }
@@ -621,11 +645,7 @@ func argvNext(ws string) []string       { return []string{"next", "-w", ws} }
 func argvTree(ws string) []string       { return []string{"tree", "-w", ws} }
 
 func argvEdit(id string, fields []kv) []string {
-	argv := []string{"edit", id}
-	for _, f := range fields {
-		argv = append(argv, f.flag, f.value)
-	}
-	return argv
+	return appendFields([]string{"edit", id}, fields)
 }
 
 // ── shared pickers ────────────────────────────────────────────────────────────
@@ -713,9 +733,13 @@ func pickTask(c *client.Client, wsID int64, header string) (api.Task, error) {
 // ── optional-field collection (shared by add/edit) ────────────────────────────
 
 type fieldSpec struct {
-	flag string // e.g. "--title", "--status"
-	kind string // "text" | "int" | "status" | "kind"
+	flag  string // e.g. "--title", "--status"
+	kind  string // "text" | "int" | "status" | "kind" | "flag" (valueless, e.g. -e)
+	label string // menu text; defaults to the flag name without its dashes
 }
+
+// editorChoice is the menu label for "let $EDITOR do it", shared by the edit and meta builders.
+const editorChoice = "$EDITOR"
 
 // collectFields multi-selects which fields to set, then collects each value (fzf for enum kinds,
 // readline for free text). required=true means at least one field is expected (edit); when false
@@ -724,7 +748,11 @@ func collectFields(c *client.Client, wsID int64, specs []fieldSpec, header strin
 	lines := make([]string, len(specs))
 	for i, s := range specs {
 		name := strings.TrimPrefix(s.flag, "--")
-		lines[i] = fmt.Sprintf("%s\t%s", name, name)
+		label := s.label
+		if label == "" {
+			label = name
+		}
+		lines[i] = fmt.Sprintf("%s\t%s", name, label) // value <TAB> what the user reads
 	}
 	chosen, err := fzfMany(lines, fzfOpts{prompt: "field(s)> ", header: header})
 	if err != nil {
@@ -755,6 +783,8 @@ func collectValue(c *client.Client, wsID int64, s fieldSpec, header string) (str
 		return pickStatusName(c, wsID, header)
 	case "kind":
 		return pickKindName(c, wsID, header)
+	case "flag":
+		return "", nil // valueless: the flag alone is the answer
 	case "int":
 		v, err := promptLine(strings.TrimPrefix(s.flag, "--") + "> ")
 		if err != nil {

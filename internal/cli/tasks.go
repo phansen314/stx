@@ -15,15 +15,21 @@ func newAddCmd() *cobra.Command {
 	var wsFlag, trackFlag, statusFlag, kindFlag, descFlag string
 	var segFlag int64
 	var prioFlag int
+	var useEditor bool
 	cmd := &cobra.Command{
 		Use:   "add <title>",
-		Short: "create a task",
+		Short: "create a task (`-e` writes the description in $EDITOR)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hasTrack := trackFlag != ""
 			hasSeg := cmd.Flags().Changed("segment")
 			if hasTrack == hasSeg {
 				return errors.New("pass exactly one of -t/--track or -s/--segment")
+			}
+			// Unlike `edit`, the editor is never implied here — `stx add "quick note"` must stay a
+			// one-liner, so -e is the only way in.
+			if useEditor && cmd.Flags().Changed("desc") {
+				return errors.New("--desc and -e/--editor are mutually exclusive")
 			}
 			c, err := dial()
 			if err != nil {
@@ -36,6 +42,13 @@ func newAddCmd() *cobra.Command {
 			desc, err := readValue(cmd, descFlag, "--desc")
 			if err != nil {
 				return err
+			}
+			var buf editedBuffer
+			if useEditor {
+				if buf, err = editBuffer(cmd, "add", ".md", ""); err != nil {
+					return err
+				}
+				desc = buf.text
 			}
 			p := client.CreateTaskParams{Title: args[0], Description: desc, Priority: prioFlag}
 			if statusFlag != "" {
@@ -72,8 +85,9 @@ func newAddCmd() *cobra.Command {
 			}
 			task, err := c.CreateTask(p)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w%s", err, buf.keep()) // don't drop a description just written
 			}
+			buf.discard()
 			return emit(cmd, []int64{task.ID}, task,
 				fmt.Sprintf("added #%d  %s", task.ID, task.Title))
 		},
@@ -84,7 +98,8 @@ func newAddCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&prioFlag, "priority", "p", 0, "priority")
 	cmd.Flags().StringVar(&statusFlag, "status", "", "initial status name or id")
 	cmd.Flags().StringVar(&kindFlag, "kind", "", "kind name or id")
-	cmd.Flags().StringVar(&descFlag, "desc", "", "description")
+	cmd.Flags().StringVar(&descFlag, "desc", "", "description (`-` reads it from stdin)")
+	cmd.Flags().BoolVarP(&useEditor, "editor", "e", false, "write the description in $EDITOR")
 	return cmd
 }
 
@@ -278,7 +293,7 @@ func newEditCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				buf, err = editDescription(cmd, ids[0], detail.Task.Description)
+				buf, err = editBuffer(cmd, fmt.Sprintf("edit-%d", ids[0]), ".md", detail.Task.Description)
 				if err != nil {
 					return err
 				}

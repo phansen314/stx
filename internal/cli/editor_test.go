@@ -274,3 +274,189 @@ func TestEdit_EditorGuardRails(t *testing.T) {
 		t.Fatalf("want the nothing-to-edit error, got %v", err)
 	}
 }
+
+// ── add -e ───────────────────────────────────────────────────────────────────
+
+// addServer records the created task's body.
+func addServer(t *testing.T) (base string, posts *[]map[string]any) {
+	t.Helper()
+	recorded := []map[string]any{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("GET /workspaces", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"id": 1, "name": "auth"}}})
+	})
+	mux.HandleFunc("GET /workspaces/1/tracks", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{{"id": 10, "workspaceId": 1, "name": "api"}}})
+	})
+	mux.HandleFunc("POST /tracks/10/tasks", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		recorded = append(recorded, body)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "workspaceId": 1, "title": "seed", "version": 1})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL, &recorded
+}
+
+func TestAdd_EditorWritesDescription(t *testing.T) {
+	base, posts := addServer(t)
+	defer stubEditor(func(path string) error {
+		seed, _ := os.ReadFile(path)
+		if len(seed) != 0 {
+			t.Fatalf("a new task's buffer starts empty, got %q", seed)
+		}
+		return os.WriteFile(path, []byte("written in the editor\n"), 0o600)
+	})()
+
+	out, err := runCLI(t, base, "", "add", "seed", "-w", "auth", "-t", "api", "-e", "-q")
+	if err != nil {
+		t.Fatalf("add -e: %v", err)
+	}
+	if out != "7\n" {
+		t.Fatalf("want the new id, got %q", out)
+	}
+	if len(*posts) != 1 || (*posts)[0]["description"] != "written in the editor" {
+		t.Fatalf("description not carried into the create: %v", *posts)
+	}
+}
+
+// Unlike edit, add never implies the editor — a bare `stx add "x"` must stay a one-liner.
+func TestAdd_EditorNotImplied(t *testing.T) {
+	base, posts := addServer(t)
+	defer stubEditor(func(string) error { t.Fatal("editor must not open for a bare add"); return nil })()
+
+	if _, err := runCLI(t, base, "", "add", "seed", "-w", "auth", "-t", "api"); err != nil {
+		t.Fatalf("bare add: %v", err)
+	}
+	if len(*posts) != 1 {
+		t.Fatalf("want one create, got %d", len(*posts))
+	}
+	_, err := runCLI(t, base, "", "add", "seed", "-w", "auth", "-t", "api", "-e", "--desc", "x")
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("--desc with -e should error, got %v", err)
+	}
+}
+
+// ── meta set -e ──────────────────────────────────────────────────────────────
+
+// metaServer serves a task carrying metadata and records the blobs written back.
+func metaServer(t *testing.T, metadata string) (base string, patches *[]map[string]any) {
+	t.Helper()
+	recorded := []map[string]any{}
+	task := map[string]any{"id": 5, "workspaceId": 1, "title": "seed", "version": 1, "metadataJson": metadata}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("GET /tasks/5", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": task, "blocksIn": []any{}, "blocksOut": []any{}, "relates": []any{}})
+	})
+	mux.HandleFunc("PATCH /tasks/5", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		recorded = append(recorded, body)
+		_ = json.NewEncoder(w).Encode(task)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL, &recorded
+}
+
+// Without --string the buffer is JSON: seeded pretty-printed, parsed strictly on the way back.
+func TestMetaSet_EditorJSON(t *testing.T) {
+	base, patches := metaServer(t, `{"config":{"n":1}}`)
+	defer stubEditor(func(path string) error {
+		seed, _ := os.ReadFile(path)
+		if !strings.Contains(string(seed), "\"n\": 1") {
+			t.Fatalf("buffer should be seeded with pretty JSON, got %q", seed)
+		}
+		if !strings.HasSuffix(path, ".json") {
+			t.Fatalf("JSON mode should use a .json buffer, got %q", path)
+		}
+		return os.WriteFile(path, []byte("{\"n\": 2, \"deep\": [1,2]}\n"), 0o600)
+	})()
+
+	if _, err := runCLI(t, base, "", "meta", "set", "--task", "5", "config", "-e"); err != nil {
+		t.Fatalf("meta set -e: %v", err)
+	}
+	if len(*patches) != 1 {
+		t.Fatalf("want one PATCH, got %d", len(*patches))
+	}
+	var blob map[string]any
+	if err := json.Unmarshal([]byte((*patches)[0]["metadataJson"].(string)), &blob); err != nil {
+		t.Fatalf("blob: %v", err)
+	}
+	cfg, ok := blob["config"].(map[string]any)
+	if !ok || cfg["n"] != float64(2) {
+		t.Fatalf("value not stored as JSON: %v", blob)
+	}
+}
+
+// A JSON typo must not silently become one long string — the buffer is kept and named.
+func TestMetaSet_EditorRejectsBadJSON(t *testing.T) {
+	base, patches := metaServer(t, `{}`)
+	var buf string
+	defer stubEditor(func(path string) error {
+		buf = path
+		return os.WriteFile(path, []byte("{oops\n"), 0o600)
+	})()
+
+	_, err := runCLI(t, base, "", "meta", "set", "--task", "5", "config", "-e")
+	if err == nil || !strings.Contains(err.Error(), "not valid JSON") || !strings.Contains(err.Error(), buf) {
+		t.Fatalf("want a JSON error naming the buffer, got %v", err)
+	}
+	if len(*patches) != 0 {
+		t.Fatalf("nothing should have been written, got %d", len(*patches))
+	}
+	os.Remove(buf)
+}
+
+// --string edits the raw text — the sane way to write a long note — and stores it verbatim.
+func TestMetaSet_EditorString(t *testing.T) {
+	base, patches := metaServer(t, `{"note":"old text"}`)
+	defer stubEditor(func(path string) error {
+		seed, _ := os.ReadFile(path)
+		if string(seed) != "old text\n" {
+			t.Fatalf("--string should seed the raw value, got %q", seed)
+		}
+		if !strings.HasSuffix(path, ".md") {
+			t.Fatalf("--string should use a .md buffer, got %q", path)
+		}
+		return os.WriteFile(path, []byte("# heading\n\nnot JSON at all\n"), 0o600)
+	})()
+
+	if _, err := runCLI(t, base, "", "meta", "set", "--task", "5", "note", "-e", "--string"); err != nil {
+		t.Fatalf("meta set -e --string: %v", err)
+	}
+	var blob map[string]any
+	_ = json.Unmarshal([]byte((*patches)[0]["metadataJson"].(string)), &blob)
+	if blob["note"] != "# heading\n\nnot JSON at all" {
+		t.Fatalf("raw text not stored verbatim: %q", blob["note"])
+	}
+}
+
+func TestMetaSet_EditorGuardRails(t *testing.T) {
+	base, patches := metaServer(t, `{"k":"v"}`)
+	// closing untouched writes nothing
+	restore := stubEditor(func(string) error { return nil })
+	out, err := runCLI(t, base, "", "meta", "set", "--task", "5", "k", "-e")
+	restore()
+	if err != nil || !strings.Contains(out, "unchanged k") {
+		t.Fatalf("want an unchanged line, got %q / %v", out, err)
+	}
+	if len(*patches) != 0 {
+		t.Fatalf("unchanged must not write, got %d", len(*patches))
+	}
+	// a value AND -e is ambiguous; neither is incomplete
+	defer stubEditor(func(string) error { t.Fatal("editor must not open"); return nil })()
+	if _, err := runCLI(t, base, "", "meta", "set", "--task", "5", "k", "v", "-e"); err == nil {
+		t.Fatal("value + -e should error")
+	}
+	if _, err := runCLI(t, base, "", "meta", "set", "--task", "5", "k"); err == nil {
+		t.Fatal("no value and no -e should error")
+	}
+}

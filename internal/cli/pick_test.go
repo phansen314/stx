@@ -52,6 +52,10 @@ func TestArgvAssemblers(t *testing.T) {
 			[]string{"add", "t", "-w", "auth", "-t", "api", "--status", "todo", "--priority", "3"}},
 		{"edit", argvEdit("9", []kv{{"--title", "new"}, {"--priority", "2"}}),
 			[]string{"edit", "9", "--title", "new", "--priority", "2"}},
+		// valueless fields (the $EDITOR choice) must not emit an empty argument
+		{"edit-editor", argvEdit("9", []kv{{flag: "-e"}}), []string{"edit", "9", "-e"}},
+		{"add-editor", argvAdd("t", "auth", "api", []kv{{flag: "-e"}, {"--priority", "3"}}),
+			[]string{"add", "t", "-w", "auth", "-t", "api", "-e", "--priority", "3"}},
 
 		// archive: --yes is appended only for the cascading types.
 		{"archive-task", argvArchive("task", "5"), []string{"archive", "task", "5"}},

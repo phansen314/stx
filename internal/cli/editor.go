@@ -142,11 +142,14 @@ func (b *editedBuffer) keep() string {
 	return " — your text is still in " + b.path
 }
 
-// editDescription round-trips current through the user's editor. The whole buffer IS the
-// description: nothing is parsed or stripped, so markdown headings survive byte-for-byte, minus the
-// single trailing newline editors add on save.
-func editDescription(cmd *cobra.Command, id int64, current string) (editedBuffer, error) {
-	f, err := os.CreateTemp("", fmt.Sprintf("stx-edit-%d-*.md", id))
+// editBuffer round-trips current through the user's editor and returns what came back. The whole
+// buffer IS the value: nothing is parsed or stripped, so markdown headings survive byte-for-byte,
+// minus the single trailing newline editors add on save.
+//
+// slug names the temp file (`stx-<slug>-*<ext>`) — it is the only "what am I editing" cue the
+// editor shows, in its tab — and ext picks the syntax highlighting (".md", ".json").
+func editBuffer(cmd *cobra.Command, slug, ext, current string) (editedBuffer, error) {
+	f, err := os.CreateTemp("", fmt.Sprintf("stx-%s-*%s", slug, ext))
 	if err != nil {
 		return editedBuffer{}, fmt.Errorf("creating the editor buffer: %w", err)
 	}

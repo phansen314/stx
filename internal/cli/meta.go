@@ -136,6 +136,34 @@ func metaRMW(t metaTarget, mutate func(map[string]any)) error {
 	return err
 }
 
+// editMetaValue opens a key's current value in the editor. Two modes, matching how the value will
+// be read back: --string edits the raw text in a .md buffer (the sane way to write a long note),
+// everything else edits pretty-printed JSON in a .json buffer. A key that isn't set yet starts
+// empty, and a non-string value under --string starts from its JSON form rather than nothing.
+func editMetaValue(cmd *cobra.Command, t metaTarget, key string, asString bool) (editedBuffer, error) {
+	blob, _, err := t.read()
+	if err != nil {
+		return editedBuffer{}, err
+	}
+	d, err := metaLoad(blob)
+	if err != nil {
+		return editedBuffer{}, err
+	}
+	seed, ext := "", ".json"
+	if asString {
+		ext = ".md"
+	}
+	if v, ok := d[key]; ok {
+		if s, isStr := v.(string); isStr && asString {
+			seed = s
+		} else {
+			js, _ := json.MarshalIndent(v, "", "  ")
+			seed = string(js)
+		}
+	}
+	return editBuffer(cmd, "meta-"+key, ext, seed)
+}
+
 // metaKeys is the sorted key list — the `-q` view of `meta ls`.
 func metaKeys(d map[string]any) []string {
 	keys := make([]string, 0, len(d))
@@ -238,15 +266,14 @@ func newMetaCmd() *cobra.Command {
 		},
 	}
 
-	var stringFlag bool
+	var stringFlag, setEditor bool
 	set := &cobra.Command{
 		Use:   "set <key> <value|->",
-		Short: "set a metadata key (value parsed as JSON; `-` reads it from stdin)",
-		Args:  cobra.ExactArgs(2),
+		Short: "set a metadata key (value parsed as JSON; `-` reads stdin, `-e` opens $EDITOR)",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			raw, err := readValue(cmd, args[1], "<value>")
-			if err != nil {
-				return err
+			if setEditor == (len(args) == 2) {
+				return errors.New("pass either a value or -e/--editor, not both")
 			}
 			c, err := dial()
 			if err != nil {
@@ -257,16 +284,42 @@ func newMetaCmd() *cobra.Command {
 				return err
 			}
 			key := args[0]
-			value := parseMetaValue(raw, stringFlag)
-			if err := metaRMW(t, func(d map[string]any) { d[key] = value }); err != nil {
+
+			var raw string
+			var buf editedBuffer
+			if setEditor {
+				if buf, err = editMetaValue(cmd, t, key, stringFlag); err != nil {
+					return err
+				}
+				if !buf.changed {
+					return emitLines(cmd, nil, map[string]any{key: nil}, "unchanged "+key)
+				}
+				raw = buf.text
+			} else if raw, err = readValue(cmd, args[1], "<value>"); err != nil {
 				return err
 			}
+
+			// A typed value falls back to a string when it isn't JSON; an editor buffer doesn't —
+			// silently turning a JSON typo into one long string would be a nasty surprise.
+			var value any
+			if setEditor && !stringFlag {
+				if err := json.Unmarshal([]byte(raw), &value); err != nil {
+					return fmt.Errorf("not valid JSON: %w%s (use --string for a literal)", err, buf.keep())
+				}
+			} else {
+				value = parseMetaValue(raw, stringFlag)
+			}
+			if err := metaRMW(t, func(d map[string]any) { d[key] = value }); err != nil {
+				return fmt.Errorf("%w%s", err, buf.keep())
+			}
+			buf.discard()
 			js, _ := json.Marshal(value)
 			return emitLines(cmd, []string{bareValue(value)}, map[string]any{key: value},
 				fmt.Sprintf("%s = %s", key, string(js)))
 		},
 	}
 	set.Flags().BoolVar(&stringFlag, "string", false, "store the value as a literal string")
+	set.Flags().BoolVarP(&setEditor, "editor", "e", false, "edit the value in $EDITOR")
 
 	del := &cobra.Command{
 		Use: "del <key>", Short: "delete a metadata key", Args: cobra.ExactArgs(1),

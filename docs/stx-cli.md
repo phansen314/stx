@@ -134,10 +134,10 @@ the single source for the command list. In short:
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
 retry on conflict). Illegal status moves print the legal targets.
 
-## Editing a description in $EDITOR
+## Editing in $EDITOR
 
-Typing markdown into a shell argument is miserable, so `stx edit` hands the description to your
-editor. **The whole buffer is the description** — nothing is parsed or stripped, so `#` headings
+Typing markdown into a shell argument is miserable, so `stx edit`, `stx add` and `stx meta set` can
+hand the text to your editor. **The whole buffer is the description** — nothing is parsed or stripped, so `#` headings
 survive byte-for-byte. The temp file is `stx-edit-<id>-*.md` (the `.md` gets you highlighting; the
 id in the name is your "which task" cue in the editor's tab).
 
@@ -149,8 +149,18 @@ id in the name is your "which task" cue in the editor's tab).
 | `stx edit 42` piped/scripted, no `-e` | `error: nothing to edit …` — scripts never hang |
 | `stx next … -q \| stx edit - -e` | error: editor mode edits exactly one task |
 
+`stx add "title" -w ws -t track -e` does the same for a new task, starting from an empty buffer —
+but the editor is **never implied** there, because `stx add "quick note"` has to stay a one-liner.
+`--desc` and `-e` are mutually exclusive.
+
+`stx meta set --task 42 config -e` edits a metadata value. Two modes, matching how the value is read
+back: by default the buffer is **pretty-printed JSON** (`.json`) and must still parse as JSON on
+save — a typo becoming one enormous string would be a nasty surprise — while `--string` edits the
+**raw text** (`.md`) and stores it verbatim, which is the sane way to write a long note. Pass a
+value or `-e`, not both.
+
 Save and close and the text is written (one trailing newline trimmed); close without touching it and
-stx prints `unchanged #42` and writes nothing. An emptied buffer clears the description. If the
+stx prints `unchanged #42` (or `unchanged <key>`) and writes nothing. An emptied buffer clears the description. If the
 editor exits non-zero — or the daemon rejects the write — the temp file is **kept** and its path is
 printed, so a long description is never lost.
 
@@ -175,6 +185,13 @@ auto-flagging. Set `STX_EDITOR` to take full control:
 export STX_EDITOR="zed -n -w"      # or: code -n -w
 ```
 
+```bash
+stx edit 42                                  # description in a new zed window
+stx add "write the RFC" -w auth -t build -e  # compose the description as you create the task
+stx meta set --task 42 config -e             # edit the JSON value
+stx meta set --task 42 notes -e --string     # edit a long note as raw text
+```
+
 ## Interactive helpers
 
 Two conveniences that surface live daemon data so you never hand-copy an id — both
@@ -192,6 +209,12 @@ subcommands (`meta`, `status`, `kind`, `archive` types) pick the sub/target firs
 the command as built so far on its border. The assembled `stx …` is printed for a `run? [Y/n]`
 confirm, then executed. fzf drives everything from inside the binary (via `os/exec`) — no shell
 wrapper.
+
+Because those argument prompts are **single-line**, anywhere the answer is free text the builder
+offers **`$EDITOR`** instead: `edit` asks "editor or fields?" up front, `add` lists
+`$EDITOR (description)` among its optional extras, and `meta set` offers it in place of typing the
+value. Picking it just adds `-e` to the assembled command, so what runs is a normal `stx …` you
+could have typed.
 
 Non-interactive (piped or scripted) `stx` prints help instead; without fzf on PATH the builder
 prints an install hint and exits cleanly.
