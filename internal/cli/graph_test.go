@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRenderGraphDot(t *testing.T) {
 	nodes := []graphNode{
@@ -17,8 +20,32 @@ func TestRenderGraphDot(t *testing.T) {
   "16" -> "17";
   "17" -> "16" [style=dashed, label="relates_to"];
 }`
-	if got := renderGraphDot("ws", nodes, blocks, relates); got != want {
+	if got := renderGraphDot("ws", false, nodes, blocks, relates); got != want {
 		t.Fatalf("dot mismatch:\n--want--\n%s\n--got--\n%s", want, got)
+	}
+}
+
+func TestRenderGraphDotVertical(t *testing.T) {
+	nodes := []graphNode{{ID: 1, Title: "a", Status: "Backlog"}}
+	if got := renderGraphDot("ws", false, nodes, nil, nil); !strings.Contains(got, "rankdir=LR;") {
+		t.Fatalf("default should be LR:\n%s", got)
+	}
+	if got := renderGraphDot("ws", true, nodes, nil, nil); !strings.Contains(got, "rankdir=TB;") {
+		t.Fatalf("--vertical should be TB:\n%s", got)
+	}
+}
+
+func TestRenderFormat(t *testing.T) {
+	cases := []struct{ explicit, out, want string }{
+		{"png", "g.svg", "png"}, // explicit wins over extension
+		{"", "g.svg", "svg"},
+		{"", "g.PNG", "png"}, // extension lower-cased
+		{"", "noext", "svg"}, // fallback
+	}
+	for _, c := range cases {
+		if got := renderFormat(c.explicit, c.out); got != c.want {
+			t.Errorf("renderFormat(%q,%q)=%q want %q", c.explicit, c.out, got, c.want)
+		}
 	}
 }
 

@@ -55,9 +55,14 @@ the single source for the command list. In short:
 - **Metadata:** `meta {ls|get|set|del} (--task <id> | -w <ws> [--track <t>]) [key] [value]` —
   free-form JSON key/values on a task, workspace, or track (`set` parses the value as JSON,
   falling back to a string; `--string` forces a literal string)
-- **Graph:** `graph -w <ws> [-t <track>] [--blocks-only]` — emit the task graph as Graphviz DOT
-  on stdout (`blocks` solid, `relates_to` dashed; done nodes filled). Pipe to `dot`:
-  `stx graph -w auth | dot -Tsvg -o auth.svg`. `--json` emits `{nodes, blocks, relates}` instead.
+- **Graph:** `graph -w <ws> [-t <track>] [--blocks-only] [--vertical] [-o <file>] [--format <fmt>]`
+  — emit the task graph as Graphviz DOT on stdout (`blocks` solid, `relates_to` dashed; done nodes
+  filled), left-to-right unless `--vertical` (top-to-bottom). Pipe to `dot`
+  (`stx graph -w auth | dot -Tsvg -o auth.svg`), or render directly with `-o` (needs Graphviz
+  `dot` on PATH): `stx graph -w auth -o auth.svg` / `-o auth.png` — the format is inferred from the
+  extension, or forced with `--format`. `--json` emits `{nodes, blocks, relates}` instead
+  (mutually exclusive with `-o`). Seed a throwaway db and render samples with
+  `scripts/graph_demo.sh`.
 - **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
