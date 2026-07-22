@@ -55,10 +55,10 @@ func TestRenderTree(t *testing.T) {
 	}}
 	sn := map[int64]string{1: "Backlog"}
 	want := "gophase1 (#2)\n" +
-		"  ▸ build (#3)\n" +
-		"    - #2 P2 [Backlog] design schema\n" +
-		"    ▫ api (#4)\n" +
-		"      - #5    [Backlog] api handler"
+		"└── ▸ build (#3)\n" +
+		"    ├── #2 P2 [Backlog] design schema\n" +
+		"    └── ▫ api (#4)\n" +
+		"        └── #5    [Backlog] api handler"
 	if got := renderTree(ws, blocks, sn); got != want {
 		t.Fatalf("tree mismatch:\n--want--\n%q\n--got--\n%q", want, got)
 	}
@@ -66,7 +66,36 @@ func TestRenderTree(t *testing.T) {
 
 func TestRenderTreeEmpty(t *testing.T) {
 	got := renderTree(api.Workspace{ID: 9, Name: "empty"}, nil, nil)
-	if got != "empty (#9)\n  (empty)" {
+	if got != "empty (#9)\n(empty)" {
 		t.Fatalf("empty tree: %q", got)
+	}
+}
+
+// TestRenderTreeBranches exercises the non-last child paths: a ├── connector and the
+// │ continuation prefix under a segment that still has a sibling below it.
+func TestRenderTreeBranches(t *testing.T) {
+	root := int64(1)
+	ws := api.Workspace{ID: 1, Name: "w"}
+	blocks := []trackBlock{{
+		Track: api.Track{ID: 1, Name: "t"},
+		Segments: []api.Segment{
+			{ID: 1, IsRoot: true},
+			{ID: 2, Name: "api", ParentSegmentID: &root},  // non-last sibling → ├──, │ continuation
+			{ID: 3, Name: "docs", ParentSegmentID: &root}, // last sibling → └──, gap continuation
+		},
+		Tasks: []api.Task{
+			{ID: 10, Title: "a", SegmentID: 2, StatusID: 1},
+			{ID: 11, Title: "b", SegmentID: 3, StatusID: 1},
+		},
+	}}
+	sn := map[int64]string{1: "S"}
+	want := "w (#1)\n" +
+		"└── ▸ t (#1)\n" +
+		"    ├── ▫ api (#2)\n" +
+		"    │   └── #10    [S] a\n" +
+		"    └── ▫ docs (#3)\n" +
+		"        └── #11    [S] b"
+	if got := renderTree(ws, blocks, sn); got != want {
+		t.Fatalf("branch tree mismatch:\n--want--\n%q\n--got--\n%q", want, got)
 	}
 }

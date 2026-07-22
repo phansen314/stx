@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # stx launcher — runs the Go CLI (bin/stx-go), building it on first use if missing.
-# The Python CLI is kept as the reference/oracle and is available as `bin/stx-py`.
 # Symlink this onto your PATH if you like: ln -s "$PWD/bin/stx" ~/.local/bin/stx
 set -euo pipefail
 self="$(readlink -f "${BASH_SOURCE[0]}")"

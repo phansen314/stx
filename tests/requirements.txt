@@ -1,7 +1,0 @@
-# Test deps for the Python client layer. Install into your env:
-#   pip install -r tests/requirements.txt
-# then run:  python -m pytest tests/
-pytest>=8.0
-pytest-cov>=6.0
-requests
-# textual is optional — test_tui_explain.py importorskips it.

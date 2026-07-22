@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `relates_to` dashed, done nodes filled; `-t` to scope, `--blocks-only`, `--json`). Backed by
   a new bulk read endpoint `GET /workspaces/{id}/edges` returning all live edges in one call.
 
+### Changed
+
+- **`stx tree`** now renders a linux-`tree`-style hierarchy with `├── └── │` branch
+  connectors (was a flat 2-space outline). Track/segment labels keep their `▸`/`▫` type glyphs;
+  `--json` output is unchanged.
+
+### Removed
+
+- **Python TUI and Python reference/oracle CLI.** The Go CLI is now the sole `stx` client (a
+  strict superset: fzf builder, multi-shell dynamic completion, Graphviz graph rendering). Deleted
+  `tui/`, `cli/`, `stxc/`, the Python `tests/` suite, `scripts/dev_sim.py`/`clisim/`,
+  `scripts/parity.sh`, `bin/stx-py`, and `pyproject.toml`. The live kanban board is replaced by the
+  upgraded `stx tree` + `stx next` frontier.
+
 ## [3.0.0] — 2026-07-13
 
 Complete rewrite. stx is now a **local loopback task daemon** written in Kotlin with a Python

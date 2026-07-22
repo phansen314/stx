@@ -101,18 +101,38 @@ type trackBlock struct {
 	Tasks    []api.Task
 }
 
-// renderTree mirrors render.tree: root-segment tasks hang directly under the track (depth 2),
-// nested segments recurse. The root segment itself is not printed (pure filing anchor).
+// tree-drawing glyphs (linux `tree` style): branch connectors and continuation prefixes.
+const (
+	treeTee  = "├── " // a non-last child
+	treeEll  = "└── " // the last child
+	treePipe = "│   " // ancestor that has more siblings below
+	treeGap  = "    " // ancestor that was the last child
+)
+
+// renderTree draws a workspace as a linux-`tree`-style hierarchy with ├── └── │ connectors.
+// Each node's children are its tasks first, then its child segments, so the last of those gets
+// └──. The root segment itself is not printed (pure filing anchor): its tasks + child segments
+// hang directly under the track. Track/segment labels keep a small ▸/▫ type glyph.
 func renderTree(ws api.Workspace, blocks []trackBlock, sn map[int64]string) string {
 	lines := []string{fmt.Sprintf("%s (#%d)", ws.Name, ws.ID)}
 
-	taskLine := func(t api.Task, depth int) string {
-		return fmt.Sprintf("%s- #%d %s [%s] %s",
-			strings.Repeat("  ", depth), t.ID, prio(t.Priority), statusName(sn, t.StatusID), t.Title)
+	taskLabel := func(t api.Task) string {
+		return fmt.Sprintf("#%d %s [%s] %s", t.ID, prio(t.Priority), statusName(sn, t.StatusID), t.Title)
+	}
+	conn := func(last bool) string {
+		if last {
+			return treeEll
+		}
+		return treeTee
+	}
+	cont := func(prefix string, last bool) string {
+		if last {
+			return prefix + treeGap
+		}
+		return prefix + treePipe
 	}
 
-	for _, b := range blocks {
-		lines = append(lines, fmt.Sprintf("  ▸ %s (#%d)", b.Track.Name, b.Track.ID))
+	for ti, b := range blocks {
 		byParent := map[int64][]api.Segment{}
 		var root *api.Segment
 		for i := range b.Segments {
@@ -129,28 +149,31 @@ func renderTree(ws api.Workspace, blocks []trackBlock, sn map[int64]string) stri
 			tasksBySeg[t.SegmentID] = append(tasksBySeg[t.SegmentID], t)
 		}
 
-		var emitSeg func(seg api.Segment, depth int)
-		emitSeg = func(seg api.Segment, depth int) {
-			lines = append(lines, fmt.Sprintf("%s▫ %s (#%d)", strings.Repeat("  ", depth), seg.Name, seg.ID))
-			for _, child := range byParent[seg.ID] {
-				emitSeg(child, depth+1)
+		// emitChildren draws a node's tasks (first) then child segments (last), under prefix.
+		var emitChildren func(segID int64, prefix string)
+		emitChildren = func(segID int64, prefix string) {
+			tasks := tasksBySeg[segID]
+			segs := byParent[segID]
+			n := len(tasks) + len(segs)
+			for i, t := range tasks {
+				lines = append(lines, prefix+conn(i == n-1)+taskLabel(t))
 			}
-			for _, t := range tasksBySeg[seg.ID] {
-				lines = append(lines, taskLine(t, depth+1))
+			for j := range segs {
+				s := segs[j]
+				last := len(tasks)+j == n-1
+				lines = append(lines, fmt.Sprintf("%s%s▫ %s (#%d)", prefix, conn(last), s.Name, s.ID))
+				emitChildren(s.ID, cont(prefix, last))
 			}
 		}
 
+		trackLast := ti == len(blocks)-1
+		lines = append(lines, fmt.Sprintf("%s▸ %s (#%d)", conn(trackLast), b.Track.Name, b.Track.ID))
 		if root != nil {
-			for _, t := range tasksBySeg[root.ID] {
-				lines = append(lines, taskLine(t, 2))
-			}
-			for _, child := range byParent[root.ID] {
-				emitSeg(child, 2)
-			}
+			emitChildren(root.ID, cont("", trackLast))
 		}
 	}
 	if len(lines) == 1 {
-		lines = append(lines, "  (empty)")
+		lines = append(lines, "(empty)")
 	}
 	return strings.Join(lines, "\n")
 }

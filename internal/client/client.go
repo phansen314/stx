@@ -1,4 +1,4 @@
-// Package client is the stx daemon wire client — the Go equivalent of Python's stxc.
+// Package client is the stx daemon wire client.
 //
 // One core method (call) does HTTP + JSON + the {error,message} envelope; typed errors
 // (APIError, ConnError) let callers match on the daemon's error variant (e.g. the CAS

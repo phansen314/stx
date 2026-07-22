@@ -159,7 +159,7 @@ class StxService {
             parent.id
         } else {
             // No explicit parent → nest under the track's synthetic root, mirroring createTask. Without
-            // this the row got a NULL parent and the TUI tree (which descends only from the root) hid it.
+            // this the row got a NULL parent and the `tree` view (which descends only from the root) hid it.
             SegmentRepo.rootOf(c, track.id)?.id ?: raise(StxError.NotFound("segment", track.id))
         }
         val id = SegmentRepo.insert(c, track.workspaceId, track.id, parentId, cmd.name, isRoot = false).bind()

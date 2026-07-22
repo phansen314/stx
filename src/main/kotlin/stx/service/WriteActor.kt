@@ -41,7 +41,7 @@ class WriteActor(
 
     /**
      * Monotonic change token bumped once per committed mutation. In-memory only: a poll client
-     * (the TUI) compares by inequality, so a daemon restart resetting this to the seed just reads
+     * compares by inequality, so a daemon restart resetting this to the seed just reads
      * as "something changed" and triggers one harmless reload. The durable cross-restart cursor
      * remains deferred (schema.sql) until a subscriber needs stronger guarantees.
      */

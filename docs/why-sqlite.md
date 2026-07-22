@@ -84,7 +84,7 @@ surgery.
 ### 5. Cheap change detection
 
 `/changes` returns one poll token (a monotonic write `seq` plus the schema version).
-The TUI and agents poll a single integer instead of re-scanning the whole folder tree
+Clients and agents poll a single integer instead of re-scanning the whole folder tree
 on every refresh.
 
 ---
@@ -92,8 +92,8 @@ on every refresh.
 ## The tree/viewing point specifically
 
 "VSCode gives the tree and the viewing experience" — true, but the tree is table
-stakes, not the value. The stx TUI's worth is the **kanban board filtered to the ready
-frontier** and moving a task through its **status state machine** (`[` / `]`). A file
+stakes, not the value. stx's worth is the **`next` frontier filtered to ready tasks**
+and moving a task through its **status state machine** (`stx mv`). A file
 tree cannot show a ready set, cannot move a task along a status DAG, and cannot apply
 the `live_task` visibility predicate that hides archived-but-present rows. The tree is
 the cheap part; the graph query is the product.
