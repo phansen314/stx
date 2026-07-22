@@ -74,9 +74,12 @@ t8=$("$STX" add "email invoice"      -w "$W" -s "$invoicing" --json | id)
 echo "--- DOT (stdout) ---"
 "$STX" graph -w "$W"
 echo "--- render ---"
-"$STX" graph -w "$W"            -o "$OUTDIR/graph.svg"
-"$STX" graph -w "$W"            -o "$OUTDIR/graph.png"
-"$STX" graph -w "$W" --vertical -o "$OUTDIR/graph-vertical.svg"
-"$STX" graph -w "$W" --blocks-only --vertical -o "$OUTDIR/graph-blocks.png"
+# bare name + format flag → the extension is appended for you (graph → graph.svg / graph.png)
+"$STX" graph -w "$W"            -o "$OUTDIR/graph" --svg
+"$STX" graph -w "$W"            -o "$OUTDIR/graph" --png
+"$STX" graph -w "$W" --vertical -o "$OUTDIR/graph-vertical" --svg
+"$STX" graph -w "$W" --blocks-only --vertical -o "$OUTDIR/graph-blocks" --png
+# a typed extension still works when you'd rather be explicit
+"$STX" graph -w "$W"            -o "$OUTDIR/graph.pdf"
 echo "--- output ---"
 ls -la "$OUTDIR"

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -325,7 +324,7 @@ func buildGraph(c *client.Client) ([]string, error) {
 		"track\tscope to a track (-t)",
 		"blocks-only\tomit relates_to edges",
 		"vertical\ttop-to-bottom layout",
-		"out\trender to a file (-o)",
+		"out\trender to an image file (-o)",
 	}, fzfOpts{prompt: "options> ", header: "building:  stx graph -w " + ws.Name + " …"})
 	if err != nil {
 		if errors.Is(err, errPickCancelled) {
@@ -351,19 +350,16 @@ func buildGraph(c *client.Client) ([]string, error) {
 		argv = append(argv, "--vertical")
 	}
 	if sel["out"] {
-		out, err := promptRequired("out file (e.g. graph.svg)> ")
+		// Bare name, no extension — the format flag supplies it (graph → graph.png).
+		out, err := promptRequired("out file name (no extension)> ")
 		if err != nil {
 			return nil, err
 		}
-		argv = append(argv, "-o", out)
-		// The extension picks the format; only ask when the path has none (e.g. `mygraph`).
-		if filepath.Ext(out) == "" {
-			f, err := pickOne("format> ", "building:  stx graph … -o "+out+" --format …", "svg", "png", "pdf")
-			if err != nil {
-				return nil, err
-			}
-			argv = append(argv, "--format", f)
+		f, err := pickOne("format> ", "building:  stx graph … -o "+out+" …", "svg", "png", "pdf")
+		if err != nil {
+			return nil, err
 		}
+		argv = append(argv, "-o", out, "--"+f)
 	}
 	return argv, nil
 }

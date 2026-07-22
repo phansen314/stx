@@ -29,8 +29,8 @@ type graphPayload struct {
 }
 
 func newGraphCmd() *cobra.Command {
-	var wsFlag, trackFlag, outFlag, formatFlag string
-	var blocksOnly, vertical bool
+	var wsFlag, trackFlag, outFlag string
+	var blocksOnly, vertical, svg, png, pdf bool
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "emit the task graph as Graphviz DOT (pipe to `dot`, or render with -o)",
@@ -127,18 +127,18 @@ func newGraphCmd() *cobra.Command {
 				if flagJSON {
 					return errors.New("-o/--out and --json are mutually exclusive")
 				}
-				format, err := renderFormat(formatFlag, outFlag)
+				outPath, format, err := resolveGraphOutput(outFlag, svg, png, pdf)
 				if err != nil {
 					return err
 				}
-				if err := renderWithDot(dotSrc, format, outFlag); err != nil {
+				if err := renderWithDot(dotSrc, format, outPath); err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "rendered %s (%s)\n", outFlag, format)
+				fmt.Fprintf(cmd.OutOrStdout(), "rendered %s (%s)\n", outPath, format)
 				return nil
 			}
-			if formatFlag != "" {
-				return errors.New("--format only applies with -o/--out")
+			if svg || png || pdf {
+				return errors.New("--svg/--png/--pdf apply only with -o/--out")
 			}
 			if flagJSON {
 				return printJSON(cmd, graphPayload{Workspace: ws.Name, Nodes: ordered, Blocks: blocks, Relates: relates})
@@ -151,26 +151,45 @@ func newGraphCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&trackFlag, "track", "t", "", "scope to a track (name or id)")
 	cmd.Flags().BoolVar(&blocksOnly, "blocks-only", false, "omit relates_to edges")
 	cmd.Flags().BoolVar(&vertical, "vertical", false, "top-to-bottom layout (default is left-to-right)")
-	cmd.Flags().StringVarP(&outFlag, "out", "o", "", "render to this file via `dot` (e.g. graph.svg); format inferred from the extension")
-	cmd.Flags().StringVar(&formatFlag, "format", "", "output format for -o (svg|png|pdf|…); overrides the file extension")
+	cmd.Flags().StringVarP(&outFlag, "out", "o", "", "render to this file via `dot`; give a bare name (e.g. graph) and pick a format flag")
+	cmd.Flags().BoolVar(&svg, "svg", false, "render -o as SVG (default)")
+	cmd.Flags().BoolVar(&png, "png", false, "render -o as PNG")
+	cmd.Flags().BoolVar(&pdf, "pdf", false, "render -o as PDF")
+	cmd.MarkFlagsMutuallyExclusive("svg", "png", "pdf")
 	return cmd
 }
 
-// renderFormat picks the dot -T format from --format and/or the file extension. `dot` ignores the
-// filename, so a mismatch (e.g. -o graph.png --format svg) would write svg bytes into a .png file:
-// reject it. With only one signal that one wins; with neither, default svg.
-func renderFormat(explicit, outPath string) (string, error) {
-	explicit = strings.ToLower(explicit)
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(outPath), "."))
+// graphFormats are the formats the --svg/--png/--pdf flags cover — and the only extensions
+// accepted on a bare `-o` path (dot supports more, but keeping the set tight avoids surprises).
+var graphFormats = map[string]bool{"svg": true, "png": true, "pdf": true}
+
+// resolveGraphOutput decides the dot -T format and the final output path. A format flag always
+// wins: it sets the format and its extension replaces whatever the user typed on -o (so the file
+// is never mislabeled and nobody has to remember extensions). With no flag, a typed extension is
+// used but must be one we support; an unsupported extension is a clean error, and no extension
+// defaults to svg. The flags are mutually exclusive (enforced by cobra), so at most one is set.
+func resolveGraphOutput(out string, svg, png, pdf bool) (outPath, format string, err error) {
+	flag := ""
 	switch {
-	case explicit != "" && ext != "" && explicit != ext:
-		return "", fmt.Errorf("format conflict: %q implies %q but --format is %q — drop one", outPath, ext, explicit)
-	case explicit != "":
-		return explicit, nil
-	case ext != "":
-		return ext, nil
+	case svg:
+		flag = "svg"
+	case png:
+		flag = "png"
+	case pdf:
+		flag = "pdf"
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(out), "."))
+	if flag != "" {
+		base := strings.TrimSuffix(out, filepath.Ext(out)) // drop whatever extension was typed
+		return base + "." + flag, flag, nil
+	}
+	switch {
+	case ext == "":
+		return out + ".svg", "svg", nil
+	case graphFormats[ext]:
+		return out, ext, nil
 	default:
-		return "svg", nil
+		return "", "", fmt.Errorf("unsupported output extension %q — use .svg/.png/.pdf, or pass --svg/--png/--pdf", "."+ext)
 	}
 }
 

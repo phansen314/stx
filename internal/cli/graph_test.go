@@ -35,29 +35,38 @@ func TestRenderGraphDotVertical(t *testing.T) {
 	}
 }
 
-func TestRenderFormat(t *testing.T) {
+func TestResolveGraphOutput(t *testing.T) {
 	cases := []struct {
-		explicit, out, want string
-		wantErr             bool
+		name              string
+		out               string
+		svg, png, pdf     bool
+		wantPath, wantFmt string
+		wantErr           bool
 	}{
-		{explicit: "svg", out: "g.svg", want: "svg"}, // agree
-		{out: "g.svg", want: "svg"},
-		{out: "g.PNG", want: "png"},                    // extension lower-cased
-		{out: "noext", want: "svg"},                    // no extension → default
-		{explicit: "png", out: "g", want: "png"},       // no extension → --format used
-		{explicit: "svg", out: "g.png", wantErr: true}, // conflict
+		{name: "flag appends", out: "report", png: true, wantPath: "report.png", wantFmt: "png"},
+		{name: "no flag defaults svg", out: "report", wantPath: "report.svg", wantFmt: "svg"},
+		{name: "extension used", out: "report.png", wantPath: "report.png", wantFmt: "png"},
+		{name: "flag overrides extension", out: "report.svg", png: true, wantPath: "report.png", wantFmt: "png"},
+		{name: "flag discards bogus ext", out: "report.jpeg", png: true, wantPath: "report.png", wantFmt: "png"},
+		{name: "unsupported ext no flag", out: "report.jpeg", wantErr: true},
+		{name: "PNG ext lower-cased", out: "report.PNG", wantPath: "report.PNG", wantFmt: "png"},
 	}
 	for _, c := range cases {
-		got, err := renderFormat(c.explicit, c.out)
-		if c.wantErr {
-			if err == nil {
-				t.Errorf("renderFormat(%q,%q) expected conflict error, got %q", c.explicit, c.out, got)
+		t.Run(c.name, func(t *testing.T) {
+			path, format, err := resolveGraphOutput(c.out, c.svg, c.png, c.pdf)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got (%q,%q)", path, format)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil || got != c.want {
-			t.Errorf("renderFormat(%q,%q)=(%q,%v) want %q", c.explicit, c.out, got, err, c.want)
-		}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if path != c.wantPath || format != c.wantFmt {
+				t.Fatalf("got (%q,%q) want (%q,%q)", path, format, c.wantPath, c.wantFmt)
+			}
+		})
 	}
 }
 
