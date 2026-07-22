@@ -92,6 +92,10 @@ track, archive cascade (archiving a task archives its incident edges), immutable
 - **Stateless CLI — always pass `-w <name|id>`.** No stored "current workspace"; concurrent
   agents/sessions would clobber shared state. Global-id commands (`show`, `mv`, `edit`,
   `done`, `archive`) don't need `-w`. `--json` for machine output.
+- **Interactive helpers (Go-only).** `stx pick` — fzf command builder driving live pickers from
+  `os/exec` (`internal/cli/pick.go`); `eval "$(stx completion bash)"` — cobra completion wired to
+  live ids/workspaces/statuses (`internal/cli/complete.go`). Both no-op gracefully when
+  fzf/daemon absent. (Prior bash-embedded attempts were removed in 5196fed as flaky.)
 - **Single write-actor.** All mutations drain one `Channel<Command>` coroutine, each in its
   own transaction, in submission order; reads run concurrently against WAL.
 - **Loopback binding is the whole security model** — no auth. Structured JSON error envelope:

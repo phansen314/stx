@@ -62,3 +62,31 @@ the single source for the command list. In short:
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
 retry on conflict). Illegal status moves print the legal targets.
+
+## Interactive helpers (Go CLI)
+
+Two conveniences that surface live daemon data so you never hand-copy an id — both are Go-only and
+degrade gracefully when their dependency (fzf / the daemon) is absent.
+
+### `stx pick` — guided fzf builder
+
+`stx pick` walks you through assembling a command: an fzf menu of the daily-loop commands (`add`,
+`mv`, `done`, `edit`, `show`, `next`, `tree`), then live pickers for each argument — workspace,
+task (`#id [status] title`, with `stx show` in the preview pane), and for `mv` **only the legal
+next statuses** for the chosen task. Each pane's header shows the command as built so far. The
+assembled `stx …` is printed for a `run? [Y/n]` confirm, then executed. fzf drives everything from
+inside the binary (via `os/exec`) — no shell wrapper. Without fzf on PATH it prints an install hint
+and exits cleanly.
+
+### Dynamic shell completion
+
+Cobra's stock completion, wired to live data:
+
+```bash
+eval "$(stx completion bash)"      # or: zsh | fish  (add to ~/.bashrc)
+```
+
+`stx show <TAB>` / `stx mv <TAB>` offer real task ids; `stx mv <id> <TAB>` offers the legal target
+statuses; `stx add -w <TAB>` offers workspaces, `--track`/`--status`/`--kind <TAB>` offer that
+workspace's values. Completion dials fresh each time and offers nothing (never errors) when the
+daemon is down.
