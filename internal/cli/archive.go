@@ -14,8 +14,8 @@ var archivePath = map[string]string{
 func newArchiveCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "archive <task|segment|track|workspace> <id>",
-		Short: "archive an entity",
+		Use:   "archive <task|segment|track|workspace> <id|->",
+		Short: "archive an entity (`-` reads ids from stdin)",
 		Args:  cobra.ExactArgs(2),
 		// completion (types for arg0, live ids-of-type for arg1) is wired in registerCompletions;
 		// no static ValidArgs — cobra ignores ValidArgsFunction when ValidArgs is also set.
@@ -25,7 +25,7 @@ func newArchiveCmd() *cobra.Command {
 			if !ok {
 				return fmt.Errorf("invalid type %q — one of task|segment|track|workspace", typ)
 			}
-			id, err := parseID(args[1])
+			ids, err := readIDs(cmd, args[1])
 			if err != nil {
 				return err
 			}
@@ -36,14 +36,19 @@ func newArchiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.Archive(path, id); err != nil {
-				return err
-			}
-			if flagJSON {
-				return printJSON(cmd, map[string]any{"archived": typ, "id": id})
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "archived %s #%d\n", typ, id)
-			return nil
+			var archived []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				if err := c.Archive(path, id); err != nil {
+					return err
+				}
+				archived = append(archived, id)
+				res = append(res, map[string]any{"archived": typ, "id": id})
+				lines = append(lines, fmt.Sprintf("archived %s #%d", typ, id))
+				return nil
+			})
+			return emitBatch(cmd, archived, res, lines, runErr)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the cascade for track/workspace")

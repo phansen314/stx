@@ -156,6 +156,9 @@ func newGraphCmd() *cobra.Command {
 			for _, id := range ids {
 				ordered = append(ordered, nodes[id])
 			}
+			if len(ordered) == 0 {
+				markEmpty() // a graph with no nodes is an empty result (exit 1); the DOT still prints
+			}
 			dotSrc := renderGraphDot(ws.Name, vertical, cluster, ordered, blocks, relates, style, segments)
 
 			// -o renders the DOT to an image file via Graphviz; otherwise emit DOT / JSON.

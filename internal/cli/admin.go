@@ -24,7 +24,7 @@ func newWsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("workspace #%d  %s", w.ID, w.Name), w)
+			return emit(cmd, []int64{w.ID}, w, fmt.Sprintf("workspace #%d  %s", w.ID, w.Name))
 		},
 	}
 	ws.AddCommand(create)
@@ -49,7 +49,7 @@ func newTrackCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("track #%d  %s", tr.ID, tr.Name), tr)
+			return emit(cmd, []int64{tr.ID}, tr, fmt.Sprintf("track #%d  %s", tr.ID, tr.Name))
 		},
 	}
 	addWsFlag(create, &wsFlag)
@@ -86,7 +86,7 @@ func newSegmentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("segment #%d  %s", seg.ID, seg.Name), seg)
+			return emit(cmd, []int64{seg.ID}, seg, fmt.Sprintf("segment #%d  %s", seg.ID, seg.Name))
 		},
 	}
 	addWsFlag(create, &wsFlag)
@@ -116,10 +116,11 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, statuses)
+			if len(statuses) == 0 {
+				markEmpty()
 			}
-			out := cmd.OutOrStdout()
+			ids := make([]int64, 0, len(statuses))
+			lines := make([]string, 0, len(statuses))
 			for _, s := range statuses {
 				tag := ""
 				if s.IsDefault {
@@ -128,9 +129,10 @@ func newStatusCmd() *cobra.Command {
 				if s.Terminal {
 					tag += " (terminal)"
 				}
-				fmt.Fprintf(out, "%4d  %s%s\n", s.ID, s.Name, tag)
+				ids = append(ids, s.ID)
+				lines = append(lines, fmt.Sprintf("%4d  %s%s", s.ID, s.Name, tag))
 			}
-			return nil
+			return emit(cmd, ids, statuses, joinLines(lines))
 		},
 	}
 	addWsFlag(list, &lsWs)
@@ -153,7 +155,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("status #%d  %s", s.ID, s.Name), s)
+			return emit(cmd, []int64{s.ID}, s, fmt.Sprintf("status #%d  %s", s.ID, s.Name))
 		},
 	}
 	addWsFlag(create, &newWs)
@@ -184,7 +186,8 @@ func newStatusCmd() *cobra.Command {
 			if err := c.SetDefaultStatus(ws.ID, s.ID); err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("default status → %s", s.Name), map[string]any{"default": s.Name})
+			return emit(cmd, []int64{s.ID}, map[string]any{"default": s.Name},
+				fmt.Sprintf("default status → %s", s.Name))
 		},
 	}
 	addWsFlag(setDefault, &defWs)
@@ -212,8 +215,8 @@ func newStatusCmd() *cobra.Command {
 			if err := c.ArchiveStatus(ws.ID, s.ID); err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("archived status %s", s.Name),
-				map[string]any{"archived": "status", "id": s.ID})
+			return emit(cmd, []int64{s.ID}, map[string]any{"archived": "status", "id": s.ID},
+				fmt.Sprintf("archived status %s", s.Name))
 		},
 	}
 	addWsFlag(archive, &arcWs)
@@ -241,7 +244,7 @@ func newKindCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("kind #%d  %s", k.ID, k.Name), k)
+			return emit(cmd, []int64{k.ID}, k, fmt.Sprintf("kind #%d  %s", k.ID, k.Name))
 		},
 	}
 	addWsFlag(create, &newWs)
@@ -269,8 +272,8 @@ func newKindCmd() *cobra.Command {
 			if err := c.ArchiveKind(ws.ID, k.ID); err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("archived kind %s", k.Name),
-				map[string]any{"archived": "kind", "id": k.ID})
+			return emit(cmd, []int64{k.ID}, map[string]any{"archived": "kind", "id": k.ID},
+				fmt.Sprintf("archived kind %s", k.Name))
 		},
 	}
 	addWsFlag(archive, &arcWs)
@@ -310,7 +313,7 @@ func newTransitionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return emitEntity(cmd, fmt.Sprintf("transition %s → %s", f.Name, t.Name), tr)
+			return emit(cmd, []int64{tr.ID}, tr, fmt.Sprintf("transition %s → %s", f.Name, t.Name))
 		},
 	}
 	addWsFlag(cmd, &wsFlag)

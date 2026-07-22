@@ -17,6 +17,16 @@ explicitly. This is deliberate: multiple Claude sessions and sub-agents run conc
 shared/implied context would clobber across them. Names or numeric ids work everywhere. Add `--json`
 to any command for machine-readable output; text is the compact default.
 
+## Composition — `-q`, `-`, exit codes
+
+- **`-q/--quiet`** prints ids only, one per line (`meta get -q` prints the bare value, `meta ls -q`
+  the keys). Mutually exclusive with `--json`. This is how you capture an id: `id=$(stx add … -q)`.
+- **`-`** in place of an id reads ids from stdin (`show`/`mv`/`edit`/`done`/`block`/`unblock`/
+  `relate`/`unrelate`/`archive`); `--desc -` and `meta set <key> -` read the text/JSON from stdin.
+  One `-` per command. A batch continues past a failing id and fails at the end.
+- **Exit codes follow grep:** 0 results, 1 empty result set (`ls`/`next`/`tree`/`meta ls`/`graph`),
+  2 error. So `if stx next -w ws -q >/dev/null; then …` means "is anything ready?".
+
 ## Commands
 
 | Command | What |
@@ -25,7 +35,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx tree -w <ws>` | whole workspace as a tree — the "orient me" view |
 | `stx next -w <ws> [-t <track>] [--limit N]` | ready tasks (frontier: unblocked, non-terminal) |
 | `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
-| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …]` | create task (`-s <segment-id>` instead of `-t`) |
+| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin) |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
 | `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k] [--clear-kind] [--due …]` | edit fields |
 | `stx done <id>` | move to the workspace's terminal status |
@@ -42,7 +52,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx transition -w <ws> --from <s> --to <s>` | allow a status transition |
 
 `mv`/`edit`/`done` handle the optimistic-lock `version` automatically (read-modify-write, one retry
-on conflict). Errors print as `error: <Variant>: …` with a non-zero exit.
+on conflict). Errors print as `error: <Variant>: …` on stderr and exit 2.
 
 ## Recipes
 
@@ -63,6 +73,11 @@ stx mv 42 in-progress
 ```
 stx done 42                       # 42 → terminal; anything blocked only by 42 now appears in `next`
 stx next -w auth-rewrite
+```
+
+**Clear a whole ready set (pipe ids, no copying):**
+```
+stx next -w auth-rewrite -t build -q | stx done -
 ```
 
 **Plan a small chunk:**

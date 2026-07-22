@@ -2,15 +2,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/phansen314/stx/internal/cli"
 )
 
-func main() {
-	if err := cli.NewRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, cli.FormatError(err))
-		os.Exit(1)
-	}
-}
+// Exit codes follow grep: 0 results, 1 empty result set, 2 error (see internal/cli/exit.go).
+func main() { os.Exit(cli.Run()) }

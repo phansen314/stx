@@ -7,10 +7,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// edgeRun parses the task id, dials, runs op, then emits the raw daemon response (--json) or the
-// fixed status line. op returns (rawResponse, textLine, err).
+// edgeRun resolves the task id (or every id on stdin for `-`), dials, runs op per id, then emits
+// the raw daemon response (--json), the ids (-q), or the fixed status lines. op returns
+// (rawResponse, textLine, err).
 func edgeRun(cmd *cobra.Command, idArg string, op func(*client.Client, int64) (any, string, error)) error {
-	id, err := parseID(idArg)
+	ids, err := readIDs(cmd, idArg)
 	if err != nil {
 		return err
 	}
@@ -18,21 +19,26 @@ func edgeRun(cmd *cobra.Command, idArg string, op func(*client.Client, int64) (a
 	if err != nil {
 		return err
 	}
-	res, text, err := op(c, id)
-	if err != nil {
-		return err
-	}
-	if flagJSON {
-		return printJSON(cmd, res)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), text)
-	return nil
+	var linked []int64
+	var res []any
+	var lines []string
+	runErr := runIDs(cmd, ids, func(id int64) error {
+		r, text, err := op(c, id)
+		if err != nil {
+			return err
+		}
+		linked = append(linked, id)
+		res = append(res, r)
+		lines = append(lines, text)
+		return nil
+	})
+	return emitBatch(cmd, linked, res, lines, runErr)
 }
 
 func newBlockCmd() *cobra.Command {
 	var on int64
 	cmd := &cobra.Command{
-		Use:   "block <id> --on <blocker-id>",
+		Use:   "block <id|-> --on <blocker-id>",
 		Short: "mark a task blocked by another",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,7 +56,7 @@ func newBlockCmd() *cobra.Command {
 func newUnblockCmd() *cobra.Command {
 	var on int64
 	cmd := &cobra.Command{
-		Use:   "unblock <id> --on <blocker-id>",
+		Use:   "unblock <id|-> --on <blocker-id>",
 		Short: "remove a blocks edge (mirror of `block`)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -69,7 +75,7 @@ func newRelateCmd() *cobra.Command {
 	var to int64
 	var kind string
 	cmd := &cobra.Command{
-		Use:   "relate <id> --to <id> --kind <k>",
+		Use:   "relate <id|-> --to <id> --kind <k>",
 		Short: "add a relation between tasks",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -90,7 +96,7 @@ func newUnrelateCmd() *cobra.Command {
 	var to int64
 	var kind string
 	cmd := &cobra.Command{
-		Use:   "unrelate <id> --to <id> --kind <k>",
+		Use:   "unrelate <id|-> --to <id> --kind <k>",
 		Short: "remove a relation (mirror of `relate`)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -126,15 +132,11 @@ func newRelateKindsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, map[string]any{"items": kinds})
+			if len(kinds) == 0 {
+				markEmpty()
+				return emitLines(cmd, nil, map[string]any{"items": kinds}, "(no relation kinds in use)")
 			}
-			out := "(no relation kinds in use)"
-			if len(kinds) > 0 {
-				out = joinLines(kinds)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), out)
-			return nil
+			return emitLines(cmd, kinds, map[string]any{"items": kinds}, joinLines(kinds))
 		},
 	}
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")

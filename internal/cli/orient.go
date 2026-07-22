@@ -36,22 +36,21 @@ func newLsCmd() *cobra.Command {
 				}
 				rows = append(rows, wsRow{ID: w.ID, Name: w.Name, Tracks: len(tr)})
 			}
-			if flagJSON {
-				return printJSON(cmd, rows)
-			}
-			out := cmd.OutOrStdout()
 			if len(rows) == 0 {
-				fmt.Fprintln(out, "(no workspaces)")
-				return nil
+				markEmpty()
+				return emit(cmd, nil, rows, "(no workspaces)")
 			}
+			ids := make([]int64, 0, len(rows))
+			lines := make([]string, 0, len(rows))
 			for _, r := range rows {
 				plural := "s"
 				if r.Tracks == 1 {
 					plural = ""
 				}
-				fmt.Fprintf(out, "%4d  %s  (%d track%s)\n", r.ID, r.Name, r.Tracks, plural)
+				ids = append(ids, r.ID)
+				lines = append(lines, fmt.Sprintf("%4d  %s  (%d track%s)", r.ID, r.Name, r.Tracks, plural))
 			}
-			return nil
+			return emit(cmd, ids, rows, joinLines(lines))
 		},
 	}
 }
@@ -93,15 +92,23 @@ func newNextCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, items) // bare array, verbatim wire items
+			if len(items) == 0 {
+				markEmpty()
+				return emit(cmd, nil, items, renderFrontier(items, nil))
+			}
+			ids := make([]int64, 0, len(items))
+			for _, i := range items {
+				ids = append(ids, i.ID)
+			}
+			if flagQuiet { // skip the status lookup nobody's going to see
+				return emit(cmd, ids, items, "")
 			}
 			sn, err := statusNames(c, ws.ID)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), renderFrontier(items, sn))
-			return nil
+			// --json stays a bare array of verbatim wire items
+			return emit(cmd, ids, items, renderFrontier(items, sn))
 		},
 	}
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
@@ -179,11 +186,12 @@ func newTreeCmd() *cobra.Command {
 				}
 				payloadTracks = append(payloadTracks, tt)
 			}
-			if flagJSON {
-				return printJSON(cmd, treePayload{Workspace: ws.Name, Tracks: payloadTracks})
+			ids := treeTaskIDs(blocks)
+			if len(blocks) == 0 && len(ids) == 0 {
+				markEmpty()
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), renderTree(ws, blocks, sn))
-			return nil
+			return emit(cmd, ids, treePayload{Workspace: ws.Name, Tracks: payloadTracks},
+				renderTree(ws, blocks, sn))
 		},
 	}
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")

@@ -178,6 +178,40 @@ func renderTree(ws api.Workspace, blocks []trackBlock, sn map[int64]string) stri
 	return strings.Join(lines, "\n")
 }
 
+// treeTaskIDs lists a workspace's task ids in the same order renderTree prints them (per track,
+// a segment's own tasks before its child segments, depth-first) — the `-q` view of `tree`.
+func treeTaskIDs(blocks []trackBlock) []int64 {
+	var ids []int64
+	for _, b := range blocks {
+		byParent := map[int64][]api.Segment{}
+		var rootID int64
+		for i := range b.Segments {
+			s := b.Segments[i]
+			if s.ParentSegmentID != nil {
+				byParent[*s.ParentSegmentID] = append(byParent[*s.ParentSegmentID], s)
+			}
+			if s.IsRoot {
+				rootID = s.ID
+			}
+		}
+		tasksBySeg := map[int64][]api.Task{}
+		for _, t := range b.Tasks {
+			tasksBySeg[t.SegmentID] = append(tasksBySeg[t.SegmentID], t)
+		}
+		var walk func(segID int64)
+		walk = func(segID int64) {
+			for _, t := range tasksBySeg[segID] {
+				ids = append(ids, t.ID)
+			}
+			for _, s := range byParent[segID] {
+				walk(s.ID)
+			}
+		}
+		walk(rootID)
+	}
+	return ids
+}
+
 // printJSON writes v as indented JSON (the --json escape hatch), matching Python's
 // json.dumps(..., indent=2).
 func printJSON(cmd *cobra.Command, v any) error {
@@ -189,13 +223,57 @@ func printJSON(cmd *cobra.Command, v any) error {
 	return err
 }
 
-// emitEntity prints a created entity as JSON (--json) or the given compact text line.
-func emitEntity(cmd *cobra.Command, text string, entity any) error {
+// emitLines is the single output funnel: -q prints the quiet lines (ids, keys, a bare value),
+// --json the raw entity, otherwise the human text. A command with nothing to say quietly passes
+// nil and prints nothing under -q (rule of silence).
+func emitLines(cmd *cobra.Command, quiet []string, entity any, text string) error {
+	out := cmd.OutOrStdout()
+	if flagQuiet {
+		for _, l := range quiet {
+			if _, err := fmt.Fprintln(out, l); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if flagJSON {
 		return printJSON(cmd, entity)
 	}
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), text)
+	_, err := fmt.Fprintln(out, text)
 	return err
+}
+
+// unwrapOne keeps single-target --json output identical to before batching existed: one id emits
+// the bare entity, a batch emits the array.
+func unwrapOne(xs []any) any {
+	if len(xs) == 1 {
+		return xs[0]
+	}
+	return xs
+}
+
+// emit is emitLines for the common case: the ids this command produced or acted on.
+func emit(cmd *cobra.Command, ids []int64, entity any, text string) error {
+	return emitLines(cmd, idLines(ids), entity, text)
+}
+
+func idLines(ids []int64) []string {
+	lines := make([]string, len(ids))
+	for i, id := range ids {
+		lines[i] = strconv.FormatInt(id, 10)
+	}
+	return lines
+}
+
+// emitBatch closes out a command that ran over ids from `-`: print whatever succeeded (nothing at
+// all if every id failed), then surface the batch failure.
+func emitBatch(cmd *cobra.Command, ids []int64, res []any, lines []string, runErr error) error {
+	if len(ids) > 0 {
+		if err := emit(cmd, ids, unwrapOne(res), joinLines(lines)); err != nil {
+			return err
+		}
+	}
+	return runErr
 }
 
 // parseID turns a positional id argument into an int64 (argparse type=int equivalent).

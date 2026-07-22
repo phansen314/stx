@@ -13,15 +13,26 @@ import (
 var (
 	flagBaseURL string
 	flagJSON    bool
+	flagQuiet   bool
 )
 
 // NewRootCmd assembles the full command tree. Phase 0: ls + edit.
 func NewRootCmd() *cobra.Command {
+	// invocation-scoped state (flag vars are reset by pflag as they re-register below)
+	emptyResult, stdinClaimed = false, ""
 	root := &cobra.Command{
 		Use:           "stx",
 		Short:         "stateless CLI over the stx daemon",
 		SilenceUsage:  true, // errors are ours to print; don't dump usage on RunE failure
 		SilenceErrors: true,
+		// Both flags claim stdout in incompatible ways; erroring beats silently picking one
+		// (same stance as graph's --json/-o check).
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			if flagJSON && flagQuiet {
+				return fmt.Errorf("--json and -q/--quiet are mutually exclusive")
+			}
+			return nil
+		},
 		// Bare `stx` in an interactive terminal launches the guided fzf builder (issue #54) — the
 		// same flow the old `stx pick` had, minus the typing. Non-interactive (piped/scripted) or an
 		// unrecognized command falls back to help / the usual "unknown command" error.
@@ -41,6 +52,8 @@ func NewRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&flagBaseURL, "base-url", def, "daemon URL")
 	root.PersistentFlags().BoolVar(&flagJSON, "json", false, "emit raw JSON instead of compact text")
+	root.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false,
+		"emit only ids (one per line) — pipe into another stx command")
 
 	root.AddCommand(
 		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(),

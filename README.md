@@ -43,7 +43,17 @@ running.
 ```
 
 Every workspace-scoped command takes `-w <name|id>` explicitly (nothing is stored, so concurrent
-sessions don't clobber each other). Full reference: [`docs/stx-cli.md`](docs/stx-cli.md).
+sessions don't clobber each other). It composes like any other unix tool: `-q` prints ids one per
+line, `-` reads ids (or a `--desc`/metadata value) from stdin, and exit codes follow grep —
+0 results, 1 empty, 2 error.
+
+```bash
+id=$(./bin/stx add "write migration" -w auth -t build -q)
+./bin/stx next -w auth -q | ./bin/stx done -           # finish everything ready
+./bin/stx add "post-mortem" -w auth -t build --desc - < notes.md
+```
+
+Full reference: [`docs/stx-cli.md`](docs/stx-cli.md).
 
 `bin/stx` runs the compiled Go client (`bin/stx-go`), **building it on first use** with
 `go build -o bin/stx-go ./cmd/stx` (needs Go 1.26+). Source lives in `cmd/stx` + `internal/cli`.

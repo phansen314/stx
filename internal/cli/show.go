@@ -1,18 +1,14 @@
 package cli
 
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 func newShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <id>",
-		Short: "task detail + edges",
+		Use:   "show <id|->",
+		Short: "task detail + edges (`-` reads ids from stdin)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			ids, err := readIDs(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -20,24 +16,32 @@ func newShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			detail, err := c.TaskDetail(id)
-			if err != nil {
-				return err
-			}
-			if flagJSON {
-				return printJSON(cmd, detail) // verbatim daemon shape {task, blocksIn, blocksOut, relates}
-			}
-			ws := detail.Task.WorkspaceID
-			sn, err := statusNames(c, ws)
-			if err != nil {
-				return err
-			}
-			kn, err := kindNames(c, ws)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), renderTaskDetail(detail, sn, kn))
-			return nil
+			var shown []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				detail, err := c.TaskDetail(id)
+				if err != nil {
+					return err
+				}
+				shown = append(shown, detail.Task.ID)
+				res = append(res, detail) // verbatim daemon shape {task, blocksIn, blocksOut, relates}
+				if flagJSON || flagQuiet {
+					return nil // the status/kind registries are only needed for the text render
+				}
+				ws := detail.Task.WorkspaceID
+				sn, err := statusNames(c, ws)
+				if err != nil {
+					return err
+				}
+				kn, err := kindNames(c, ws)
+				if err != nil {
+					return err
+				}
+				lines = append(lines, renderTaskDetail(detail, sn, kn))
+				return nil
+			})
+			return emitBatch(cmd, shown, res, lines, runErr)
 		},
 	}
 }

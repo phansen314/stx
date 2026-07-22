@@ -85,6 +85,11 @@ track, archive cascade (archiving a task archives its incident edges), immutable
 - **Stateless CLI — always pass `-w <name|id>`.** No stored "current workspace"; concurrent
   agents/sessions would clobber shared state. Global-id commands (`show`, `mv`, `edit`,
   `done`, `archive`) don't need `-w`. `--json` for machine output.
+- **Pipeline conventions (`internal/cli/stdio.go`, `exit.go`).** `-q/--quiet` prints ids one per
+  line (`--json` and `-q` are mutually exclusive); `-` in place of an id reads ids from stdin, and
+  `--desc -` / `meta set <key> -` read a value from stdin (one `-` per command). Exit codes follow
+  grep: **0** results, **1** empty result set, **2** error. So `stx next -w x -q | stx done -` and
+  `if stx next -w x -q >/dev/null` both work.
 - **Interactive helpers (Go-only).** Bare `stx` in an interactive terminal — fzf command builder
   driving live pickers from `os/exec` (`internal/cli/pick.go`, root `RunE`; non-tty/unknown-cmd
   falls back to help); `eval "$(stx completion bash)"` — cobra completion wired to live

@@ -17,7 +17,8 @@ gid()  { "$GO" "$@" --json | jq -r .id; }                # run a Go command, ret
 addid(){ "$GO" add "$1" "${@:2}" --json | jq -r .id; }
 
 command -v jq >/dev/null || { echo "need jq"; exit 1; }
-"$GO" ls >/dev/null 2>&1 || { echo "daemon unreachable — is it running?"; exit 1; }
+# exit 1 is "no workspaces yet" (grep convention), not a failure — only 2 means trouble
+"$GO" ls >/dev/null 2>&1; [ $? -le 1 ] || { echo "daemon unreachable — is it running?"; exit 1; }
 
 hr "0. scaffold a workspace — pure Go (ws / track / segment)"
 WID=$(gid ws new "$W")                           # capture id — archive needs it, not the name
@@ -89,7 +90,18 @@ g show "$A3"
 printf '\nuse the custom Backlog→Blocked transition created in §0b:\n'
 g mv "$A1" Blocked
 
-hr "8. error paths (each should print 'error: …' and exit 1)"
+hr '7b. unix composition — -q ids, `-` stdin, exit codes'
+printf '$ stx next -w %s -q            (ids only, one per line)\n' "$W"; "$GO" next -w "$W" -q
+printf '\n$ stx next -w %s -q | stx show -   (pipe the frontier into another command)\n' "$W"
+"$GO" next -w "$W" -q | "$GO" show -
+printf '\n$ stx add "from stdin" --desc -   (description read from stdin)\n'
+echo "written by the smoke script" | g add "from stdin" -w "$W" -t build --desc -
+printf '\nexit codes — 0 results / 1 empty / 2 error:\n'
+"$GO" next -w "$W" -q >/dev/null;                    printf '  next (has ready tasks) → %s\n' "$?"
+"$GO" meta ls --task "$A4" >/dev/null 2>&1;          printf '  meta ls (no keys set)  → %s\n' "$?"
+"$GO" next -w "$W" -t no-such-track >/dev/null 2>&1; printf '  next (bad track)       → %s\n' "$?"
+
+hr "8. error paths (each should print 'error: …' and exit 2)"
 g show 99999999                              # NotFound
 g mv "$A1" Nonsense                          # unknown status (resolve)
 g edit "$A1"                                 # nothing to edit

@@ -13,12 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`meta {ls|get|set|del}` on a task, workspace, or track; `set` value parses as JSON with a
   string fallback, `--string` forces a literal). Client-side read-modify-write over the CAS
   `edit_*` methods; no daemon change.
+- **Pipeline conventions — `-q`, `-`, grep exit codes.** `-q/--quiet` prints only the ids a
+  command produced or acted on, one per line (`meta get -q` prints the bare value, unquoted for
+  strings; `meta ls -q` the keys); mutually exclusive with `--json`. `-` in place of a positional
+  id reads ids from stdin (lenient: bare ids, `#41`, comments, or the padded `next`/`tree` render),
+  and `--desc -` / `meta set <key> -` read a value from stdin — one `-` per command. Batches
+  continue past a failing id (xargs semantics) and fail at the end. Together:
+  `stx next -w x -q | stx done -`, `id=$(stx add … -q)`, `stx add … --desc - < notes.md`.
 - **`stx graph`** — Graphviz DOT export of the task graph on stdout (`blocks` solid,
   `relates_to` dashed, done nodes filled; `-t` to scope, `--blocks-only`, `--json`). Backed by
   a new bulk read endpoint `GET /workspaces/{id}/edges` returning all live edges in one call.
 
 ### Changed
 
+- **Exit codes follow grep: 0 results, 1 empty result set, 2 error.** Errors previously exited 1;
+  the new 1 means "the command worked and found nothing" (`ls`, `next`, `tree`, `meta ls`, `graph`,
+  `status ls`, `relate-kinds`), so `if stx next -w x -q >/dev/null` is a valid predicate. Scripts
+  testing `!= 0` are unaffected.
 - **`stx tree`** now renders a linux-`tree`-style hierarchy with `├── └── │` branch
   connectors (was a flat 2-space outline). Track/segment labels keep their `▸`/`▫` type glyphs;
   `--json` output is unchanged.

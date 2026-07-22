@@ -29,6 +29,48 @@ resolvable `-w` exit non-zero with a hint. Commands keyed by a global id (`show`
 
 Add `--json` to any command for raw output (pipe to `jq`); the default is compact text.
 
+## Composition — streams in, streams out, exit codes
+
+Three conventions make `stx` usable *inside* a pipeline rather than only at the end of one.
+
+**`-q` / `--quiet` — ids, one per line.** The pipe format: no padding, no glyphs, no
+`(nothing ready)` placeholder. Every command prints the ids it produced or acted on; `meta get`
+prints the bare value (strings unquoted) and `meta ls` the keys. Mutually exclusive with `--json`.
+
+**`-` — read from stdin.** Anywhere an id or a text value is taken:
+
+| Site | Commands |
+|---|---|
+| positional `<id>` | `show`, `mv`, `edit`, `done`, `block`/`unblock`, `relate`/`unrelate`, `archive` |
+| `--desc` | `add`, `edit` |
+| `meta set <key> <value>` | the value |
+
+Id lines are read leniently — bare ids, `#41`, blank lines, `#`-comments, and even the padded
+`next`/`tree` render all work (only the first field is parsed), so `stx next -w x | stx done -`
+does what it looks like. Stdin is one stream: a second `-` in the same command is an error. A
+batch keeps going past a failing id (xargs semantics), reporting each on stderr, and fails the
+command at the end.
+
+**Exit codes follow grep:**
+
+| Code | Meaning |
+|---|---|
+| 0 | results |
+| 1 | the command worked, its result set is empty (`ls`, `next`, `tree`, `meta ls`, `graph`, `status ls`, `relate-kinds`) |
+| 2 | error — daemon down, bad id, illegal transition, conflict |
+
+```bash
+id=$(stx add "write migration" -w auth -t build -q)   # just the id
+stx next -w auth -q | stx done -                      # finish everything ready
+stx next -w auth -t build -q | stx block - --on "$id" # gate the frontier on one task
+stx add "post-mortem" -w auth -t build --desc - < notes.md
+stx meta set --task 42 config - < config.json         # raw JSON straight in
+branch=$(stx meta get --task 42 branch -q)            # unquoted string
+
+if stx next -w auth -q >/dev/null; then echo "work is ready"; else echo "all clear"; fi
+```
+
+
 ## Command reference
 
 See the table and recipes in [`skills/stx/SKILL.md`](../skills/stx/SKILL.md) — it's

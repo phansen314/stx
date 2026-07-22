@@ -33,7 +33,11 @@ func newAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p := client.CreateTaskParams{Title: args[0], Description: descFlag, Priority: prioFlag}
+			desc, err := readValue(cmd, descFlag, "--desc")
+			if err != nil {
+				return err
+			}
+			p := client.CreateTaskParams{Title: args[0], Description: desc, Priority: prioFlag}
 			if statusFlag != "" {
 				statuses, err := c.Statuses(ws.ID)
 				if err != nil {
@@ -70,11 +74,8 @@ func newAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, task)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "added #%d  %s\n", task.ID, task.Title)
-			return nil
+			return emit(cmd, []int64{task.ID}, task,
+				fmt.Sprintf("added #%d  %s", task.ID, task.Title))
 		},
 	}
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
@@ -89,11 +90,11 @@ func newAddCmd() *cobra.Command {
 
 func newMvCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "mv <id> <status>",
-		Short: "move a task's status",
+		Use:   "mv <id|-> <status>",
+		Short: "move a task's status (`-` reads ids from stdin)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			ids, err := readIDs(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -101,46 +102,53 @@ func newMvCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			detail, err := c.TaskDetail(id)
-			if err != nil {
-				return err
-			}
-			wsID := detail.Task.WorkspaceID
-			statuses, err := c.Statuses(wsID)
-			if err != nil {
-				return err
-			}
-			target, err := resolveStatusIn(statuses, args[1])
-			if err != nil {
-				return err
-			}
-			task, err := retryConflict(
-				func() (int, error) { d, e := c.TaskDetail(id); return d.Task.Version, e },
-				func(v int) (api.Task, error) { return c.MoveStatus(id, target.ID, v) },
-			)
-			if err != nil {
-				if isIllegalTransition(err) {
-					return illegalTransitionErr(c, wsID, detail.Task.StatusID, statuses,
-						fmt.Sprintf("illegal transition to '%s'", target.Name))
+			var moved []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				detail, err := c.TaskDetail(id)
+				if err != nil {
+					return err
 				}
-				return err
-			}
-			if flagJSON {
-				return printJSON(cmd, task)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ok #%d → %s\n", task.ID, target.Name)
-			return nil
+				wsID := detail.Task.WorkspaceID
+				statuses, err := c.Statuses(wsID)
+				if err != nil {
+					return err
+				}
+				// resolved per task: ids on stdin may span workspaces, so the status name is what
+				// carries across, not its id.
+				target, err := resolveStatusIn(statuses, args[1])
+				if err != nil {
+					return err
+				}
+				task, err := retryConflict(
+					func() (int, error) { d, e := c.TaskDetail(id); return d.Task.Version, e },
+					func(v int) (api.Task, error) { return c.MoveStatus(id, target.ID, v) },
+				)
+				if err != nil {
+					if isIllegalTransition(err) {
+						return illegalTransitionErr(c, wsID, detail.Task.StatusID, statuses,
+							fmt.Sprintf("illegal transition to '%s'", target.Name))
+					}
+					return err
+				}
+				moved = append(moved, task.ID)
+				res = append(res, task)
+				lines = append(lines, fmt.Sprintf("ok #%d → %s", task.ID, target.Name))
+				return nil
+			})
+			return emitBatch(cmd, moved, res, lines, runErr)
 		},
 	}
 }
 
 func newDoneCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "done <id>",
-		Short: "move a task to the terminal status",
+		Use:   "done <id|->",
+		Short: "move a task to the terminal status (`-` reads ids from stdin)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			ids, err := readIDs(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -148,41 +156,46 @@ func newDoneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			detail, err := c.TaskDetail(id)
-			if err != nil {
-				return err
-			}
-			wsID := detail.Task.WorkspaceID
-			statuses, err := c.Statuses(wsID)
-			if err != nil {
-				return err
-			}
-			var terminal *api.Status
-			for i := range statuses {
-				if statuses[i].Terminal {
-					terminal = &statuses[i]
-					break
+			var finished []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				detail, err := c.TaskDetail(id)
+				if err != nil {
+					return err
 				}
-			}
-			if terminal == nil {
-				return errors.New("no terminal status defined in this workspace")
-			}
-			task, err := retryConflict(
-				func() (int, error) { d, e := c.TaskDetail(id); return d.Task.Version, e },
-				func(v int) (api.Task, error) { return c.MoveStatus(id, terminal.ID, v) },
-			)
-			if err != nil {
-				if isIllegalTransition(err) {
-					return illegalTransitionErr(c, wsID, detail.Task.StatusID, statuses,
-						fmt.Sprintf("can't reach terminal '%s' directly", terminal.Name))
+				wsID := detail.Task.WorkspaceID
+				statuses, err := c.Statuses(wsID)
+				if err != nil {
+					return err
 				}
-				return err
-			}
-			if flagJSON {
-				return printJSON(cmd, task)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "done #%d → %s\n", task.ID, terminal.Name)
-			return nil
+				var terminal *api.Status
+				for i := range statuses {
+					if statuses[i].Terminal {
+						terminal = &statuses[i]
+						break
+					}
+				}
+				if terminal == nil {
+					return errors.New("no terminal status defined in this workspace")
+				}
+				task, err := retryConflict(
+					func() (int, error) { d, e := c.TaskDetail(id); return d.Task.Version, e },
+					func(v int) (api.Task, error) { return c.MoveStatus(id, terminal.ID, v) },
+				)
+				if err != nil {
+					if isIllegalTransition(err) {
+						return illegalTransitionErr(c, wsID, detail.Task.StatusID, statuses,
+							fmt.Sprintf("can't reach terminal '%s' directly", terminal.Name))
+					}
+					return err
+				}
+				finished = append(finished, task.ID)
+				res = append(res, task)
+				lines = append(lines, fmt.Sprintf("done #%d → %s", task.ID, terminal.Name))
+				return nil
+			})
+			return emitBatch(cmd, finished, res, lines, runErr)
 		},
 	}
 }
@@ -223,11 +236,11 @@ func newEditCmd() *cobra.Command {
 	var title, desc string
 	var priority int
 	cmd := &cobra.Command{
-		Use:   "edit <id>",
-		Short: "edit a task",
+		Use:   "edit <id|->",
+		Short: "edit a task (`-` reads ids from stdin; `--desc -` reads the text from stdin)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseID(args[0])
+			ids, err := readIDs(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -237,7 +250,11 @@ func newEditCmd() *cobra.Command {
 				changes["title"] = title
 			}
 			if cmd.Flags().Changed("desc") {
-				changes["description"] = desc
+				d, err := readValue(cmd, desc, "--desc")
+				if err != nil {
+					return err
+				}
+				changes["description"] = d
 			}
 			if cmd.Flags().Changed("priority") {
 				changes["priority"] = priority
@@ -249,23 +266,28 @@ func newEditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			task, err := retryConflict(
-				func() (int, error) {
-					d, e := c.TaskDetail(id)
-					return d.Task.Version, e
-				},
-				func(v int) (api.Task, error) {
-					return c.EditTask(id, v, changes)
-				},
-			)
-			if err != nil {
-				return err
-			}
-			if flagJSON {
-				return printJSON(cmd, task)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "edited #%d  %s\n", task.ID, task.Title)
-			return nil
+			var edited []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				task, err := retryConflict(
+					func() (int, error) {
+						d, e := c.TaskDetail(id)
+						return d.Task.Version, e
+					},
+					func(v int) (api.Task, error) {
+						return c.EditTask(id, v, changes)
+					},
+				)
+				if err != nil {
+					return err
+				}
+				edited = append(edited, task.ID)
+				res = append(res, task)
+				lines = append(lines, fmt.Sprintf("edited #%d  %s", task.ID, task.Title))
+				return nil
+			})
+			return emitBatch(cmd, edited, res, lines, runErr)
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "new title")

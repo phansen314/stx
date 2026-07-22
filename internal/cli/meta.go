@@ -136,6 +136,26 @@ func metaRMW(t metaTarget, mutate func(map[string]any)) error {
 	return err
 }
 
+// metaKeys is the sorted key list — the `-q` view of `meta ls`.
+func metaKeys(d map[string]any) []string {
+	keys := make([]string, 0, len(d))
+	for k := range d {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// bareValue renders a metadata value for `-q`: a string unquoted (so `$(stx meta get … -q)` is the
+// string itself, not `"the string"`), anything else as compact JSON.
+func bareValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	js, _ := json.Marshal(v)
+	return string(js)
+}
+
 // renderMeta mirrors render.meta: "k = <json value>" per key (sorted), or "(no metadata)".
 func renderMeta(d map[string]any) string {
 	if len(d) == 0 {
@@ -182,11 +202,10 @@ func newMetaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, d)
+			if len(d) == 0 {
+				markEmpty()
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), renderMeta(d))
-			return nil
+			return emitLines(cmd, metaKeys(d), d, renderMeta(d)) // -q lists the keys
 		},
 	}
 
@@ -214,18 +233,21 @@ func newMetaCmd() *cobra.Command {
 				return fmt.Errorf("no metadata key '%s'", args[0])
 			}
 			one := map[string]any{args[0]: v}
-			if flagJSON {
-				return printJSON(cmd, one)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), renderMeta(one))
-			return nil
+			// -q is the "give me the value for my script" mode: bare, unquoted for strings.
+			return emitLines(cmd, []string{bareValue(v)}, one, renderMeta(one))
 		},
 	}
 
 	var stringFlag bool
 	set := &cobra.Command{
-		Use: "set <key> <value>", Short: "set a metadata key (value parsed as JSON)", Args: cobra.ExactArgs(2),
+		Use:   "set <key> <value|->",
+		Short: "set a metadata key (value parsed as JSON; `-` reads it from stdin)",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, err := readValue(cmd, args[1], "<value>")
+			if err != nil {
+				return err
+			}
 			c, err := dial()
 			if err != nil {
 				return err
@@ -235,16 +257,13 @@ func newMetaCmd() *cobra.Command {
 				return err
 			}
 			key := args[0]
-			value := parseMetaValue(args[1], stringFlag)
+			value := parseMetaValue(raw, stringFlag)
 			if err := metaRMW(t, func(d map[string]any) { d[key] = value }); err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, map[string]any{key: value})
-			}
 			js, _ := json.Marshal(value)
-			fmt.Fprintf(cmd.OutOrStdout(), "%s = %s\n", key, string(js))
-			return nil
+			return emitLines(cmd, []string{bareValue(value)}, map[string]any{key: value},
+				fmt.Sprintf("%s = %s", key, string(js)))
 		},
 	}
 	set.Flags().BoolVar(&stringFlag, "string", false, "store the value as a literal string")
@@ -275,11 +294,7 @@ func newMetaCmd() *cobra.Command {
 			if err := metaRMW(t, func(d map[string]any) { delete(d, key) }); err != nil {
 				return err
 			}
-			if flagJSON {
-				return printJSON(cmd, map[string]any{"deleted": key})
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", key)
-			return nil
+			return emitLines(cmd, []string{key}, map[string]any{"deleted": key}, "deleted "+key)
 		},
 	}
 
