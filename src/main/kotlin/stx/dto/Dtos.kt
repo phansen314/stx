@@ -143,6 +143,22 @@ data class FrontierItem(
     val version: Int,
 ) : Reply
 
+/**
+ * A row of `blockers`: a [FrontierItem] plus how many `blocks` hops away it sits from the queried
+ * task. `depth` is the *minimum* hop count — a diamond's shared blocker appears once, at its
+ * shallowest depth.
+ */
+@Serializable
+data class BlockerItem(
+    val id: Long,
+    val title: String,
+    val priority: Int,
+    val statusId: Long,
+    val segmentId: Long,
+    val version: Int,
+    val depth: Int,
+) : Reply
+
 @Serializable
 data class WorkspaceList(val items: List<WorkspaceDto>) : Reply
 @Serializable
@@ -161,5 +177,7 @@ data class SegmentList(val items: List<SegmentDto>) : Reply
 data class TaskList(val items: List<TaskDto>) : Reply
 @Serializable
 data class FrontierList(val items: List<FrontierItem>) : Reply
+@Serializable
+data class BlockerList(val items: List<BlockerItem>) : Reply
 @Serializable
 data class EdgeList(val blocks: List<BlocksDto>, val relates: List<RelatesDto>) : Reply

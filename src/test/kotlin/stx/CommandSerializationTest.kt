@@ -8,6 +8,7 @@ import stx.command.CreateWorkspace
 import stx.command.ListWorkspaces
 import stx.command.MoveStatus
 import stx.command.Next
+import stx.command.ListBlockers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -26,6 +27,7 @@ class CommandSerializationTest {
         roundtrip(ListWorkspaces)
         roundtrip(CreateWorkspace("auth", """{"jira":"X-1"}"""))
         roundtrip(Next(workspaceId = 1, trackId = 2, kindId = 3, limit = 10))
+        roundtrip(ListBlockers(taskId = 9, maxDepth = 8))
         roundtrip(CreateTask(trackId = 4, title = "do it", priority = 5))
         roundtrip(MoveStatus(taskId = 7, toStatusId = 2, expectedVersion = 3))
         roundtrip(AddBlocks(sourceTaskId = 1, targetTaskId = 2))

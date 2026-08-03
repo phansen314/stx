@@ -28,6 +28,7 @@ fun encodeReply(reply: Reply): String = when (reply) {
     is RelatesDto -> json.encodeToString(reply)
     is TaskDetail -> json.encodeToString(reply)
     is FrontierItem -> json.encodeToString(reply)
+    is BlockerItem -> json.encodeToString(reply)
     is WorkspaceList -> json.encodeToString(reply)
     is StatusList -> json.encodeToString(reply)
     is TransitionList -> json.encodeToString(reply)
@@ -37,6 +38,7 @@ fun encodeReply(reply: Reply): String = when (reply) {
     is SegmentList -> json.encodeToString(reply)
     is TaskList -> json.encodeToString(reply)
     is FrontierList -> json.encodeToString(reply)
+    is BlockerList -> json.encodeToString(reply)
     is EdgeList -> json.encodeToString(reply)
 }
 

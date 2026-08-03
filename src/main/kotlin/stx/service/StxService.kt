@@ -28,6 +28,7 @@ class StxService {
         is ListTasks -> read { TaskList(TaskRepo.listVisibleByTrack(c, command.trackId, command.statusId)) }
         is GetTask -> getTask(c, command)
         is Next -> Frontier.next(c, command)
+        is ListBlockers -> listBlockers(c, command)
         // ── writes: registries & containers ──
         is CreateWorkspace -> createWorkspace(c, command)
         is CreateStatus -> createStatus(c, command)
@@ -69,6 +70,21 @@ class StxService {
             }
             .distinctBy { it.kind to it.otherTaskId } // symmetric display dedup (decision D2)
         TaskDetail(t, BlocksRepo.liveOutgoing(c, t.id), BlocksRepo.liveIncoming(c, t.id), relates)
+    }
+
+    /** Resolve the task first so an unknown id is a 404, then walk its blockers (see [Blockers]). */
+    private fun listBlockers(c: Connection, cmd: ListBlockers): Res<Reply, StxError> = rail {
+        ensure(cmd.maxDepth >= 1) { StxError.Validation("depth must be at least 1") }
+        val t = TaskRepo.getById(c, cmd.taskId) ?: raise(StxError.NotFound("task", cmd.taskId))
+        // A finished or archived task is not waiting on anything — the question does not apply, so
+        // the answer is empty rather than "here is what used to gate it". Checked HERE and not in
+        // the CTE so Blockers.list stays the exact inverse of Frontier's *blocker* predicate;
+        // Frontier applies the same status test to the candidate row (Frontier.kt, `t.status_id
+        // NOT IN termSub`), which is what this restores. Without it a Done task reports blockers
+        // and the next ⟺ blockers identity breaks at the terminal boundary (decision D8).
+        val terminal = StatusRepo.getById(c, t.statusId)?.terminal ?: false
+        if (t.archived || terminal) BlockerList(emptyList())
+        else Blockers.list(c, t.workspaceId, cmd).bind()
     }
 
     // ── bootstrap (brief §3) ─────────────────────────────────────────────────────────────────

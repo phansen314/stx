@@ -31,6 +31,18 @@ data class Next(
     val limit: Int? = null,
 ) : ReadCommand
 
+/**
+ * The inverse of [Next] (next.md "Deferred → built"): what unfinished work is holding [taskId]
+ * back, walked transitively backward along `blocks`. [maxDepth] is a defense-in-depth bound —
+ * `blocks` is a DAG by invariant #1, so it can only ever bite if that invariant is broken.
+ * It must be >= 1 (the service rejects less): the CTE's base case is unconditional, so a 0 or
+ * negative cap would silently behave as 1 rather than returning nothing.
+ */
+@Serializable
+data class ListBlockers(val taskId: Long, val maxDepth: Int = DEFAULT_BLOCKER_DEPTH) : ReadCommand
+
+const val DEFAULT_BLOCKER_DEPTH = 64
+
 @Serializable
 data object ListWorkspaces : ReadCommand
 

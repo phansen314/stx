@@ -59,6 +59,8 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
         "/tracks/{id}/segments" bind GET to { read(ListSegments(it.longPath("id"))) },
         "/tracks/{id}/tasks" bind GET to { read(ListTasks(it.longPath("id"), it.longQuery("status"))) },
         "/tasks/{id}" bind GET to { read(GetTask(it.longPath("id"))) },
+        // the inverse of /next: what unfinished work is holding this task back (decision D8)
+        "/tasks/{id}/blockers" bind GET to { read(ListBlockers(it.longPath("id"), it.intQuery("depth") ?: DEFAULT_BLOCKER_DEPTH)) },
 
         // ── writes: registries & containers ──
         "/workspaces" bind POST to { req -> body<WorkspaceBody>(req) { CreateWorkspace(it.name, it.metadataJson) } },
