@@ -10,6 +10,7 @@ import (
 // and returns stdout. Errors are returned separately so callers can assert on both.
 func runCLI(t *testing.T, base, in string, args ...string) (string, error) {
 	t.Helper()
+	emptyResult = false // package global, never reset by Execute — clear it per invocation
 	root := NewRootCmd()
 	var out bytes.Buffer
 	root.SetArgs(append(args, "--base-url", base))
@@ -18,6 +19,22 @@ func runCLI(t *testing.T, base, in string, args ...string) (string, error) {
 	root.SetIn(strings.NewReader(in))
 	err := root.Execute()
 	return out.String(), err
+}
+
+// runCLIExit is runCLI plus the process exit code Run() would return, which is the only way to
+// assert the grep convention (0 results / 1 empty / 2 error) from a test. Kept in lockstep with
+// Run() in exit.go.
+func runCLIExit(t *testing.T, base, in string, args ...string) (string, int) {
+	t.Helper()
+	out, err := runCLI(t, base, in, args...)
+	switch {
+	case err != nil:
+		return out, ExitError
+	case emptyResult:
+		return out, ExitEmpty
+	default:
+		return out, ExitOK
+	}
 }
 
 // -q is the pipe format: ids only, one per line, no padding or decoration.

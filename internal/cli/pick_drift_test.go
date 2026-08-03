@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/phansen314/stx/internal/client"
@@ -74,10 +76,75 @@ func fzfRunReal(lines []string) []string {
 	return out
 }
 
-// driftServer serves every read+write the 7 builders' commands touch, from one fixture:
+// recordedReq is one request the CLI made against the fixture. Asserting on these is how a test
+// checks what a command *sent* — the flag→wire mapping — not merely that RunE returned nil.
+type recordedReq struct{ Method, Path, RawQuery, Body string }
+
+// reqLog records every request the fixture served, in order. Mutex-guarded because httptest
+// serves each request on its own goroutine.
+type reqLog struct {
+	mu   sync.Mutex
+	reqs []recordedReq
+}
+
+func (l *reqLog) add(r recordedReq) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.reqs = append(l.reqs, r)
+}
+
+// all returns a snapshot of everything recorded so far.
+func (l *reqLog) all() []recordedReq {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]recordedReq(nil), l.reqs...)
+}
+
+// reset drops the log, so one fixture can be reused across sub-tests that each assert on the
+// requests *they* made.
+func (l *reqLog) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.reqs = nil
+}
+
+// find returns the first recorded request matching method+path.
+func (l *reqLog) find(method, path string) (recordedReq, bool) {
+	for _, r := range l.all() {
+		if r.Method == method && r.Path == path {
+			return r, true
+		}
+	}
+	return recordedReq{}, false
+}
+
+// record wraps a handler so every request lands in the log before being served.
+func record(l *reqLog, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body)) // hand the handler an unread body
+		l.add(recordedReq{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery, Body: string(body)})
+		next.ServeHTTP(w, r)
+	})
+}
+
+// driftServer is newDriftServer for callers that only need the base URL.
+func driftServer(t *testing.T) string {
+	t.Helper()
+	base, _ := newDriftServer(t)
+	return base
+}
+
+// newDriftServer serves every read+write the builders' commands touch, from one fixture:
 // workspace auth(1) → track api(10) → root segment(20) → task #5 (status Backlog 100).
 // Statuses: Backlog 100 (default), Doing 101, Done 102 (terminal); transitions 100→101, 100→102.
-func driftServer(t *testing.T) string {
+// Kinds: bug(200). Task #5 is unblocked, so it is what `next` returns and what `blockers` finds
+// nothing for — the fixture stays internally consistent with the next ⟺ blockers identity. Tests
+// that need a populated blocker graph build their own server.
+//
+// The returned *reqLog holds every request served, so a test can assert the wire form of what a
+// command sent (query params, JSON bodies) rather than just that it succeeded.
+func newDriftServer(t *testing.T) (string, *reqLog) {
 	t.Helper()
 	items := func(v any) map[string]any { return map[string]any{"items": v} }
 	task := map[string]any{"id": 5, "workspaceId": 1, "segmentId": 20, "statusId": 100, "title": "seed", "version": 1}
@@ -85,11 +152,12 @@ func driftServer(t *testing.T) string {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	// versions match the write entities below, so a read-modify-write CAS round-trips coherently.
 	mux.HandleFunc("GET /workspaces", func(w http.ResponseWriter, _ *http.Request) {
-		write(w, items([]map[string]any{{"id": 1, "name": "auth"}}))
+		write(w, items([]map[string]any{{"id": 1, "name": "auth", "version": 1}}))
 	})
 	mux.HandleFunc("GET /workspaces/1/tracks", func(w http.ResponseWriter, _ *http.Request) {
-		write(w, items([]map[string]any{{"id": 10, "workspaceId": 1, "name": "api"}}))
+		write(w, items([]map[string]any{{"id": 10, "workspaceId": 1, "name": "api", "version": 1}}))
 	})
 	mux.HandleFunc("GET /workspaces/1/statuses", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, items([]map[string]any{
@@ -110,13 +178,34 @@ func driftServer(t *testing.T) string {
 	mux.HandleFunc("GET /tracks/10/segments", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, items([]map[string]any{{"id": 20, "workspaceId": 1, "trackId": 10, "isRoot": true, "name": "root"}}))
 	})
-	mux.HandleFunc("GET /tracks/10/tasks", func(w http.ResponseWriter, _ *http.Request) {
+	// honors ?status= (the kanban read) — #5 sits in Backlog(100), so any other filter is empty.
+	mux.HandleFunc("GET /tracks/10/tasks", func(w http.ResponseWriter, r *http.Request) {
+		if s := r.URL.Query().Get("status"); s != "" && s != "100" {
+			write(w, items([]map[string]any{}))
+			return
+		}
 		write(w, items([]map[string]any{task}))
 	})
 	mux.HandleFunc("GET /tasks/5", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, map[string]any{"task": task, "blocksIn": []any{}, "blocksOut": []any{}, "relates": []any{}})
 	})
-	mux.HandleFunc("GET /next", func(w http.ResponseWriter, _ *http.Request) {
+	// #5 is in `next`, so nothing blocks it — the inverse read is empty here by construction.
+	mux.HandleFunc("GET /tasks/5/blockers", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, items([]map[string]any{}))
+	})
+	mux.HandleFunc("GET /changes", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, map[string]any{"seq": 7, "schema": 1})
+	})
+	// honors the scope filters against the single seeded task, so a test can tell a filter that
+	// reached the daemon from one the CLI dropped.
+	mux.HandleFunc("GET /next", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for param, seeded := range map[string]string{"track": "10", "segment": "20", "kind": "200"} {
+			if v := q.Get(param); v != "" && v != seeded {
+				write(w, items([]map[string]any{}))
+				return
+			}
+		}
 		write(w, items([]map[string]any{{"id": 5, "title": "seed", "statusId": 100, "segmentId": 20}}))
 	})
 	mux.HandleFunc("GET /workspaces/1/relates-kinds", func(w http.ResponseWriter, _ *http.Request) {
@@ -149,8 +238,41 @@ func driftServer(t *testing.T) string {
 	mux.HandleFunc("POST /workspaces/1/statuses", ok(status))
 	mux.HandleFunc("POST /workspaces/1/kinds", ok(kind))
 	mux.HandleFunc("POST /workspaces/1/transitions", ok(transition))
+	mux.HandleFunc("POST /workspaces/1/statuses/100/default", ok(map[string]any{"id": 100, "workspaceId": 1, "name": "Backlog", "isDefault": true}))
+	mux.HandleFunc("POST /workspaces/1/statuses/100/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /workspaces/1/kinds/200/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /segments/20/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /tracks/10/archive", ok(map[string]any{}))
+	mux.HandleFunc("POST /workspaces/1/archive", ok(map[string]any{}))
+	// the CAS PATCHes echo the merged entity with a bumped version, so a rename test can assert
+	// on the rendered name rather than on the request alone.
+	mux.HandleFunc("PATCH /workspaces/1", patched(ws))
+	mux.HandleFunc("PATCH /tracks/10", patched(track))
 
-	srv := httptest.NewServer(mux)
+	log := &reqLog{}
+	srv := httptest.NewServer(record(log, mux))
 	t.Cleanup(srv.Close)
-	return srv.URL
+	return srv.URL, log
+}
+
+// patched returns a handler that merges the request's name/description over `base` and bumps
+// version — enough for the client's read-modify-write + render path to behave like the daemon's.
+func patched(base map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		out := make(map[string]any, len(base)+2)
+		for k, v := range base {
+			out[k] = v
+		}
+		for _, k := range []string{"name", "description", "metadataJson"} {
+			if v, ok := body[k]; ok {
+				out[k] = v
+			}
+		}
+		if v, ok := base["version"].(int); ok {
+			out["version"] = v + 1
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}
 }
