@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/phansen314/stx/internal/client"
+	"github.com/phansen314/stx/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +24,8 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "stx",
 		Short:         "stateless CLI over the stx daemon",
-		SilenceUsage:  true, // errors are ours to print; don't dump usage on RunE failure
+		Version:       version.Version, // gives cobra the --version flag; `stx version` is separate
+		SilenceUsage:  true,            // errors are ours to print; don't dump usage on RunE failure
 		SilenceErrors: true,
 		// Both flags claim stdout in incompatible ways; erroring beats silently picking one
 		// (same stance as graph's --json/-o check).
@@ -56,11 +58,12 @@ func NewRootCmd() *cobra.Command {
 		"emit only ids (one per line) — pipe into another stx command")
 
 	root.AddCommand(
-		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(),
+		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(), newBlockersCmd(),
 		newAddCmd(), newMvCmd(), newEditCmd(), newDoneCmd(),
 		newBlockCmd(), newRelateCmd(), newUnblockCmd(), newUnrelateCmd(), newRelateKindsCmd(),
 		newMetaCmd(), newGraphCmd(), newArchiveCmd(),
 		newWsCmd(), newTrackCmd(), newSegmentCmd(), newStatusCmd(), newKindCmd(), newTransitionCmd(),
+		newVersionCmd(),
 	)
 	registerCompletions(root)
 	return root
@@ -70,7 +73,8 @@ func NewRootCmd() *cobra.Command {
 func dial() (*client.Client, error) {
 	c := client.New(flagBaseURL)
 	if !c.Ping() {
-		return nil, fmt.Errorf("daemon unreachable at %s — start it with ./gradlew run", flagBaseURL)
+		return nil, fmt.Errorf("daemon unreachable at %s — start it with `systemctl --user start stx.service`"+
+			" (or ./gradlew run in the repo)", flagBaseURL)
 	}
 	return c, nil
 }

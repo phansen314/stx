@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 
+	"github.com/phansen314/stx/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +30,35 @@ func newWsCmd() *cobra.Command {
 			return emit(cmd, []int64{w.ID}, w, fmt.Sprintf("workspace #%d  %s", w.ID, w.Name))
 		},
 	}
-	ws.AddCommand(create)
+	var renameWs string
+	rename := &cobra.Command{
+		Use: "rename <new-name>", Short: "rename a workspace", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, renameWs)
+			if err != nil {
+				return err
+			}
+			// The CAS re-read resolves by *id*, never by the name the user typed: on a retry the
+			// old name may already be gone (that's what the conflict means).
+			byID := strconv.FormatInt(ws.ID, 10)
+			w, err := retryConflict(
+				func() (int, error) { x, e := resolveWorkspace(c, byID); return x.Version, e },
+				func(v int) (api.Workspace, error) {
+					return c.EditWorkspace(ws.ID, v, map[string]any{"name": args[0]})
+				},
+			)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, []int64{w.ID}, w, fmt.Sprintf("renamed #%d  %s", w.ID, w.Name))
+		},
+	}
+	addWsFlag(rename, &renameWs)
+	ws.AddCommand(create, rename)
 	return ws
 }
 
@@ -54,7 +85,55 @@ func newTrackCmd() *cobra.Command {
 	}
 	addWsFlag(create, &wsFlag)
 	create.Flags().StringVar(&desc, "desc", "", "description")
-	track.AddCommand(create)
+
+	var editWs, editName, editDesc string
+	edit := &cobra.Command{
+		Use: "edit <track>", Short: "rename a track or change its description", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// No $EDITOR implication here: that rule is task-specific (see `stx edit`), and
+			// widening it to containers is a separate decision.
+			changes := map[string]any{}
+			if cmd.Flags().Changed("name") {
+				changes["name"] = editName
+			}
+			if cmd.Flags().Changed("desc") {
+				d, err := readValue(cmd, editDesc, "--desc")
+				if err != nil {
+					return err
+				}
+				changes["description"] = d
+			}
+			if len(changes) == 0 {
+				return errors.New("nothing to edit — pass --name and/or --desc")
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, editWs)
+			if err != nil {
+				return err
+			}
+			tr, err := resolveTrack(c, ws.ID, args[0])
+			if err != nil {
+				return err
+			}
+			byID := strconv.FormatInt(tr.ID, 10) // re-read by id — see ws rename
+			out, err := retryConflict(
+				func() (int, error) { x, e := resolveTrack(c, ws.ID, byID); return x.Version, e },
+				func(v int) (api.Track, error) { return c.EditTrack(tr.ID, v, changes) },
+			)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, []int64{out.ID}, out, fmt.Sprintf("edited track #%d  %s", out.ID, out.Name))
+		},
+	}
+	addWsFlag(edit, &editWs)
+	edit.Flags().StringVar(&editName, "name", "", "new name")
+	edit.Flags().StringVar(&editDesc, "desc", "", "new description (`-` reads it from stdin)")
+
+	track.AddCommand(create, edit)
 	return track
 }
 

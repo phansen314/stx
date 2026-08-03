@@ -7,6 +7,10 @@ here="$(cd "$(dirname "$self")/.." && pwd)"
 bin="$here/bin/stx-go"
 if [ ! -x "$bin" ]; then
   echo "stx: building the Go client (first run)…" >&2
-  ( cd "$here" && go build -o bin/stx-go ./cmd/stx )
+  # Stamp the version the same way Makefile's `go` target does, or a first-run binary reports
+  # "dev" forever. Inlined rather than shelling out to make: this launcher must work with nothing
+  # installed but Go.
+  v="$(git -C "$here" describe --tags --always --dirty 2>/dev/null || echo dev)"
+  ( cd "$here" && go build -ldflags "-X github.com/phansen314/stx/internal/version.Version=$v" -o bin/stx-go ./cmd/stx )
 fi
 exec "$bin" "$@"

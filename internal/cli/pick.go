@@ -31,6 +31,7 @@ var pickCommands = []struct{ name, help string }{
 	{"done", "move a task to the terminal status"},
 	{"edit", "edit a task"},
 	{"show", "task detail + edges"},
+	{"blockers", "what's blocking a task"},
 	{"next", "ready frontier"},
 	{"tree", "workspace tree"},
 	{"block", "mark a task blocked by another"},
@@ -55,6 +56,7 @@ var builders = map[string]func(*client.Client) ([]string, error){
 	"done":         buildDone,
 	"edit":         buildEdit,
 	"show":         buildShow,
+	"blockers":     buildBlockers,
 	"next":         buildNext,
 	"tree":         buildTree,
 	"block":        func(c *client.Client) ([]string, error) { return buildBlockLike(c, "block") },
@@ -65,8 +67,8 @@ var builders = map[string]func(*client.Client) ([]string, error){
 	"graph":        buildGraph,
 	"meta":         buildMeta,
 	"archive":      buildArchive,
-	"ws":           buildWsNew,
-	"track":        buildTrackNew,
+	"ws":           buildWs,
+	"track":        buildTrack,
 	"segment":      buildSegmentNew,
 	"status":       buildStatus,
 	"kind":         buildKind,
@@ -222,6 +224,18 @@ func buildShow(c *client.Client) ([]string, error) {
 		return nil, err
 	}
 	return argvShow(strconv.FormatInt(task.ID, 10)), nil
+}
+
+func buildBlockers(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx blockers …")
+	if err != nil {
+		return nil, err
+	}
+	task, err := pickTask(c, ws.ID, "building:  stx blockers …   (workspace: "+ws.Name+")")
+	if err != nil {
+		return nil, err
+	}
+	return argvBlockers(strconv.FormatInt(task.ID, 10)), nil
 }
 
 func buildEdit(c *client.Client) ([]string, error) {
@@ -497,24 +511,54 @@ func pickMetaTarget(c *client.Client, header string) ([]string, error) {
 
 // ── admin: ws / track / segment / status / kind / transition ──────────────────
 
-func buildWsNew(c *client.Client) ([]string, error) {
-	name, err := promptRequired("workspace name> ")
+func buildWs(c *client.Client) ([]string, error) {
+	sub, err := pickOne("ws> ", "building:  stx ws …", "new", "rename")
 	if err != nil {
 		return nil, err
 	}
-	return []string{"ws", "new", name}, nil
+	if sub == "new" {
+		name, err := promptRequired("workspace name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"ws", "new", name}, nil
+	}
+	ws, err := pickWorkspace(c, "building:  stx ws rename …")
+	if err != nil {
+		return nil, err
+	}
+	name, err := promptRequired("new name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"ws", "rename", name, "-w", ws.Name}, nil
 }
 
-func buildTrackNew(c *client.Client) ([]string, error) {
-	ws, err := pickWorkspace(c, "building:  stx track new …")
+func buildTrack(c *client.Client) ([]string, error) {
+	sub, err := pickOne("track> ", "building:  stx track …", "new", "edit")
 	if err != nil {
 		return nil, err
 	}
-	name, err := promptRequired("track name> ")
+	ws, err := pickWorkspace(c, "building:  stx track "+sub+" …")
 	if err != nil {
 		return nil, err
 	}
-	return []string{"track", "new", name, "-w", ws.Name}, nil
+	if sub == "new" {
+		name, err := promptRequired("track name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"track", "new", name, "-w", ws.Name}, nil
+	}
+	tr, err := pickTrack(c, ws.ID, "building:  stx track edit -w "+ws.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	name, err := promptRequired("new name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"track", "edit", tr.Name, "-w", ws.Name, "--name", name}, nil
 }
 
 func buildSegmentNew(c *client.Client) ([]string, error) {
@@ -641,6 +685,7 @@ func appendFields(argv []string, fields []kv) []string {
 func argvMv(id, status string) []string { return []string{"mv", id, status} }
 func argvDone(id string) []string       { return []string{"done", id} }
 func argvShow(id string) []string       { return []string{"show", id} }
+func argvBlockers(id string) []string   { return []string{"blockers", id} }
 func argvNext(ws string) []string       { return []string{"next", "-w", ws} }
 func argvTree(ws string) []string       { return []string{"tree", "-w", ws} }
 

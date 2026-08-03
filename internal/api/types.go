@@ -124,3 +124,22 @@ type RelatesRow struct {
 	TargetTaskID int64  `json:"targetTaskId"`
 	Kind         string `json:"kind"`
 }
+
+// Blocker is a row of GET /tasks/{id}/blockers: a frontier item plus its minimum hop distance from
+// the queried task.
+type Blocker struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Priority  int    `json:"priority"`
+	StatusID  int64  `json:"statusId"`
+	SegmentID int64  `json:"segmentId"`
+	Version   int    `json:"version"`
+	Depth     int    `json:"depth"`
+}
+
+// Changes is GET /changes — Seq is a run-scoped write counter (reset on restart), Schema the
+// daemon's user_version.
+type Changes struct {
+	Seq    int64 `json:"seq"`
+	Schema int   `json:"schema"`
+}

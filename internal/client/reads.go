@@ -49,6 +49,25 @@ func (c *Client) RelatesKinds(ws int64) ([]string, error) {
 	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/relates-kinds", ws), nil, &out)
 }
 
+// Blockers → GET /tasks/{id}/blockers[?depth=], the inverse of Next: the unfinished tasks holding
+// this one back, ordered depth-shallowest-first.
+func (c *Client) Blockers(id int64, depth *int64) ([]api.Blocker, error) {
+	path := fmt.Sprintf("/tasks/%d/blockers", id)
+	if depth != nil {
+		path += "?depth=" + strconv.FormatInt(*depth, 10)
+	}
+	var out api.Items[api.Blocker]
+	return out.Items, c.call("GET", path, nil, &out)
+}
+
+// Changes → GET /changes, the daemon's liveness/poll token: a run-scoped write counter plus the
+// schema version. `seq` does not survive a restart (a durable cursor is deferred by design), so
+// treat it as "has anything changed since I last looked", never as a resumable position.
+func (c *Client) Changes() (api.Changes, error) {
+	var out api.Changes
+	return out, c.call("GET", "/changes", nil, &out)
+}
+
 // Edges → GET /workspaces/{ws}/edges (bulk export for graph).
 func (c *Client) Edges(ws int64) (api.Edges, error) {
 	var out api.Edges
@@ -79,17 +98,23 @@ func (c *Client) TaskDetail(id int64) (api.TaskDetail, error) {
 	return out, c.call("GET", fmt.Sprintf("/tasks/%d", id), nil, &out)
 }
 
-// Next → GET /next?workspace=&track=&segment=&limit= (nil pointers omit the param).
-func (c *Client) Next(ws int64, track, segment, limit *int64) ([]api.FrontierItem, error) {
-	q := url.Values{"workspace": {strconv.FormatInt(ws, 10)}}
-	if track != nil {
-		q.Set("track", strconv.FormatInt(*track, 10))
-	}
-	if segment != nil {
-		q.Set("segment", strconv.FormatInt(*segment, 10))
-	}
-	if limit != nil {
-		q.Set("limit", strconv.FormatInt(*limit, 10))
+// NextParams is the frontier query. Workspace scope is required; every other field is an
+// optional filter and a nil pointer omits its query param entirely — the daemon reads them with
+// longQuery(), so "absent" and "zero" are different things.
+type NextParams struct {
+	Workspace                   int64
+	Track, Segment, Kind, Limit *int64
+}
+
+// Next → GET /next?workspace=&track=&segment=&kind=&limit=.
+func (c *Client) Next(p NextParams) ([]api.FrontierItem, error) {
+	q := url.Values{"workspace": {strconv.FormatInt(p.Workspace, 10)}}
+	for name, v := range map[string]*int64{
+		"track": p.Track, "segment": p.Segment, "kind": p.Kind, "limit": p.Limit,
+	} {
+		if v != nil {
+			q.Set(name, strconv.FormatInt(*v, 10))
+		}
 	}
 	var out api.Items[api.FrontierItem]
 	return out.Items, c.call("GET", "/next?"+q.Encode(), nil, &out)

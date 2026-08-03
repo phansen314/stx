@@ -248,9 +248,9 @@ func illegalTransitionErr(c *client.Client, wsID, curStatusID int64, statuses []
 }
 
 func newEditCmd() *cobra.Command {
-	var title, desc string
+	var title, desc, kind string
 	var priority int
-	var useEditor bool
+	var useEditor, clearKind bool
 	cmd := &cobra.Command{
 		Use:   "edit <id|->",
 		Short: "edit a task (no field flags opens $EDITOR; `-` reads ids from stdin)",
@@ -259,6 +259,16 @@ func newEditCmd() *cobra.Command {
 			ids, err := readIDs(cmd, args[0])
 			if err != nil {
 				return err
+			}
+			// Whether any field flag was passed is an explicit predicate, not `len(changes) == 0`:
+			// --kind can't be resolved until each task's workspace is known, so it is absent from
+			// `changes` at this point. The "no field flag opens $EDITOR" rule is stated here, so
+			// adding another flag can't silently break it.
+			hasField := cmd.Flags().Changed("title") || cmd.Flags().Changed("desc") ||
+				cmd.Flags().Changed("priority") || cmd.Flags().Changed("kind") ||
+				cmd.Flags().Changed("no-kind")
+			if kind != "" && clearKind {
+				return errors.New("--kind and --no-kind are mutually exclusive")
 			}
 			// only send fields the user actually passed (mirrors Python's `is not None`)
 			changes := map[string]any{}
@@ -275,6 +285,9 @@ func newEditCmd() *cobra.Command {
 			if cmd.Flags().Changed("priority") {
 				changes["priority"] = priority
 			}
+			if clearKind {
+				changes["clearKind"] = true
+			}
 			c, err := dial()
 			if err != nil {
 				return err
@@ -282,9 +295,9 @@ func newEditCmd() *cobra.Command {
 			// No field flags: hand the description to the user's editor when there's a terminal to
 			// ask on (or when -e demands it); otherwise keep the old error so scripts never hang.
 			var buf editedBuffer
-			if len(changes) == 0 {
+			if !hasField {
 				if !useEditor && !interactive() {
-					return errors.New("nothing to edit — pass --title/--desc/--priority, or -e for $EDITOR")
+					return errors.New("nothing to edit — pass --title/--desc/--priority/--kind/--no-kind, or -e for $EDITOR")
 				}
 				if len(ids) != 1 || stdinClaimed != "" {
 					return errors.New("editor mode edits one task — pass a single id, not `-`")
@@ -306,13 +319,36 @@ func newEditCmd() *cobra.Command {
 			var res []any
 			var lines []string
 			runErr := runIDs(cmd, ids, func(id int64) error {
+				perID := changes
+				// --kind is resolved per task for the same reason `mv` resolves the status per task:
+				// ids on stdin may span workspaces, so the kind *name* is what carries across, not
+				// its registry id.
+				if kind != "" {
+					detail, err := c.TaskDetail(id)
+					if err != nil {
+						return err
+					}
+					kinds, err := c.Kinds(detail.Task.WorkspaceID)
+					if err != nil {
+						return err
+					}
+					k, err := resolveKindIn(kinds, kind)
+					if err != nil {
+						return err
+					}
+					perID = make(map[string]any, len(changes)+1)
+					for key, v := range changes {
+						perID[key] = v
+					}
+					perID["kindId"] = k.ID
+				}
 				task, err := retryConflict(
 					func() (int, error) {
 						d, e := c.TaskDetail(id)
 						return d.Task.Version, e
 					},
 					func(v int) (api.Task, error) {
-						return c.EditTask(id, v, changes)
+						return c.EditTask(id, v, perID)
 					},
 				)
 				if err != nil {
@@ -333,6 +369,8 @@ func newEditCmd() *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "new title")
 	cmd.Flags().StringVar(&desc, "desc", "", "new description (`-` reads it from stdin)")
 	cmd.Flags().IntVar(&priority, "priority", 0, "new priority")
+	cmd.Flags().StringVar(&kind, "kind", "", "new kind (name or id)")
+	cmd.Flags().BoolVar(&clearKind, "no-kind", false, "clear the kind")
 	cmd.Flags().BoolVarP(&useEditor, "editor", "e", false,
 		"edit the description in $EDITOR (implied when no field flag is given on a terminal)")
 	return cmd

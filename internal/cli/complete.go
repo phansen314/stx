@@ -52,11 +52,12 @@ func registerCompletions(root *cobra.Command) {
 
 	// ── first positional = a task id ──
 	posArg(completeTaskArg,
-		[]string{"show"}, []string{"edit"}, []string{"done"},
+		[]string{"show"}, []string{"blockers"}, []string{"edit"}, []string{"done"},
 		[]string{"block"}, []string{"unblock"}, []string{"relate"}, []string{"unrelate"})
 	posArg(completeMvArgs, []string{"mv"})           // id, then legal statuses
 	posArg(completeArchiveArgs, []string{"archive"}) // <type> then id-of-type
 	posArg(completeStatusArg, []string{"status", "default"}, []string{"status", "archive"})
+	posArg(completeTrackArg, []string{"track", "edit"})
 	posArg(completeKindArg, []string{"kind", "archive"})
 	posArg(completeMetaKeyArg, []string{"meta", "get"}, []string{"meta", "set"}, []string{"meta", "del"})
 
@@ -68,7 +69,8 @@ func registerCompletions(root *cobra.Command) {
 	// ── -w / --workspace on every workspace-scoped command ──
 	flagComp("workspace", completeWorkspaceFlag,
 		[]string{"add"}, []string{"next"}, []string{"tree"}, []string{"relate-kinds"}, []string{"graph"},
-		[]string{"meta"}, []string{"track", "new"}, []string{"segment", "new"},
+		[]string{"meta"}, []string{"ws", "rename"}, []string{"track", "new"}, []string{"track", "edit"},
+		[]string{"segment", "new"},
 		[]string{"status", "new"}, []string{"status", "ls"}, []string{"status", "default"}, []string{"status", "archive"},
 		[]string{"kind", "new"}, []string{"kind", "archive"}, []string{"transition"})
 
@@ -77,7 +79,8 @@ func registerCompletions(root *cobra.Command) {
 
 	// ── enum flags ──
 	flagComp("status", completeStatusFlag, []string{"add"})
-	flagComp("kind", completeKindFlag, []string{"add"})
+	flagComp("kind", completeKindFlag, []string{"add"}, []string{"next"})
+	flagComp("kind", completeKindFromTaskArg, []string{"edit"}) // ws comes from the task, not -w
 	flagComp("task", completeTaskFlag, []string{"meta"})
 	flagComp("from", completeStatusFlag, []string{"transition"})
 	flagComp("to", completeStatusFlag, []string{"transition"})
@@ -272,6 +275,36 @@ func completeKindFlag(cmd *cobra.Command, _ []string, _ string) ([]string, cobra
 	return out, noComp
 }
 
+// completeKindFromTaskArg offers task kinds for `edit --kind`. Unlike completeKindFlag it can't
+// read the workspace off a -w flag — `edit` is a global-id command — so it takes the workspace
+// from the task named by the first positional, the same way completeRelateKindFlag does.
+func completeKindFromTaskArg(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
+		return nil, noComp
+	}
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return nil, noComp
+	}
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	detail, err := c.TaskDetail(id)
+	if err != nil {
+		return nil, noComp
+	}
+	kinds, err := c.Kinds(detail.Task.WorkspaceID)
+	if err != nil {
+		return nil, noComp
+	}
+	var out []string
+	for _, k := range kinds {
+		out = append(out, k.Name)
+	}
+	return out, noComp
+}
+
 // ── additions: task/relate-kind flags, archive/status/kind/meta positionals ───
 
 // completeTaskFlag offers task ids for int flags that name another task (block --on, relate --to).
@@ -392,6 +425,31 @@ func allSegmentCandidates() []string {
 
 // completeStatusArg / completeKindArg complete the first positional of a status/kind admin command
 // (status default|archive, kind archive), scoped by the command's -w flag.
+// completeTrackArg offers track names for a first positional naming a track (`track edit`),
+// scoped by the command's own -w.
+func completeTrackArg(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, noComp
+	}
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	ws := wsFromFlag(cmd, c)
+	if ws == nil {
+		return nil, noComp
+	}
+	tracks, err := c.Tracks(*ws)
+	if err != nil {
+		return nil, noComp
+	}
+	var out []string
+	for _, tr := range tracks {
+		out = append(out, tr.Name)
+	}
+	return out, noComp
+}
+
 func completeStatusArg(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	if len(args) != 0 {
 		return nil, noComp

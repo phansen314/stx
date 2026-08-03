@@ -42,6 +42,28 @@ func renderFrontier(items []api.FrontierItem, sn map[int64]string) string {
 	return strings.Join(lines, "\n")
 }
 
+// renderBlockers prints the inverse-read answer for one task.
+//
+// This is a **depth-layered list, not a spanning tree**: the indent is a blocker's *minimum* hop
+// count from the queried task, and a diamond's shared blocker appears exactly once, at its
+// shallowest depth. Rendering it as a tree would imply parent/child links that aren't there.
+// Depth-1 rows are the ones you can act on now, which is why they sort first.
+func renderBlockers(id int64, items []api.Blocker, sn map[int64]string) string {
+	if len(items) == 0 {
+		return fmt.Sprintf("#%d  nothing is blocking it", id)
+	}
+	noun := "tasks"
+	if len(items) == 1 {
+		noun = "task"
+	}
+	lines := []string{fmt.Sprintf("#%d  blocked by %d unfinished %s", id, len(items), noun)}
+	for _, b := range items {
+		lines = append(lines, fmt.Sprintf("%s%4d  %s  [%s]  %s",
+			strings.Repeat("  ", b.Depth), b.ID, prio(b.Priority), statusName(sn, b.StatusID), b.Title))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // renderTaskDetail mirrors render.task_detail.
 func renderTaskDetail(d api.TaskDetail, sn, kn map[int64]string) string {
 	t := d.Task

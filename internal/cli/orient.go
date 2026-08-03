@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/phansen314/stx/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +57,7 @@ func newLsCmd() *cobra.Command {
 }
 
 func newNextCmd() *cobra.Command {
-	var wsFlag, trackFlag string
+	var wsFlag, trackFlag, kindFlag string
 	var segFlag, limitFlag int64
 	cmd := &cobra.Command{
 		Use:   "next",
@@ -71,24 +72,38 @@ func newNextCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var trackPtr, segPtr, limitPtr *int64
+			p := client.NextParams{Workspace: ws.ID}
 			if trackFlag != "" {
 				tr, err := resolveTrack(c, ws.ID, trackFlag)
 				if err != nil {
 					return err
 				}
 				id := tr.ID
-				trackPtr = &id
+				p.Track = &id
+			}
+			// The kind filter is orthogonal to scope: "what impl work is ready here". Resolved
+			// through the registry the same way `add --kind` does, so a typo is an error with the
+			// live kinds listed, not a silently empty frontier.
+			if kindFlag != "" {
+				kinds, err := c.Kinds(ws.ID)
+				if err != nil {
+					return err
+				}
+				k, err := resolveKindIn(kinds, kindFlag)
+				if err != nil {
+					return err
+				}
+				p.Kind = &k.ID
 			}
 			if cmd.Flags().Changed("segment") {
 				s := segFlag
-				segPtr = &s
+				p.Segment = &s
 			}
 			if cmd.Flags().Changed("limit") {
 				l := limitFlag
-				limitPtr = &l
+				p.Limit = &l
 			}
-			items, err := c.Next(ws.ID, trackPtr, segPtr, limitPtr)
+			items, err := c.Next(p)
 			if err != nil {
 				return err
 			}
@@ -114,6 +129,7 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
 	cmd.Flags().StringVarP(&trackFlag, "track", "t", "", "scope to a track (name or id)")
 	cmd.Flags().Int64VarP(&segFlag, "segment", "s", 0, "scope to a segment subtree (id)")
+	cmd.Flags().StringVar(&kindFlag, "kind", "", "restrict to a kind (name or id)")
 	cmd.Flags().Int64Var(&limitFlag, "limit", 0, "max rows")
 	return cmd
 }
