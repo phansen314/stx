@@ -15,7 +15,8 @@ tests require it. Resolution: **`GET /tasks/{id}` embeds edges in its response D
 - `blocks`: incoming (tasks that block this) and outgoing (tasks this blocks), live edges only.
 - `relates_to`: the symmetric read — UNION both directions (X as source OR target),
   **deduped** for symmetric kinds; directional kinds (`spawns`) keep both rows distinct.
-No new routes. The inverse `why <task>` traversal stays deferred (brief §11 / next.md).
+No new routes. The *transitive* inverse read is D8's `blockers` — this one-hop view is its depth-1
+slice, and the two must agree.
 
 ## D3 — Seeded status transitions (workspace bootstrap)
 The seed uses a four-stage machine `Backlog / Implementation / Review / Done` (`Done`
@@ -97,3 +98,56 @@ Resolution: **keep the daemon dumb.** Storage is directional and honest; collaps
 relations to a single (typically undirected) edge is the **renderer's** job — e.g. graphviz
 `concentrate=true`, or drawing relates_to undirected — decided at view time where kind-symmetry
 intent actually lives. Do not "fix" the un-deduped bulk read; it is deduping-free on purpose.
+
+## D8 — `blockers` is a daemon endpoint, not a client-side traversal
+The inverse read (`stx blockers <id>` → `GET /tasks/{id}/blockers`) walks `blocks` **backward** from a task
+and returns the unfinished work holding it back, transitively. It was deferred in next.md; this
+records how it was built.
+
+It could have been assembled client-side from `GET /workspaces/{id}/edges` + per-track task reads —
+`stx graph` already does exactly that. Three reasons it wasn't:
+
+1. **Snapshot integrity.** `HttpApi.read()` exists so a multi-statement read shares one WAL
+   snapshot. A client-side walk would be edges at T1 + tasks at T2 + statuses at T3, with the write
+   actor committing in between — it could report a blocker that was finished mid-traversal.
+   Answering a question about *live gating state* from a torn read is the one thing this must not do.
+2. **One predicate, not two.** `blockers` is the exact inverse of `next`, so its eligibility rule must be
+   *the same rule* — `live_task` ∧ non-terminal ∧ `blocks.archived=0`. A Go reimplementation would be
+   a second frontier semantics with nothing tying the two together. `service/Blockers.kt` is a
+   deliberate sibling of `service/Frontier.kt` for that reason.
+3. **Cost shape.** Client-side is O(tracks) round trips and pulls every task in the workspace to
+   answer a question about a handful; daemon-side is one request on `ix_blocks_target_live`, the
+   index next.md already names for this walk.
+
+**Semantics.** The walk passes only *through* live, non-terminal blockers on unarchived edges — a
+done blocker no longer gates, so what gated *it* is irrelevant. `blocks` is a DAG (invariant #1) so
+there are no cycles, but diamonds are real: a shared blocker is reported **once, at its minimum
+depth**. A `maxDepth` cap (default 64, `?depth=`) is bound into the CTE as defense-in-depth — it can
+only bite if invariant #1 is broken. An archived or terminal target returns an empty list, not an
+error; an unknown id is `NotFound`.
+
+Two boundaries are enforced in `StxService.listBlockers`, **not** in the CTE, so `Blockers.list`
+stays a clean inverse of Frontier's *blocker* predicate:
+
+- **The target's own status/archived state.** The CTE filters the blockers, never the task being
+  asked about — so a Done task would otherwise report the blockers it had while open, and the
+  identity below would break at the terminal boundary. Frontier applies the same status test to its
+  candidate rows; this restores the symmetry. Checking `archived` explicitly also means an archived
+  target is empty on its own terms rather than only because cascade #4 removed its edges.
+- **`maxDepth >= 1`.** The CTE's base case is unconditional and only the recursive step reads the
+  cap, so 0 or a negative value would silently behave as 1. It is a `Validation` error instead.
+
+**Naming.** next.md and design.md both floated `why <task>` (and `blocked`) for this. Neither
+survived: `why` is a question word that says nothing about what comes back, and `blocked` /
+`blocked-by` inverts under a command name — `stx blocked-by 42` parses as "what is blocked *by* 42",
+which is the outgoing edge, the opposite of this read. `blockers` is a plural noun naming exactly
+what the rows are, with no direction ambiguity.
+
+**The identity this buys** (asserted in `BlockersTest`): a live non-terminal task is in `next` **iff**
+its blocker list is empty. That makes `blockers` provably the inverse read rather than merely some traversal,
+and it ties D2's one-hop `blocked-by` view to `blockers --depth 1`.
+
+**Presentation.** The CLI renders a *depth-layered list, not a spanning tree* — indentation is
+minimum hop count, and the diamond's shared node appears once. `stx blockers -q` prints the **blocker**
+ids (not the queried id), which is what makes `stx blockers 42 -q | stx done -` work; empty is exit 1 per
+the grep convention, so `if stx blockers 42 -q >/dev/null` reads as "is it blocked?".

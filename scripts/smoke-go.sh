@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # smoke-go.sh — exercise the Go stx CLI end to end (NOT unit tests; just runs the commands).
 #
-# 100% Go now (all 22 commands ported): ls, tree, next, show, add, edit, mv, done, block,
-# relate, unblock, unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status,
-# kind, transition (+ --json, errors). Creates a throwaway workspace and archives it at the end.
+# All 24 commands: ls, tree, next, show, blockers, add, edit, mv, done, block, relate, unblock,
+# unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status, kind, transition,
+# version (+ --json, errors). Creates a throwaway workspace and archives it at the end.
 #
 #   bash scripts/smoke-go.sh
 set -u
@@ -28,6 +28,10 @@ trap cleanup EXIT
 g track new build -w "$W" --desc "the build track"
 SEG=$(gid segment new api -w "$W" -t build)
 echo "workspace=$W (#$WID)  segment(api)=$SEG"
+
+hr "0a. version — client build, plus the daemon's schema/seq"
+g version
+g track edit build -w "$W" --desc "the build track, renamed"
 
 hr "0b. admin — status / kind / transition (Go)"
 g status new Blocked -w "$W" --order 5           # add a status to the seeded kanban
@@ -63,9 +67,23 @@ g next -w "$W"
 printf '\nscoped -t build:\n'; g next -w "$W" -t build --limit 2
 printf '\n--json:\n';          g next -w "$W" --json
 
+hr "5b. reads — next --kind (the registry filter) and -s (segment subtree)"
+g edit "$A1" --kind bug                        # kinds are editable now, not set-once at add
+printf '\nfiltered to kind bug:\n'; g next -w "$W" --kind bug
+printf '\nscoped to the api segment subtree:\n'; g next -w "$W" -s "$SEG"
+printf '\nunknown kind (should error and list the live kinds):\n'; g next -w "$W" --kind no-such-kind
+g edit "$A1" --no-kind                         # …and clearable
+
 hr "6. reads — show (task detail + edges)"
 g show "$A1"
 printf '\n--json:\n'; g show "$A1" --json
+
+hr "6a. blockers — the inverse of next (#$A2 is blocked by #$A1)"
+g blockers "$A2"
+printf '\n--depth 1 (direct blockers only):\n'; g blockers "$A2" --depth 1
+printf '\n--json:\n';                           g blockers "$A2" --json
+printf '\n#%s is in next, so nothing blocks it (exit 1):\n' "$A1"; g blockers "$A1"
+printf '\n-q prints the BLOCKER ids, so the path is pipeable:\n'; "$GO" blockers "$A2" -q
 
 hr "6b. meta — set / ls / get / del (Go RMW over the metadata blob)"
 g meta set --task "$A1" area schema           # bareword → JSON string
@@ -111,6 +129,10 @@ g next                                       # missing -w
 g meta ls                                    # no target (need --task or -w)
 g meta ls --task "$A1" -w "$W"               # both targets
 g archive bogus 1                            # invalid entity type
+
+hr "8b. ws rename — the workspace's own name is editable (CAS)"
+g ws rename "$W-renamed" -w "$W"
+W="$W-renamed"
 
 hr "9. cleanup — archive the throwaway workspace by id (Go's own archive)"
 if "$GO" archive workspace "$WID" --yes; then echo "archived $W (#$WID)"; else echo "CLEANUP FAILED for #$WID"; fi

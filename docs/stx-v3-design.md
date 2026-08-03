@@ -354,7 +354,10 @@ frontier, track-scoped by default-ish
 (workspace required); journal table removed, history is a non-authoritative log4j2
 journal; daemon is single writer, recompute-on-read.
 
+**Also built since:** the inverse read `stx blockers <task>` — a daemon endpoint
+(`GET /tasks/{id}/blockers`), not a client traversal (decision D8); the full daemon
+verb/RPC surface.
+
 **Open / deferred:** agent claim/lease (see Deferred additions above); durable
-journal cursor (restart-surviving seq); inverse read (`why <task>` /
-`blocked`); optional unblock-impact annotation on `next`; daemon verb/RPC surface;
-TUI (out of scope this pass).
+journal cursor (restart-surviving seq); optional unblock-impact annotation on
+`next`; TUI (out of scope this pass).

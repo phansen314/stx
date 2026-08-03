@@ -5,7 +5,10 @@ A thin, **stateless** command layer over the stx daemon — for agents and human
 
 ## Install / run
 
-The daemon must be running (`./gradlew run`, listens on `127.0.0.1:8420`).
+The daemon must be running. Normally it **autostarts on login** via the systemd user unit
+(`packaging/systemd/stx.service` — see [`autostart.md`](autostart.md)); start it by hand with
+`systemctl --user start stx.service`. For development, `./gradlew run` runs it in the foreground
+instead. Either way it listens on `127.0.0.1:8420`. `stx version` tells you which, if any, is up.
 
 `bin/stx` runs the compiled Go client (`bin/stx-go`) and **builds it on first use**
 (`go build -o bin/stx-go ./cmd/stx`), so you need **Go 1.26+** installed. Source: `cmd/stx` +
@@ -41,8 +44,8 @@ prints the bare value (strings unquoted) and `meta ls` the keys. Mutually exclus
 
 | Site | Commands |
 |---|---|
-| positional `<id>` | `show`, `mv`, `edit`, `done`, `block`/`unblock`, `relate`/`unrelate`, `archive` |
-| `--desc` | `add`, `edit` |
+| positional `<id>` | `show`, `blockers`, `mv`, `edit`, `done`, `block`/`unblock`, `relate`/`unrelate`, `archive` |
+| `--desc` | `add`, `edit`, `track edit` |
 | `meta set <key> <value>` | the value |
 
 Id lines are read leniently — bare ids, `#41`, blank lines, `#`-comments, and even the padded
@@ -56,7 +59,7 @@ command at the end.
 | Code | Meaning |
 |---|---|
 | 0 | results |
-| 1 | the command worked, its result set is empty (`ls`, `next`, `tree`, `meta ls`, `graph`, `status ls`, `relate-kinds`) |
+| 1 | the command worked, its result set is empty (`ls`, `next`, `blockers`, `tree`, `meta ls`, `graph`, `status ls`, `relate-kinds`) |
 | 2 | error — daemon down, bad id, illegal transition, conflict |
 
 ```bash
@@ -68,6 +71,8 @@ stx meta set --task 42 config - < config.json         # raw JSON straight in
 branch=$(stx meta get --task 42 branch -q)            # unquoted string
 
 if stx next -w auth -q >/dev/null; then echo "work is ready"; else echo "all clear"; fi
+if stx blockers 42 -q >/dev/null; then echo "#42 is blocked"; fi   # exit 1 == nothing blocking it
+stx blockers 42 -q | stx done -                            # clear everything in #42's way
 ```
 
 
@@ -76,8 +81,11 @@ if stx next -w auth -q >/dev/null; then echo "work is ready"; else echo "all cle
 See the table and recipes in [`skills/stx/SKILL.md`](../skills/stx/SKILL.md) — it's
 the single source for the command list. In short:
 
-- **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>]`, `show <id>`
-- **Tasks:** `add`, `mv <id> <status>`, `edit`, `done`, `block`, `relate`, `archive`
+- **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>] [-s <segment>] [--kind <k>]`,
+  `show <id>`, `blockers <id> [--depth N]`, `version`
+- **Tasks:** `add`, `mv <id> <status>`, `edit` (incl. `--kind`/`--no-kind`), `done`, `block`,
+  `relate`, `archive`
+- **Containers:** `ws new|rename`, `track new|edit`, `segment new`, `status`, `kind`, `transition`
 - **Metadata:** `meta {ls|get|set|del} (--task <id> | -w <ws> [--track <t>]) [key] [value]` —
   free-form JSON key/values on a task, workspace, or track (`set` parses the value as JSON,
   falling back to a string; `--string` forces a literal string)
@@ -129,7 +137,13 @@ the single source for the command list. In short:
     `scripts/graph_bigdemo.sh` (a 13-task cross-track DAG in mixed statuses/kinds/priorities,
     rendered with `examples/graph.toml` in every cluster mode) each spin an isolated throwaway daemon
     and render into `build/`.
-- **Containers/registries:** `ws new`, `track new`, `segment new`, `status …`, `kind …`, `transition`
+- **Containers/registries:** `ws new|rename`, `track new|edit`, `segment new`, `status …`,
+  `kind …`, `transition`
+
+`blockers` is the inverse of `next`: `next` lists what you *can* work on, `blockers <id>` lists the
+unfinished work in the way of something you can't — walked transitively through the `blocks` DAG,
+shallowest hop first. A task is in `next` **iff** its blocker list is empty. This is how you see
+*what* a cross-track dependency is waiting on when `next -t <track>` returns less than you expected.
 
 Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
 retry on conflict). Illegal status moves print the legal targets.

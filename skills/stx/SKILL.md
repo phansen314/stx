@@ -21,11 +21,13 @@ to any command for machine-readable output; text is the compact default.
 
 - **`-q/--quiet`** prints ids only, one per line (`meta get -q` prints the bare value, `meta ls -q`
   the keys). Mutually exclusive with `--json`. This is how you capture an id: `id=$(stx add … -q)`.
-- **`-`** in place of an id reads ids from stdin (`show`/`mv`/`edit`/`done`/`block`/`unblock`/
+- **`-`** in place of an id reads ids from stdin (`show`/`blockers`/`mv`/`edit`/`done`/`block`/`unblock`/
   `relate`/`unrelate`/`archive`); `--desc -` and `meta set <key> -` read the text/JSON from stdin.
   One `-` per command. A batch continues past a failing id and fails at the end.
-- **Exit codes follow grep:** 0 results, 1 empty result set (`ls`/`next`/`tree`/`meta ls`/`graph`),
-  2 error. So `if stx next -w ws -q >/dev/null; then …` means "is anything ready?".
+- **Exit codes follow grep:** 0 results, 1 empty result set
+  (`ls`/`next`/`blockers`/`tree`/`meta ls`/`graph`/`status ls`/`relate-kinds`), 2 error. So
+  `if stx next -w ws -q >/dev/null; then …` means "is anything ready?", and
+  `if stx blockers 42 -q >/dev/null; then …` means "is #42 blocked?".
 
 ## Commands
 
@@ -33,23 +35,26 @@ to any command for machine-readable output; text is the compact default.
 |---|---|
 | `stx ls` | list workspaces (no `-w`) |
 | `stx tree -w <ws>` | whole workspace as a tree — the "orient me" view |
-| `stx next -w <ws> [-t <track>] [--limit N]` | ready tasks (frontier: unblocked, non-terminal) |
+| `stx next -w <ws> [-t <track>] [-s <segment-id>] [--kind k] [--limit N]` | ready tasks (frontier: unblocked, non-terminal); `-s` scopes to a segment subtree, `--kind` to a work type |
 | `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
+| `stx blockers <id> [--depth N]` | **inverse of `next`** — the unfinished work blocking this task, transitively, shallowest hop first. `-q` prints the *blocker* ids (so `stx blockers 42 -q \| stx done -` clears the path); exit 1 = nothing is blocking it |
 | `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …] [-e]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin, `-e` writes the description in `$EDITOR`) |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
-| `stx edit <id> [--title …] [--desc …] [--priority N] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |
+| `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k \| --no-kind] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |
 | `stx done <id>` | move to the workspace's terminal status |
-| `stx block <id> --on <blocker-id>` | make a task blocked by another (feeds `next`) |
-| `stx relate <a> --to <b> --kind <k>` | relation edge (e.g. `relates_to`, `spawns`) |
+| `stx block <id> --on <blocker-id>` · `stx unblock <id> --on <blocker-id>` | add / remove a blocks edge (feeds `next`) |
+| `stx relate <a> --to <b> --kind <k>` · `stx unrelate <a> --to <b> --kind <k>` | add / remove a relation edge (e.g. `relates_to`, `spawns`) |
+| `stx relate-kinds -w <ws>` | list the relation kinds currently in use |
 | `stx meta {ls\|get\|set\|del} (--task <id> \| -w <ws> [--track <t>]) [key] [value]` | free-form JSON metadata keys on a task/workspace/track (`set` value is JSON, or `--string` for a literal; `set … -e` edits the value in `$EDITOR` — JSON by default, raw text with `--string`) |
 | `stx graph -w <ws> [-t <track>] [--blocks-only]` | task graph as Graphviz DOT on stdout (pipe to `dot`); `--json` for `{nodes, blocks, relates}` |
 | `stx archive task\|segment\|track\|workspace <id> [--yes]` | archive (`--yes` required for track/workspace — cascades) |
-| `stx ws new <name>` | new workspace |
-| `stx track new <name> -w <ws> [--desc …]` | new track |
+| `stx ws new <name>` · `stx ws rename <new-name> -w <ws>` | create / rename a workspace |
+| `stx track new <name> -w <ws> [--desc …]` · `stx track edit <track> -w <ws> [--name …] [--desc …]` | create / edit a track |
 | `stx segment new <name> -w <ws> -t <track> [--parent <id>]` | new segment |
-| `stx status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` | status admin |
+| `stx status ls -w <ws>` · `status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` | status admin |
 | `stx kind new <name> -w <ws>` · `kind archive <name> -w <ws>` | kind admin |
 | `stx transition -w <ws> --from <s> --to <s>` | allow a status transition |
+| `stx version` (or `--version`) | client version, plus the daemon's schema/seq when it's up — works with the daemon down |
 
 `mv`/`edit`/`done` handle the optimistic-lock `version` automatically (read-modify-write, one retry
 on conflict). Errors print as `error: <Variant>: …` on stderr and exit 2.
@@ -73,6 +78,12 @@ stx mv 42 in-progress
 ```
 stx done 42                       # 42 → terminal; anything blocked only by 42 now appears in `next`
 stx next -w auth-rewrite
+```
+
+**Why isn't this ready?** (the inverse read — note blockers may live in another track):
+```
+stx blockers 42                        # everything unfinished in #42's way, shallowest hop first
+stx blockers 42 -q | stx done -        # clear the whole path
 ```
 
 **Clear a whole ready set (pipe ids, no copying):**

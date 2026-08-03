@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`stx blockers <id>` — the inverse of `next`.** `next` lists what you can work on; `blockers` lists the
+  unfinished work in the way of something you can't, walked transitively backward through the
+  `blocks` DAG and ordered shallowest hop first. Backed by a new daemon endpoint
+  `GET /tasks/{id}/blockers` rather than a client-side traversal (decision **D8**), so it shares
+  `next`'s eligibility predicate and answers from one WAL snapshot. The walk passes only through
+  live, non-terminal blockers; a diamond's shared blocker appears once, at its minimum depth;
+  `--depth N` truncates it. `-q` prints the **blocker** ids — so `stx blockers 42 -q | stx done -`
+  clears the path — and an empty answer is exit 1, making `if stx blockers 42 -q >/dev/null` read as
+  "is it blocked?". A finished or archived task reports no blockers (it is not waiting on
+  anything), and `--depth` must be at least 1. A live non-terminal task is in `next` **iff** its blocker list is empty; the test
+  suite asserts that identity directly. This closes the cross-track blocker gap `next` has always
+  had: `next --track BILLING` silently returning fewer tasks now has a supported way to ask what for.
+- **`stx next --kind <k>`** — restrict the frontier to one work type ("what implementation work is
+  ready here"). The daemon has always accepted it; the CLI could not send it, which left the
+  `task_kind` registry unreachable from the frontier. Resolved through the registry, so a typo is
+  an error listing the live kinds rather than a silently empty result.
+- **`stx edit --kind <k>` / `--no-kind`** — a task's kind was previously set-once at `add` with no
+  way to change or clear it. Resolved per id (ids from stdin may span workspaces, so the kind
+  *name* is what carries across, like `mv`'s status).
+- **`stx ws rename <name> -w <ws>`** and **`stx track edit <track> -w <ws> [--name] [--desc]`** —
+  renaming a workspace or editing a track description had no CLI path at all. Both go through the
+  optimistic-lock retry, re-reading by id so a concurrent rename can't confuse the retry.
+- **`stx version`** (and `--version`) — the client's build version, plus the daemon's schema and
+  write counter when it's up. Works with the daemon down, which is half of what you run it for.
+  This also gives `GET /changes` its first consumer.
 - **`stx meta`** — key/value manager over each entity's free-form JSON metadata blob
   (`meta {ls|get|set|del}` on a task, workspace, or track; `set` value parses as JSON with a
   string fallback, `--string` forces a literal). Client-side read-modify-write over the CAS
@@ -42,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`stx tree`** now renders a linux-`tree`-style hierarchy with `├── └── │` branch
   connectors (was a flat 2-space outline). Track/segment labels keep their `▸`/`▫` type glyphs;
   `--json` output is unchanged.
+- **`bin/stx` stamps the version when it auto-builds**, mirroring the `Makefile`'s `-ldflags`. A
+  first-run binary previously reported `dev` forever.
+- **The daemon-unreachable hint** now names the systemd user unit (the normal path) rather than
+  only `./gradlew run` (the dev path); `docs/stx-cli.md` and `skills/stx/SKILL.md` no longer tell
+  two different install stories.
+- **`stx edit`'s "no field flag opens `$EDITOR`" rule is now an explicit predicate** rather than a
+  side effect of the change-set being empty, so adding a field flag can't silently break it.
 
 ### Removed
 

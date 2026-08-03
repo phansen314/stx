@@ -145,8 +145,8 @@ A task's blockers may live in a different track than the task itself. Track scop
 restricts the *returned* tasks to the track, but **not** their blockers — a
 cross-story dependency still correctly gates the task. `next --track BILLING` can
 therefore return fewer tasks than expected when something in BILLING waits on
-AUTH. This is correct (a dependency is a dependency); the deferred inverse
-read (`why <task>`) is how a dev would see *what* it's waiting on.
+AUTH. This is correct (a dependency is a dependency); the inverse read `blockers <task>`
+(below) is how a dev sees *what* it's waiting on.
 
 ## Performance
 
@@ -159,11 +159,30 @@ another agent moved first. `ix_blocks_target_live` already indexes the
 "what blocks me" lookup. A warm in-memory frontier is a later optimization, not a
 requirement.
 
+## Built since: the inverse read (`blockers`)
+
+`GET /tasks/{id}/blockers` — the same DAG traversal inverted: "what unfinished tasks are
+holding X back." A **daemon endpoint**, not a client traversal (decision D8), so it
+reuses `next`'s eligibility predicate rather than reimplementing it, and answers from
+one WAL snapshot.
+
+The walk goes backward along `blocks` through **live, non-terminal** blockers only —
+it does not pass *through* a finished blocker, because a done task no longer gates and
+what gated *it* is irrelevant. Diamonds report a shared blocker once, at its **minimum
+depth**; `?depth=N` truncates the walk (default 64, a defense-in-depth bound on a graph
+that is acyclic by invariant #1).
+
+This is what closes the cross-track gap described above: when `next --track BILLING`
+returns fewer tasks than expected because something in AUTH gates them, `blockers <task>` is
+how you see *what*.
+
+**The identity worth stating:** a live non-terminal task is in `next` **iff** its
+blocker list is empty. The two reads are exact inverses, and `BlockersTest` asserts it
+directly —
+which is also what ties D2's one-hop `blocked-by` view to `blockers --depth 1`.
+
 ## Deferred (noted, not built now)
 
-- **Inverse read** (`blocked` / `why <task>`): the same DAG traversal inverted —
-  "what unfinished tasks are holding X back." Natural companion to `next`; not in
-  this pass.
 - **Unblock-impact field**: `next` could optionally annotate each task with the
   count of tasks it would free (transitive `blocks` descendants) for the consumer
   to sort on — without `next` itself ranking. Deferred.
