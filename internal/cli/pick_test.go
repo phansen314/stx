@@ -105,6 +105,53 @@ func TestBuildDone_StubbedPickers(t *testing.T) {
 	}
 }
 
+// TestBuilders_NoDrift always takes the *first* fzf candidate, so it only ever walks the "new"
+// branch of the multi-subcommand builders. These drive the second branch explicitly, so
+// `ws rename` / `track edit` are covered too.
+func TestBuildWsRename_And_TrackEdit(t *testing.T) {
+	c := fakePickClient(t)
+	origPrompt := promptLine
+	promptLine = func(string) (string, error) { return "renamed", nil }
+	defer func() { promptLine = origPrompt }()
+
+	// The subcommand pane and the entity pane share a prompt ("track> " picks the subcommand,
+	// then the track — the header disambiguates for a human). So answer the *first* prompt with
+	// the subcommand and let later panes take their first candidate.
+	pickSecond := func(sub string) func() {
+		first := true
+		return stubFzf(func(lines []string, o fzfOpts) ([]string, error) {
+			if first {
+				first = false
+				return []string{sub}, nil
+			}
+			if o.prompt == "workspace> " {
+				return []string{"auth"}, nil
+			}
+			return fzfRunReal(lines[:1]), nil
+		})
+	}
+
+	restore := pickSecond("rename")
+	argv, err := buildWs(c)
+	restore()
+	if err != nil {
+		t.Fatalf("buildWs(rename): %v", err)
+	}
+	if want := []string{"ws", "rename", "renamed", "-w", "auth"}; !reflect.DeepEqual(argv, want) {
+		t.Errorf("got %v, want %v", argv, want)
+	}
+
+	restore = pickSecond("edit")
+	argv, err = buildTrack(c)
+	restore()
+	if err != nil {
+		t.Fatalf("buildTrack(edit): %v", err)
+	}
+	if want := []string{"track", "edit", "api", "-w", "auth", "--name", "renamed"}; !reflect.DeepEqual(argv, want) {
+		t.Errorf("got %v, want %v", argv, want)
+	}
+}
+
 // Esc at the workspace pane aborts with errPickCancelled, which runPick swallows to nil.
 func TestBuildCancel(t *testing.T) {
 	c := fakePickClient(t)

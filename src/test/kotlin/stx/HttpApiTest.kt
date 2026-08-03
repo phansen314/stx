@@ -125,6 +125,127 @@ class HttpApiTest {
         assertEquals(400, get("/tracks/1/tasks?status=nope").status.code)
     }
 
+    /**
+     * `/changes` is the poll token: a run-scoped write counter plus the schema version. It moves
+     * on a committed write and stays put on a read — that's the whole contract, and `stx version`
+     * is its first consumer.
+     */
+    @Test fun `changes exposes the schema version and a write-only counter`() {
+        val before = parser.parseToJsonElement(get("/changes").bodyString()).jsonObject
+        assertEquals(Db.SCHEMA_VERSION, before["schema"]!!.jsonPrimitive.content.toInt())
+        val seq0 = before["seq"]!!.jsonPrimitive.long
+
+        get("/workspaces") // a read must not move it
+        assertEquals(seq0, parser.parseToJsonElement(get("/changes").bodyString()).jsonObject["seq"]!!.jsonPrimitive.long)
+
+        post("/workspaces", """{"name":"ws"}""")
+        val seq1 = parser.parseToJsonElement(get("/changes").bodyString()).jsonObject["seq"]!!.jsonPrimitive.long
+        assertTrue(seq1 > seq0, "a committed write bumps seq ($seq0 -> $seq1)")
+    }
+
+    @Test fun `patch workspace renames under CAS`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val ok = patch("/workspaces/$wsId", """{"expectedVersion":0,"name":"renamed"}""")
+        assertEquals(200, ok.status.code)
+        assertEquals("renamed", parser.decodeFromString<WorkspaceDto>(ok.bodyString()).name)
+
+        val stale = patch("/workspaces/$wsId", """{"expectedVersion":0,"name":"again"}""")
+        assertEquals(409, stale.status.code)
+        assertEquals("VersionConflict", errorOf(stale))
+    }
+
+    @Test fun `patch track edits name and description under CAS`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"main"}"""))
+        val ok = patch("/tracks/$trackId", """{"expectedVersion":0,"name":"core","description":"the core"}""")
+        assertEquals(200, ok.status.code)
+        val body = parser.parseToJsonElement(ok.bodyString()).jsonObject
+        assertEquals("core", body["name"]!!.jsonPrimitive.content)
+        assertEquals("the core", body["description"]!!.jsonPrimitive.content)
+
+        assertEquals(409, patch("/tracks/$trackId", """{"expectedVersion":0,"name":"x"}""").status.code)
+    }
+
+    @Test fun `bulk edge export returns both edge kinds`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))
+        val a = idOf(post("/tracks/$trackId/tasks", """{"title":"a"}"""))
+        val b = idOf(post("/tracks/$trackId/tasks", """{"title":"b"}"""))
+        post("/blocks", """{"sourceTaskId":$a,"targetTaskId":$b}""")
+        post("/relates", """{"sourceTaskId":$a,"targetTaskId":$b,"kind":"relates_to"}""")
+
+        val res = get("/workspaces/$wsId/edges")
+        assertEquals(200, res.status.code)
+        val body = parser.parseToJsonElement(res.bodyString()).jsonObject
+        assertEquals(1, (body["blocks"]!! as kotlinx.serialization.json.JsonArray).size)
+        assertEquals(1, (body["relates"]!! as kotlinx.serialization.json.JsonArray).size)
+    }
+
+    /** The kanban read: ?status= filters a track's tasks to one stage. */
+    @Test fun `track tasks filter by status`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))
+        idOf(post("/tracks/$trackId/tasks", """{"title":"a"}"""))
+        val statusItems = parser.parseToJsonElement(get("/workspaces/$wsId/statuses").bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        fun statusId(name: String) = statusItems
+            .first { it.jsonObject["name"]!!.jsonPrimitive.content == name }
+            .jsonObject["id"]!!.jsonPrimitive.long
+
+        fun count(q: String) =
+            ((parser.parseToJsonElement(get("/tracks/$trackId/tasks$q").bodyString())
+                .jsonObject["items"]!!) as kotlinx.serialization.json.JsonArray).size
+
+        assertEquals(1, count(""))
+        assertEquals(1, count("?status=${statusId("Backlog")}"))
+        assertEquals(0, count("?status=${statusId("Done")}"))
+    }
+
+    @Test fun `blockers returns them ordered, 404s an unknown task and 400s a bad depth`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))
+        val a = idOf(post("/tracks/$trackId/tasks", """{"title":"a"}"""))
+        val b = idOf(post("/tracks/$trackId/tasks", """{"title":"b"}"""))
+        val target = idOf(post("/tracks/$trackId/tasks", """{"title":"target"}"""))
+        post("/blocks", """{"sourceTaskId":$a,"targetTaskId":$b}""")
+        post("/blocks", """{"sourceTaskId":$b,"targetTaskId":$target}""")
+
+        val res = get("/tasks/$target/blockers")
+        assertEquals(200, res.status.code)
+        val items = parser.parseToJsonElement(res.bodyString()).jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf(b, a), items.map { it.jsonObject["id"]!!.jsonPrimitive.long })
+        assertEquals(listOf(1, 2), items.map { it.jsonObject["depth"]!!.jsonPrimitive.content.toInt() })
+
+        // ?depth= truncates the walk
+        val shallow = get("/tasks/$target/blockers?depth=1")
+        assertEquals(1, (parser.parseToJsonElement(shallow.bodyString()).jsonObject["items"]!! as kotlinx.serialization.json.JsonArray).size)
+
+        // an unblocked task has an empty answer — not an error
+        assertEquals(200, get("/tasks/$a/blockers").status.code)
+        assertEquals(0, (parser.parseToJsonElement(get("/tasks/$a/blockers").bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray).size)
+
+        assertEquals(404, get("/tasks/99999/blockers").status.code)
+        assertEquals(400, get("/tasks/$target/blockers?depth=deep").status.code)
+        // depth < 1 would silently behave as 1 (the CTE base case is unconditional), so it is a
+        // Validation error rather than a surprising one-hop answer.
+        assertEquals(400, get("/tasks/$target/blockers?depth=0").status.code)
+        assertEquals(400, get("/tasks/$target/blockers?depth=-3").status.code)
+
+        // a finished task is not waiting on anything, even with an open blocker upstream
+        val statusItems = parser.parseToJsonElement(get("/workspaces/$wsId/statuses").bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        val doneId = statusItems.first { it.jsonObject["name"]!!.jsonPrimitive.content == "Done" }
+            .jsonObject["id"]!!.jsonPrimitive.long
+        val v = parser.parseToJsonElement(get("/tasks/$target").bodyString())
+            .jsonObject["task"]!!.jsonObject["version"]!!.jsonPrimitive.content.toInt()
+        assertEquals(200, post("/tasks/$target/status", """{"toStatusId":$doneId,"expectedVersion":$v}""").status.code)
+        val afterDone = get("/tasks/$target/blockers")
+        assertEquals(200, afterDone.status.code)
+        assertEquals(0, (parser.parseToJsonElement(afterDone.bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray).size)
+    }
+
     @Test fun `unknown http method maps to 405`() {
         val server = api.handler.asServer(LoopbackSunHttp(0)).start()
         try {

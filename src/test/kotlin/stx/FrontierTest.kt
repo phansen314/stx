@@ -29,14 +29,15 @@ class FrontierTest {
     private fun w(cmd: Command): Res<Reply, StxError> = StxService.applyWrite(conn) { svc.dispatch(conn, cmd) }
     private fun r(cmd: Command): Res<Reply, StxError> = svc.dispatch(conn, cmd)
     private fun idOf(res: Res<Reply, StxError>): Long = when (val v = res.getOrThrow()) {
-        is TaskDto -> v.id; is TrackDto -> v.id; is WorkspaceDto -> v.id; is KindDto -> v.id; else -> error("no id")
+        is TaskDto -> v.id; is TrackDto -> v.id; is WorkspaceDto -> v.id; is KindDto -> v.id
+        is SegmentDto -> v.id; else -> error("no id")
     }
 
     private fun statusId(ws: Long, name: String) =
         (r(ListStatuses(ws)).getOrThrow() as StatusList).items.first { it.name == name }.id
     private fun task(id: Long) = (r(GetTask(id)).getOrThrow() as TaskDetail).task
-    private fun frontier(ws: Long, track: Long? = null, kind: Long? = null) =
-        (r(Next(ws, trackId = track, kindId = kind)).getOrThrow() as FrontierList).items.map { it.id }
+    private fun frontier(ws: Long, track: Long? = null, kind: Long? = null, segment: Long? = null) =
+        (r(Next(ws, trackId = track, segmentId = segment, kindId = kind)).getOrThrow() as FrontierList).items.map { it.id }
 
     /** Move a task one hop by name, using its current version. */
     private fun move(id: Long, toName: String) {
@@ -89,6 +90,35 @@ class FrontierTest {
         assertTrue(frontier(ws, track = billing).isEmpty(), "b gated by cross-track blocker a")
         complete(a)
         assertEquals(listOf(b), frontier(ws, track = billing)) // now unblocked
+    }
+
+    /**
+     * Segment scope is the one recursive filter (SegmentRepo.liveSubtreeIds) and the one place a
+     * dev can surprise themselves about what's in scope — so assert the subtree walks *down*
+     * (grandchild included), stops sideways (sibling excluded), and still honours a blocker that
+     * lives outside the subtree.
+     */
+    @Test fun `segment scope covers the subtree and excludes siblings`() {
+        val ws = idOf(w(CreateWorkspace("ws")))
+        val track = idOf(w(CreateTrack(ws, "main")))
+        val root = (r(ListSegments(track)).getOrThrow() as SegmentList).items.first { it.isRoot }.id
+        val a = idOf(w(CreateSegment(track, "a", parentSegmentId = root)))
+        val a1 = idOf(w(CreateSegment(track, "a1", parentSegmentId = a)))
+        val b = idOf(w(CreateSegment(track, "b", parentSegmentId = root)))
+
+        val inA = idOf(w(CreateTask(segmentId = a, title = "in-a")))
+        val inA1 = idOf(w(CreateTask(segmentId = a1, title = "in-a1")))
+        val inB = idOf(w(CreateTask(segmentId = b, title = "in-b")))
+
+        assertEquals(setOf(inA, inA1), frontier(ws, segment = a).toSet())
+        assertEquals(listOf(inB), frontier(ws, segment = b))
+        assertEquals(setOf(inA, inA1, inB), frontier(ws, segment = root).toSet())
+
+        // a blocker outside the subtree still gates, exactly like the cross-track case
+        w(AddBlocks(inB, inA1)).getOrThrow()
+        assertEquals(listOf(inA), frontier(ws, segment = a))
+        complete(inB)
+        assertEquals(setOf(inA, inA1), frontier(ws, segment = a).toSet())
     }
 
     @Test fun `kind filter restricts and excludes untyped tasks`() {
