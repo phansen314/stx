@@ -93,6 +93,10 @@ data class TaskDto(
     val metadataJson: String,
     val archived: Boolean,
     val version: Int,
+    // Agent lease (schema v2). Both null = free. Deliberately NOT folded into `version`: a lease
+    // is a reservation, not a content edit, so claiming must not invalidate another agent's CAS.
+    val claimedBy: String? = null,
+    val claimedUntil: String? = null,
     val createdAt: String,
     val updatedAt: String,
 ) : Reply
@@ -141,6 +145,19 @@ data class FrontierItem(
     val statusId: Long,
     val segmentId: Long,
     val version: Int,
+    // Populated when the caller identified itself (`?as=`) or claimed the row (`POST /next/claim`);
+    // null for an unidentified read, where a live lease means the row isn't returned at all.
+    val claimedBy: String? = null,
+    val claimedUntil: String? = null,
+) : Reply
+
+/** One live lease, for the human-facing `claims` read. Expired leases are not rows here. */
+@Serializable
+data class ClaimItem(
+    val id: Long,
+    val title: String,
+    val claimedBy: String,
+    val claimedUntil: String,
 ) : Reply
 
 /**
@@ -179,5 +196,7 @@ data class TaskList(val items: List<TaskDto>) : Reply
 data class FrontierList(val items: List<FrontierItem>) : Reply
 @Serializable
 data class BlockerList(val items: List<BlockerItem>) : Reply
+@Serializable
+data class ClaimList(val items: List<ClaimItem>) : Reply
 @Serializable
 data class EdgeList(val blocks: List<BlocksDto>, val relates: List<RelatesDto>) : Reply

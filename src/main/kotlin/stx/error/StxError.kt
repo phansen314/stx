@@ -37,6 +37,13 @@ sealed interface StxError {
     /** Optimistic-lock CAS failed: the row moved since the caller read it. -> 409 */
     data class VersionConflict(val entity: String, val id: Long, val expected: Int, val actual: Int) : StxError
 
+    /**
+     * Claim-if-free lost: another agent holds a live lease on this task. Carries the holder and
+     * expiry so the loser re-plans without a second round trip — the same courtesy
+     * [VersionConflict] extends by carrying `expected`/`actual`. -> 409
+     */
+    data class Claimed(val taskId: Long, val by: String, val until: String) : StxError
+
     /** Bad input or a rejected-by-rule mutation (root-segment archive, default-status archive,
      *  status-archive-while-referenced #9, …). -> 400 */
     data class Validation(val message: String) : StxError
@@ -47,7 +54,7 @@ sealed interface StxError {
             is NotFound -> 404
             is Gone -> 410
             is CycleRejected, is CrossWorkspace, is IllegalTransition,
-            is ImmutableField, is Duplicate, is VersionConflict -> 409
+            is ImmutableField, is Duplicate, is VersionConflict, is Claimed -> 409
             is Validation -> 400
         }
 
@@ -68,6 +75,7 @@ sealed interface StxError {
             is ImmutableField -> { put("entity", e.entity); put("field", e.field) }
             is Duplicate -> { put("entity", e.entity); put("detail", e.detail) }
             is VersionConflict -> { put("entity", e.entity); put("id", e.id); put("expected", e.expected); put("actual", e.actual) }
+            is Claimed -> { put("taskId", e.taskId); put("by", e.by); put("until", e.until) }
             is Validation -> put("message", e.message)
         }
     }

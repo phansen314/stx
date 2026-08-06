@@ -122,6 +122,7 @@ fun ResultSet.toTask() = TaskDto(
     statusId = getLong("status_id"), kindId = longOrNull("kind_id"),
     title = getString("title"), description = getString("description"), priority = getInt("priority"),
     metadataJson = getString("metadata_json"), archived = bool("archived"), version = getInt("version"),
+    claimedBy = getString("claimed_by"), claimedUntil = getString("claimed_until"),
     createdAt = getString("created_at"), updatedAt = getString("updated_at"),
 )
 

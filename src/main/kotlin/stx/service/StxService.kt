@@ -29,6 +29,7 @@ class StxService {
         is GetTask -> getTask(c, command)
         is Next -> Frontier.next(c, command)
         is ListBlockers -> listBlockers(c, command)
+        is ListClaims -> read { ClaimList(TaskRepo.liveClaims(c, command.workspaceId)) }
         // ── writes: registries & containers ──
         is CreateWorkspace -> createWorkspace(c, command)
         is CreateStatus -> createStatus(c, command)
@@ -41,6 +42,9 @@ class StxService {
         is CreateTask -> createTask(c, command)
         is MoveStatus -> moveStatus(c, command)
         is RefileTask -> refileTask(c, command)
+        is ClaimTask -> claimTask(c, command)
+        is ReleaseTask -> releaseTask(c, command)
+        is NextAndClaim -> nextAndClaim(c, command)
         is EditTask -> editTask(c, command)
         is EditWorkspace -> editWorkspace(c, command)
         is EditTrack -> editTrack(c, command)
@@ -254,6 +258,66 @@ class StxService {
         val changes = TaskRepo.casRefile(c, task.id, seg.id, cmd.expectedVersion)
         interpretCas(c, "task", "task", task.id, cmd.expectedVersion, changes).bind()
         TaskRepo.getById(c, task.id) ?: raise(StxError.NotFound("task", task.id))
+    }
+
+    // ── agent lease (schema v2) ──────────────────────────────────────────────────────────────
+
+    /** Claim-if-free / renew. See [ClaimTask]; the CAS itself is [TaskRepo.claimIfFree]. */
+    private fun claimTask(c: Connection, cmd: ClaimTask): Res<Reply, StxError> = rail {
+        val task = validClaimTarget(c, cmd.taskId, cmd.agentId, cmd.ttlSeconds).bind()
+        if (TaskRepo.claimIfFree(c, task.id, cmd.agentId, cmd.ttlSeconds) == 0) {
+            // Lost the CAS: re-read to name the holder, so the caller re-plans without a round trip.
+            val held = TaskRepo.getById(c, task.id)
+            raise(StxError.Claimed(task.id, held?.claimedBy ?: "unknown", held?.claimedUntil ?: "unknown"))
+        }
+        TaskRepo.getById(c, task.id) ?: raise(StxError.NotFound("task", task.id))
+    }
+
+    private fun releaseTask(c: Connection, cmd: ReleaseTask): Res<Reply, StxError> = rail {
+        requireNonBlank("agentId", cmd.agentId).bind()
+        val task = loadVisibleTask(c, cmd.taskId).bind()
+        val holder = task.claimedBy
+        val expired = task.claimedUntil == null || TaskRepo.leaseExpired(c, task.id)
+        // Free, or the lease already lapsed => nothing to release. A successful no-op rather than an
+        // error: that is precisely the state a crash-recovering agent finds its own tasks in.
+        if (holder != null && !expired) {
+            ensure(holder == cmd.agentId) { StxError.Claimed(task.id, holder, task.claimedUntil ?: "unknown") }
+            TaskRepo.release(c, task.id, cmd.agentId)
+        }
+        TaskRepo.getById(c, task.id) ?: raise(StxError.NotFound("task", task.id))
+    }
+
+    /**
+     * Frontier + claim in one transaction (the write-actor's), which is what makes it impossible
+     * for two agents to be handed the same task. Rows the caller loses are simply absent — a
+     * partial batch is the honest answer, not an error.
+     */
+    private fun nextAndClaim(c: Connection, cmd: NextAndClaim): Res<Reply, StxError> = rail {
+        requireNonBlank("agentId", cmd.agentId).bind()
+        ensure(cmd.ttlSeconds > 0) { StxError.Validation("ttlSeconds must be positive") }
+        // asAgent = me: renewing what I already hold is part of the same loop.
+        val candidates = Frontier.next(
+            c,
+            Next(cmd.workspaceId, cmd.trackId, cmd.segmentId, cmd.kindId, cmd.limit, asAgent = cmd.agentId),
+        ).bind().items
+        val claimed = candidates
+            .filter { TaskRepo.claimIfFree(c, it.id, cmd.agentId, cmd.ttlSeconds) == 1 }
+            .mapNotNull { item ->
+                // Re-read so the returned row carries the lease that was actually written.
+                TaskRepo.getById(c, item.id)?.let { item.copy(claimedBy = it.claimedBy, claimedUntil = it.claimedUntil) }
+            }
+        FrontierList(claimed)
+    }
+
+    /** Shared claim guard: live task, non-terminal, sane agent id and TTL. */
+    private fun validClaimTarget(c: Connection, taskId: Long, agentId: String, ttlSeconds: Long): Res<TaskDto, StxError> = rail {
+        requireNonBlank("agentId", agentId).bind()
+        ensure(ttlSeconds > 0) { StxError.Validation("ttlSeconds must be positive") }
+        val task = loadVisibleTask(c, taskId).bind()
+        // A finished task has nothing left to reserve, and a lease on one would never be released.
+        val terminal = StatusRepo.getById(c, task.statusId)?.terminal ?: false
+        ensure(!terminal) { StxError.Validation("task is already in a terminal status — nothing to reserve") }
+        task
     }
 
     private fun editTask(c: Connection, cmd: EditTask): Res<Reply, StxError> = rail {

@@ -2,6 +2,7 @@ package stx.repo
 
 import stx.command.EditTask
 import stx.dto.BlocksDto
+import stx.dto.ClaimItem
 import stx.dto.KindDto
 import stx.dto.RelatesDto
 import stx.dto.SegmentDto
@@ -319,6 +320,44 @@ object TaskRepo {
             "UPDATE task SET status_id=?, version=version+1, updated_at=datetime('now') WHERE id=? AND archived=0 AND version=?",
             statusId, id, expected,
         )
+
+    /**
+     * Claim-if-free — the whole lease mechanism, one statement (schema.sql "AGENT CLAIM / LEASE").
+     * An OL-style CAS on the lease instead of on `version`: `changes()=1` won, `0` lost. The
+     * `claimed_by=?` arm lets the holder renew. Deliberately does NOT bump version/updated_at.
+     *
+     * Both the expiry it writes and the expiry it compares come from SQLite's `datetime('now')`,
+     * so the lease is never at the mercy of a caller's clock or timestamp format.
+     */
+    fun claimIfFree(c: Connection, id: Long, agentId: String, ttlSeconds: Long): Int =
+        c.exec(
+            "UPDATE task SET claimed_by=?, claimed_until=datetime('now', ?) " +
+                "WHERE id=? AND archived=0 " +
+                "AND (claimed_by IS NULL OR claimed_until <= datetime('now') OR claimed_by=?)",
+            agentId, "+$ttlSeconds seconds", id, agentId,
+        )
+
+    /** Drop a lease held by [agentId]. 0 rows = not the holder (or already free) — the service
+     *  decides whether that is a no-op or a rejection, since only it can tell the two apart. */
+    fun release(c: Connection, id: Long, agentId: String): Int =
+        c.exec("UPDATE task SET claimed_by=NULL, claimed_until=NULL WHERE id=? AND archived=0 AND claimed_by=?", id, agentId)
+
+    /** Is this task's lease absent or already lapsed? Asked of SQLite so the comparison uses the
+     *  same clock that wrote the expiry. Missing row reads as "expired" — nothing to release. */
+    fun leaseExpired(c: Connection, id: Long): Boolean =
+        c.queryOne(
+            "SELECT (claimed_until IS NULL OR claimed_until <= datetime('now')) AS expired FROM task WHERE id=?",
+            id,
+        ) { it.bool("expired") } ?: true
+
+    /** Live (unexpired) leases in a workspace, soonest expiry first. Expired rows are not leases. */
+    fun liveClaims(c: Connection, workspaceId: Long): List<ClaimItem> =
+        c.queryList(
+            "SELECT id, title, claimed_by, claimed_until FROM live_task " +
+                "WHERE workspace_id=? AND claimed_by IS NOT NULL AND claimed_until > datetime('now') " +
+                "ORDER BY claimed_until, id",
+            workspaceId,
+        ) { ClaimItem(it.getLong("id"), it.getString("title"), it.getString("claimed_by"), it.getString("claimed_until")) }
 
     /** Refile: same CAS shape as [casMoveStatus], different column. workspace_id is NOT touched —
      *  the daemon rejects a cross-workspace target, so the denormalized value stays correct (#8). */

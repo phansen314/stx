@@ -39,6 +39,8 @@ fun encodeReply(reply: Reply): String = when (reply) {
     is TaskList -> json.encodeToString(reply)
     is FrontierList -> json.encodeToString(reply)
     is BlockerList -> json.encodeToString(reply)
+    is ClaimItem -> json.encodeToString(reply)
+    is ClaimList -> json.encodeToString(reply)
     is EdgeList -> json.encodeToString(reply)
 }
 
@@ -62,6 +64,20 @@ fun encodeReply(reply: Reply): String = when (reply) {
 
 @Serializable data class MoveStatusBody(val toStatusId: Long, val expectedVersion: Int)
 @Serializable data class RefileBody(val segmentId: Long, val expectedVersion: Int)
+
+// Lease bodies carry no expectedVersion: a claim is not a content edit and must not ride the OL
+// token. TTL is a duration, not a timestamp — the daemon owns the clock (see ClaimTask).
+@Serializable data class ClaimBody(val agentId: String, val ttlSeconds: Long)
+@Serializable data class ReleaseBody(val agentId: String)
+@Serializable data class NextClaimBody(
+    val workspaceId: Long,
+    val agentId: String,
+    val ttlSeconds: Long,
+    val trackId: Long? = null,
+    val segmentId: Long? = null,
+    val kindId: Long? = null,
+    val limit: Int? = null,
+)
 
 @Serializable data class EditTaskBody(
     val expectedVersion: Int,

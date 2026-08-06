@@ -56,6 +56,7 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
         "/workspaces/{id}/relates-kinds" bind GET to { read(ListRelatesKinds(it.longPath("id"))) },
         "/workspaces/{id}/transitions" bind GET to { read(ListTransitions(it.longPath("id"))) },
         "/workspaces/{id}/edges" bind GET to { read(ListEdges(it.longPath("id"))) },
+        "/workspaces/{id}/claims" bind GET to { read(ListClaims(it.longPath("id"))) },
         "/tracks/{id}/segments" bind GET to { read(ListSegments(it.longPath("id"))) },
         "/tracks/{id}/tasks" bind GET to { read(ListTasks(it.longPath("id"), it.longQuery("status"))) },
         "/tasks/{id}" bind GET to { read(GetTask(it.longPath("id"))) },
@@ -77,6 +78,15 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
         "/tasks/{id}/status" bind POST to { req -> body<MoveStatusBody>(req) { MoveStatus(req.longPath("id"), it.toStatusId, it.expectedVersion) } },
         // the filing-tree sibling of /status: same CAS shape, different axis (refile, not kanban)
         "/tasks/{id}/segment" bind POST to { req -> body<RefileBody>(req) { RefileTask(req.longPath("id"), it.segmentId, it.expectedVersion) } },
+        // lease: claim-if-free (also renew), release, and the fused frontier+claim. The last is a
+        // POST, not a flag on GET /next — a read that mutates would break the snapshot contract.
+        "/tasks/{id}/claim" bind POST to { req -> body<ClaimBody>(req) { ClaimTask(req.longPath("id"), it.agentId, it.ttlSeconds) } },
+        "/tasks/{id}/release" bind POST to { req -> body<ReleaseBody>(req) { ReleaseTask(req.longPath("id"), it.agentId) } },
+        "/next/claim" bind POST to { req ->
+            body<NextClaimBody>(req) {
+                NextAndClaim(it.workspaceId, it.agentId, it.ttlSeconds, it.trackId, it.segmentId, it.kindId, it.limit)
+            }
+        },
         "/tasks/{id}" bind PATCH to { req -> body<EditTaskBody>(req) { editFrom(req.longPath("id"), it) } },
         "/workspaces/{id}" bind PATCH to { req -> body<EditWorkspaceBody>(req) { EditWorkspace(req.longPath("id"), it.expectedVersion, it.name, it.metadataJson) } },
         "/tracks/{id}" bind PATCH to { req -> body<EditTrackBody>(req) { EditTrack(req.longPath("id"), it.expectedVersion, it.name, it.description, it.metadataJson) } },
@@ -104,7 +114,12 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
 
     private fun next(req: Request): Response {
         val ws = req.longQuery("workspace") ?: return badRequest("workspace query param required")
-        return read(Next(ws, req.longQuery("track"), req.longQuery("segment"), req.longQuery("kind"), req.intQuery("limit")))
+        return read(
+            Next(
+                ws, req.longQuery("track"), req.longQuery("segment"), req.longQuery("kind"), req.intQuery("limit"),
+                asAgent = req.query("as"),
+            ),
+        )
     }
 
     private fun taskFrom(trackId: Long?, segmentId: Long?, b: TaskBody) = CreateTask(

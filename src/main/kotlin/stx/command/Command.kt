@@ -29,6 +29,12 @@ data class Next(
     val segmentId: Long? = null,
     val kindId: Long? = null,
     val limit: Int? = null,
+    /**
+     * The calling agent's identity, if it has one. A live lease held by *another* agent always
+     * hides a task; naming yourself keeps the work you already reserved visible, so an agent that
+     * claimed five tasks doesn't then read an empty frontier and look idle.
+     */
+    val asAgent: String? = null,
 ) : ReadCommand
 
 /**
@@ -42,6 +48,10 @@ data class Next(
 data class ListBlockers(val taskId: Long, val maxDepth: Int = DEFAULT_BLOCKER_DEPTH) : ReadCommand
 
 const val DEFAULT_BLOCKER_DEPTH = 64
+
+/** Live leases in a workspace — the human-facing "who is on what". Expired leases are not rows. */
+@Serializable
+data class ListClaims(val workspaceId: Long) : ReadCommand
 
 @Serializable
 data object ListWorkspaces : ReadCommand
@@ -136,6 +146,48 @@ data class CreateTask(
 /** Status move; validates a live transition exists, CAS on the task version (§5/§6). */
 @Serializable
 data class MoveStatus(val taskId: Long, val toStatusId: Long, val expectedVersion: Int) : WriteCommand
+
+/**
+ * Claim-if-free: reserve [taskId] for [agentId] until now + [ttlSeconds] (schema.sql, "AGENT
+ * CLAIM / LEASE"). Wins if the task is free, its lease has expired, or [agentId] already holds it —
+ * that last arm is what makes this double as renew/heartbeat, so the framework needs no second
+ * verb. Losing returns [stx.error.StxError.Claimed] naming the current holder and expiry.
+ *
+ * The daemon computes the expiry from the caller's TTL rather than accepting an absolute timestamp:
+ * *how long* to reserve is the framework's policy, but the clock the comparison uses must be the
+ * clock that set it, or a format/zone slip silently yields a lease that never expires.
+ *
+ * Deliberately does NOT touch `version`/`updated_at` — a lease is a reservation, not a content
+ * edit, and sharing the OL token would make one agent's claim another agent's spurious 409.
+ */
+@Serializable
+data class ClaimTask(val taskId: Long, val agentId: String, val ttlSeconds: Long) : WriteCommand
+
+/**
+ * Release a lease. Only the holder may release a *live* lease; a task that is free, or whose lease
+ * has already expired, is a successful no-op — that is the shape a crash-recovering agent needs.
+ */
+@Serializable
+data class ReleaseTask(val taskId: Long, val agentId: String) : WriteCommand
+
+/**
+ * Fused next-and-claim: compute the frontier and reserve what it returns, in ONE transaction, so
+ * two agents can never be handed the same task. A [WriteCommand] (POST) rather than a flag on the
+ * `next` read — a GET that mutates breaks the read path's snapshot contract.
+ *
+ * Reuses [Frontier][stx.service.Frontier] verbatim rather than reimplementing the eligibility
+ * predicate — the same discipline decision D8 applied to `blockers`.
+ */
+@Serializable
+data class NextAndClaim(
+    val workspaceId: Long,
+    val agentId: String,
+    val ttlSeconds: Long,
+    val trackId: Long? = null,
+    val segmentId: Long? = null,
+    val kindId: Long? = null,
+    val limit: Int? = null,
+) : WriteCommand
 
 /**
  * Refile a task under a different segment — a move through the *filing* tree, orthogonal to
