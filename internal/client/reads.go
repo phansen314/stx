@@ -104,9 +104,12 @@ func (c *Client) TaskDetail(id int64) (api.TaskDetail, error) {
 type NextParams struct {
 	Workspace                   int64
 	Track, Segment, Kind, Limit *int64
+	// As identifies the caller so its own leases stay visible; empty means an anonymous read,
+	// which sees only unleased work.
+	As string
 }
 
-// Next → GET /next?workspace=&track=&segment=&kind=&limit=.
+// Next → GET /next?workspace=&track=&segment=&kind=&limit=&as=.
 func (c *Client) Next(p NextParams) ([]api.FrontierItem, error) {
 	q := url.Values{"workspace": {strconv.FormatInt(p.Workspace, 10)}}
 	for name, v := range map[string]*int64{
@@ -116,6 +119,15 @@ func (c *Client) Next(p NextParams) ([]api.FrontierItem, error) {
 			q.Set(name, strconv.FormatInt(*v, 10))
 		}
 	}
+	if p.As != "" {
+		q.Set("as", p.As)
+	}
 	var out api.Items[api.FrontierItem]
 	return out.Items, c.call("GET", "/next?"+q.Encode(), nil, &out)
+}
+
+// Claims → GET /workspaces/{ws}/claims (live leases only; expired ones are not rows).
+func (c *Client) Claims(ws int64) ([]api.Claim, error) {
+	var out api.Items[api.Claim]
+	return out.Items, c.call("GET", fmt.Sprintf("/workspaces/%d/claims", ws), nil, &out)
 }

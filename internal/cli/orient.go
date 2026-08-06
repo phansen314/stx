@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"time"
 
+	"github.com/phansen314/stx/internal/api"
 	"github.com/phansen314/stx/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -57,13 +60,19 @@ func newLsCmd() *cobra.Command {
 }
 
 func newNextCmd() *cobra.Command {
-	var wsFlag, trackFlag, kindFlag string
+	var wsFlag, trackFlag, kindFlag, agentFlag string
 	var segFlag, limitFlag int64
+	var claimFlag bool
+	var ttlFlag time.Duration
 	cmd := &cobra.Command{
 		Use:   "next",
-		Short: "ready tasks (frontier)",
+		Short: "ready tasks (frontier); --claim reserves them for an agent",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// A lease needs a holder: claiming anonymously would reserve work nobody could release.
+			if claimFlag && agentFlag == "" {
+				return errors.New("--claim needs --as <agent> — a lease has to belong to someone")
+			}
 			c, err := dial()
 			if err != nil {
 				return err
@@ -72,7 +81,7 @@ func newNextCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p := client.NextParams{Workspace: ws.ID}
+			p := client.NextParams{Workspace: ws.ID, As: agentFlag}
 			if trackFlag != "" {
 				tr, err := resolveTrack(c, ws.ID, trackFlag)
 				if err != nil {
@@ -103,8 +112,19 @@ func newNextCmd() *cobra.Command {
 				l := limitFlag
 				p.Limit = &l
 			}
-			items, err := c.Next(p)
-			if err != nil {
+			// --claim goes through the fused POST so the select and the reservation share one
+			// transaction; without it two agents reading the same frontier both start the same task.
+			var items []api.FrontierItem
+			if claimFlag {
+				secs, err := ttlSeconds(ttlFlag)
+				if err != nil {
+					return err
+				}
+				items, err = c.NextAndClaim(p, agentFlag, secs)
+				if err != nil {
+					return err
+				}
+			} else if items, err = c.Next(p); err != nil {
 				return err
 			}
 			if len(items) == 0 {
@@ -131,6 +151,47 @@ func newNextCmd() *cobra.Command {
 	cmd.Flags().Int64VarP(&segFlag, "segment", "s", 0, "scope to a segment subtree (id)")
 	cmd.Flags().StringVar(&kindFlag, "kind", "", "restrict to a kind (name or id)")
 	cmd.Flags().Int64Var(&limitFlag, "limit", 0, "max rows")
+	cmd.Flags().StringVar(&agentFlag, "as", "", "agent id — keeps your own leases visible")
+	cmd.Flags().BoolVar(&claimFlag, "claim", false, "reserve what it returns (needs --as)")
+	cmd.Flags().DurationVar(&ttlFlag, "ttl", defaultTTL, "lease length for --claim (e.g. 30s, 15m, 2h)")
+	return cmd
+}
+
+// newClaimsCmd is the human-facing "who is on what". Only live leases are rows — an expired one is
+// not a claim, and nothing sweeps them, so listing them would be listing noise.
+func newClaimsCmd() *cobra.Command {
+	var wsFlag string
+	cmd := &cobra.Command{
+		Use:   "claims",
+		Short: "live agent leases in a workspace",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, wsFlag)
+			if err != nil {
+				return err
+			}
+			claims, err := c.Claims(ws.ID)
+			if err != nil {
+				return err
+			}
+			if len(claims) == 0 {
+				markEmpty()
+				return emit(cmd, nil, claims, "(no live claims)")
+			}
+			ids := make([]int64, 0, len(claims))
+			lines := make([]string, 0, len(claims))
+			for _, cl := range claims {
+				ids = append(ids, cl.ID)
+				lines = append(lines, fmt.Sprintf("%4d  %-16s until %s  %s", cl.ID, cl.ClaimedBy, cl.ClaimedUntil, cl.Title))
+			}
+			return emit(cmd, ids, claims, joinLines(lines))
+		},
+	}
+	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
 	return cmd
 }
 

@@ -53,9 +53,10 @@ func registerCompletions(root *cobra.Command) {
 	// ── first positional = a task id ──
 	posArg(completeTaskArg,
 		[]string{"show"}, []string{"blockers"}, []string{"edit"}, []string{"done"}, []string{"refile"},
-		[]string{"block"}, []string{"unblock"}, []string{"relate"}, []string{"unrelate"})
-	posArg(completeMvArgs, []string{"mv"})           // id, then legal statuses
-	posArg(completeArchiveArgs, []string{"archive"}) // <type> then id-of-type
+		[]string{"claim"}, []string{"block"}, []string{"unblock"}, []string{"relate"}, []string{"unrelate"})
+	posArg(completeClaimedTaskArg, []string{"release"}) // only leased tasks can be released
+	posArg(completeMvArgs, []string{"mv"})              // id, then legal statuses
+	posArg(completeArchiveArgs, []string{"archive"})    // <type> then id-of-type
 	posArg(completeStatusArg, []string{"status", "default"}, []string{"status", "archive"}, []string{"status", "edit"})
 	posArg(completeStatusArgs, []string{"status", "order"}) // every position is a status
 	posArg(completeTrackArg, []string{"track", "edit"})
@@ -71,7 +72,8 @@ func registerCompletions(root *cobra.Command) {
 	// ── -w / --workspace on every workspace-scoped command ──
 	flagComp("workspace", completeWorkspaceFlag,
 		[]string{"add"}, []string{"next"}, []string{"tree"}, []string{"relate-kinds"}, []string{"graph"},
-		[]string{"meta"}, []string{"refile"}, []string{"ws", "rename"}, []string{"track", "new"}, []string{"track", "edit"},
+		[]string{"meta"}, []string{"refile"}, []string{"claims"},
+		[]string{"ws", "rename"}, []string{"track", "new"}, []string{"track", "edit"},
 		[]string{"segment", "new"}, []string{"segment", "edit"},
 		[]string{"status", "new"}, []string{"status", "ls"}, []string{"status", "default"}, []string{"status", "archive"},
 		[]string{"status", "edit"}, []string{"status", "order"},
@@ -93,6 +95,72 @@ func registerCompletions(root *cobra.Command) {
 	flagComp("from", completeStatusFlag, []string{"transition"})
 	flagComp("to", completeStatusFlag, []string{"transition"})
 	flagComp("cluster", completeClusterFlag, []string{"graph"})
+
+	// --as: the agent ids currently holding leases. New identities are free text, so this is a
+	// convenience for "release what I claimed", not a registry.
+	flagComp("as", completeAgentFlag, []string{"next"}, []string{"claim"}, []string{"release"})
+}
+
+// completeAgentFlag offers agent ids that hold a live lease somewhere. Scoped by -w when the
+// command has one (next/claims); otherwise it sweeps every workspace, since claim/release are
+// global-id commands.
+func completeAgentFlag(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	seen := map[string]bool{}
+	var out []string
+	collect := func(ws int64) {
+		claims, err := c.Claims(ws)
+		if err != nil {
+			return
+		}
+		for _, cl := range claims {
+			if !seen[cl.ClaimedBy] {
+				seen[cl.ClaimedBy] = true
+				out = append(out, cl.ClaimedBy)
+			}
+		}
+	}
+	if ws := wsFromFlag(cmd, c); ws != nil {
+		collect(*ws)
+		return out, noComp
+	}
+	wss, err := c.ListWorkspaces()
+	if err != nil {
+		return nil, noComp
+	}
+	for _, w := range wss {
+		collect(w.ID)
+	}
+	return out, noComp
+}
+
+// completeClaimedTaskArg offers only tasks with a live lease — the set `release` can act on.
+func completeClaimedTaskArg(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, noComp
+	}
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	wss, err := c.ListWorkspaces()
+	if err != nil {
+		return nil, noComp
+	}
+	var out []string
+	for _, w := range wss {
+		claims, err := c.Claims(w.ID)
+		if err != nil {
+			continue
+		}
+		for _, cl := range claims {
+			out = append(out, fmt.Sprintf("%d\t%s (%s)", cl.ID, cl.Title, cl.ClaimedBy))
+		}
+	}
+	return out, noComp
 }
 
 // completeClusterFlag offers the grouping modes for `graph --cluster`.

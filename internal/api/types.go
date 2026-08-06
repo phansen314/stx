@@ -75,6 +75,18 @@ type FrontierItem struct {
 	StatusID  int64  `json:"statusId"`
 	SegmentID int64  `json:"segmentId"`
 	Version   int    `json:"version"`
+	// Set when the caller identified itself (?as=) or claimed the row (POST /next/claim); empty
+	// otherwise, since an unidentified read never returns a leased task in the first place.
+	ClaimedBy    string `json:"claimedBy"`
+	ClaimedUntil string `json:"claimedUntil"`
+}
+
+// Claim is a row of GET /workspaces/{ws}/claims — one live (unexpired) lease.
+type Claim struct {
+	ID           int64  `json:"id"`
+	Title        string `json:"title"`
+	ClaimedBy    string `json:"claimedBy"`
+	ClaimedUntil string `json:"claimedUntil"`
 }
 
 // Task is the full task row returned by GET /tasks/{id} (as detail.task) and PATCH /tasks/{id}.
@@ -90,6 +102,10 @@ type Task struct {
 	MetadataJSON string `json:"metadataJson"`
 	Archived     bool   `json:"archived"`
 	Version      int    `json:"version"`
+	// Agent lease. Empty = free. Orthogonal to Version: claiming never bumps the OL token, so a
+	// claim by another agent can't invalidate a CAS you already planned.
+	ClaimedBy    string `json:"claimedBy"`
+	ClaimedUntil string `json:"claimedUntil"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
 }

@@ -33,6 +33,9 @@ var pickCommands = []struct{ name, help string }{
 	{"edit", "edit a task"},
 	{"show", "task detail + edges"},
 	{"blockers", "what's blocking a task"},
+	{"claim", "reserve a task for an agent"},
+	{"release", "drop an agent's lease"},
+	{"claims", "who holds what"},
 	{"next", "ready frontier"},
 	{"tree", "workspace tree"},
 	{"block", "mark a task blocked by another"},
@@ -59,6 +62,9 @@ var builders = map[string]func(*client.Client) ([]string, error){
 	"edit":         buildEdit,
 	"show":         buildShow,
 	"blockers":     buildBlockers,
+	"claim":        buildClaim,
+	"release":      buildRelease,
+	"claims":       buildClaims,
 	"next":         buildNext,
 	"tree":         buildTree,
 	"block":        func(c *client.Client) ([]string, error) { return buildBlockLike(c, "block") },
@@ -261,6 +267,60 @@ func buildBlockers(c *client.Client) ([]string, error) {
 		return nil, err
 	}
 	return argvBlockers(strconv.FormatInt(task.ID, 10)), nil
+}
+
+// buildClaim / buildRelease / buildClaims drive the lease. `claim` prompts for the agent id (free
+// text — identities are externally generated, there is no registry to pick from); `release` picks
+// from the ids that actually hold a lease, so it can offer the holder as the default `--as`.
+func buildClaim(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx claim …")
+	if err != nil {
+		return nil, err
+	}
+	task, err := pickTask(c, ws.ID, "building:  stx claim …   (workspace: "+ws.Name+")")
+	if err != nil {
+		return nil, err
+	}
+	id := strconv.FormatInt(task.ID, 10)
+	agent, err := promptRequired("agent id> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"claim", id, "--as", agent}, nil
+}
+
+func buildRelease(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx release …")
+	if err != nil {
+		return nil, err
+	}
+	claims, err := c.Claims(ws.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(claims) == 0 {
+		return nil, fmt.Errorf("no live claims in %s", ws.Name)
+	}
+	lines := make([]string, 0, len(claims))
+	byID := map[string]api.Claim{}
+	for _, cl := range claims {
+		id := itoa(cl.ID)
+		byID[id] = cl
+		lines = append(lines, fmt.Sprintf("%s\t#%s  %s  (%s until %s)", id, id, cl.Title, cl.ClaimedBy, cl.ClaimedUntil))
+	}
+	id, err := fzfOne(lines, fzfOpts{prompt: "claim> ", header: "building:  stx release …"})
+	if err != nil {
+		return nil, err
+	}
+	return []string{"release", id, "--as", byID[id].ClaimedBy}, nil
+}
+
+func buildClaims(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx claims …")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"claims", "-w", ws.Name}, nil
 }
 
 func buildEdit(c *client.Client) ([]string, error) {

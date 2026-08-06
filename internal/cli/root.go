@@ -58,8 +58,9 @@ func NewRootCmd() *cobra.Command {
 		"emit only ids (one per line) — pipe into another stx command")
 
 	root.AddCommand(
-		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(), newBlockersCmd(),
+		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(), newBlockersCmd(), newClaimsCmd(),
 		newAddCmd(), newMvCmd(), newRefileCmd(), newEditCmd(), newDoneCmd(),
+		newClaimCmd(), newReleaseCmd(),
 		newBlockCmd(), newRelateCmd(), newUnblockCmd(), newUnrelateCmd(), newRelateKindsCmd(),
 		newMetaCmd(), newGraphCmd(), newArchiveCmd(),
 		newWsCmd(), newTrackCmd(), newSegmentCmd(), newStatusCmd(), newKindCmd(), newTransitionCmd(),

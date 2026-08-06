@@ -78,6 +78,11 @@ func renderTaskDetail(d api.TaskDetail, sn, kn map[int64]string) string {
 		fmt.Sprintf("  status: %s    kind: %s    priority: P%d", statusName(sn, t.StatusID), kindStr, t.Priority) +
 			archivedSuffix(t.Archived),
 	}
+	// A lease is why a task can be missing from `next` while looking perfectly ready, so `show`
+	// says who holds it. Expiry is evaluated by the daemon; a stale line here is still informative.
+	if t.ClaimedBy != "" {
+		out = append(out, fmt.Sprintf("  claimed by: %s    until: %s", t.ClaimedBy, t.ClaimedUntil))
+	}
 	if t.Description != "" {
 		out = append(out, "  description: "+t.Description)
 	}

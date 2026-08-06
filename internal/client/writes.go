@@ -50,6 +50,39 @@ func (c *Client) RefileTask(id, segmentID int64, expectedVersion int) (api.Task,
 	return out, c.call("POST", fmt.Sprintf("/tasks/%d/segment", id), body, &out)
 }
 
+// ClaimTask → POST /tasks/{id}/claim: reserve a task for ttlSeconds, or renew a lease you already
+// hold. A 409 (APIError variant "Claimed") carries the current holder and expiry. No expectedVersion
+// — a lease is not a content edit and deliberately does not ride the optimistic-lock token.
+func (c *Client) ClaimTask(id int64, agentID string, ttlSeconds int64) (api.Task, error) {
+	body := map[string]any{"agentId": agentID, "ttlSeconds": ttlSeconds}
+	var out api.Task
+	return out, c.call("POST", fmt.Sprintf("/tasks/%d/claim", id), body, &out)
+}
+
+// ReleaseTask → POST /tasks/{id}/release. Releasing a free or already-expired task succeeds as a
+// no-op; releasing someone else's live lease is a 409.
+func (c *Client) ReleaseTask(id int64, agentID string) (api.Task, error) {
+	body := map[string]any{"agentId": agentID}
+	var out api.Task
+	return out, c.call("POST", fmt.Sprintf("/tasks/%d/release", id), body, &out)
+}
+
+// NextAndClaim → POST /next/claim: the frontier and the reservation in one transaction, which is
+// what stops two agents being handed the same task. Returns only the rows it actually claimed.
+func (c *Client) NextAndClaim(p NextParams, agentID string, ttlSeconds int64) ([]api.FrontierItem, error) {
+	body := map[string]any{"workspaceId": p.Workspace, "agentId": agentID, "ttlSeconds": ttlSeconds}
+	for name, v := range map[string]*int64{"trackId": p.Track, "segmentId": p.Segment, "kindId": p.Kind} {
+		if v != nil {
+			body[name] = *v
+		}
+	}
+	if p.Limit != nil {
+		body["limit"] = *p.Limit
+	}
+	var out api.Items[api.FrontierItem]
+	return out.Items, c.call("POST", "/next/claim", body, &out)
+}
+
 // EditTask → PATCH /tasks/{id}. changes is a partial-update map (camelCase keys) merged with
 // the required expectedVersion CAS token; a field present updates it, absent leaves it. Only
 // kindId uses the explicit clearKind flag to distinguish "clear" from "unchanged".

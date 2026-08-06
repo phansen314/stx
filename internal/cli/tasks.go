@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/phansen314/stx/internal/api"
 	"github.com/phansen314/stx/internal/client"
@@ -230,6 +231,101 @@ func newRefileCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&trackFlag, "track", "t", "", "destination track name or id (required)")
 	_ = cmd.MarkFlagRequired("track")
 	cmd.Flags().StringVarP(&segFlag, "segment", "s", "", "destination segment name or id within the track (default: its root)")
+	return cmd
+}
+
+// defaultTTL is the CLI's convenience default, not a daemon policy — stx itself holds no opinion
+// on lease length (schema.sql, "SoC"). Long enough for a real unit of agent work, short enough that
+// a crashed agent frees its tasks without anyone intervening.
+const defaultTTL = 15 * time.Minute
+
+// ttlSeconds parses a Go duration flag ("30s", "15m", "2h") into whole seconds for the wire. Sub-
+// second TTLs round to zero, which the daemon rejects — so they're caught here with a real message.
+func ttlSeconds(d time.Duration) (int64, error) {
+	secs := int64(d.Seconds())
+	if secs <= 0 {
+		return 0, fmt.Errorf("--ttl must be at least 1s (got %s)", d)
+	}
+	return secs, nil
+}
+
+// newClaimCmd / newReleaseCmd expose the lease primitive. `claim` doubles as renew — re-claiming a
+// task you already hold extends it, so an agent's heartbeat is the same call it started with.
+func newClaimCmd() *cobra.Command {
+	var agent string
+	var ttl time.Duration
+	cmd := &cobra.Command{
+		Use:   "claim <id|->",
+		Short: "reserve a task for an agent (also renews your own lease; `-` reads ids from stdin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			secs, err := ttlSeconds(ttl)
+			if err != nil {
+				return err
+			}
+			ids, err := readIDs(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			var claimed []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				t, err := c.ClaimTask(id, agent, secs)
+				if err != nil {
+					return err
+				}
+				claimed = append(claimed, t.ID)
+				res = append(res, t)
+				lines = append(lines, fmt.Sprintf("claimed #%d by %s until %s", t.ID, t.ClaimedBy, t.ClaimedUntil))
+				return nil
+			})
+			return emitBatch(cmd, claimed, res, lines, runErr)
+		},
+	}
+	cmd.Flags().StringVar(&agent, "as", "", "agent id holding the lease (required)")
+	_ = cmd.MarkFlagRequired("as")
+	cmd.Flags().DurationVar(&ttl, "ttl", defaultTTL, "how long to hold it (e.g. 30s, 15m, 2h)")
+	return cmd
+}
+
+func newReleaseCmd() *cobra.Command {
+	var agent string
+	cmd := &cobra.Command{
+		Use:   "release <id|->",
+		Short: "drop your lease on a task (`-` reads ids from stdin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := readIDs(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			var freed []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				t, err := c.ReleaseTask(id, agent)
+				if err != nil {
+					return err
+				}
+				freed = append(freed, t.ID)
+				res = append(res, t)
+				lines = append(lines, fmt.Sprintf("released #%d", t.ID))
+				return nil
+			})
+			return emitBatch(cmd, freed, res, lines, runErr)
+		},
+	}
+	cmd.Flags().StringVar(&agent, "as", "", "agent id that holds the lease (required)")
+	_ = cmd.MarkFlagRequired("as")
 	return cmd
 }
 
