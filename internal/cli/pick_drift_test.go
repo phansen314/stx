@@ -219,6 +219,12 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 	mux.HandleFunc("GET /workspaces/1/edges", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, map[string]any{"blocks": []any{}, "relates": []any{}})
 	})
+	// one live lease, so `release`'s builder (which picks from real claims) has something to pick
+	mux.HandleFunc("GET /workspaces/1/claims", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, items([]map[string]any{
+			{"id": 5, "title": "seed", "claimedBy": "agent-1", "claimedUntil": "2099-01-01 00:00:00"},
+		}))
+	})
 	// writes: return a plausible entity/edge; the fixture is enough for RunE to complete.
 	ws := map[string]any{"id": 1, "name": "auth", "version": 1}
 	track := map[string]any{"id": 10, "workspaceId": 1, "name": "api", "version": 1}
@@ -232,6 +238,17 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 	mux.HandleFunc("POST /tracks/10/tasks", ok(task))
 	mux.HandleFunc("POST /tasks/5/status", ok(task))
 	mux.HandleFunc("POST /tasks/5/segment", ok(task))
+	leased := map[string]any{
+		"id": 5, "workspaceId": 1, "segmentId": 20, "statusId": 100, "title": "seed", "version": 1,
+		"claimedBy": "agent-1", "claimedUntil": "2099-01-01 00:00:00",
+	}
+	mux.HandleFunc("POST /tasks/5/claim", ok(leased))
+	mux.HandleFunc("POST /tasks/5/release", ok(task))
+	mux.HandleFunc("POST /next/claim", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, items([]map[string]any{
+			{"id": 5, "title": "seed", "statusId": 100, "segmentId": 20, "claimedBy": "agent-1", "claimedUntil": "2099-01-01 00:00:00"},
+		}))
+	})
 	mux.HandleFunc("PATCH /tasks/5", ok(task))
 	mux.HandleFunc("POST /blocks", ok(map[string]any{}))
 	mux.HandleFunc("POST /blocks/archive", ok(map[string]any{}))
