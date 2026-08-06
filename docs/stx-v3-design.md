@@ -237,11 +237,13 @@ different tools:
   `version`; every edit of an existing row is a compare-and-set on it, and a
   mismatch returns a conflict carrying the current row for the agent to re-plan.
   Added now (cheap, helps even a lone agent racing the human).
-- **Double-work** (two agents both *pick* the same ready task) → the deferred
+- **Double-work** (two agents both *pick* the same ready task) → the
   **claim/lease**, not locking. OL on a status move gives an interim
   first-mover-wins, but only at the move instant — it does not reserve a task for
-  the duration of work. That reservation stays deferred until a second concurrent
-  agent actually runs.
+  the duration of work. **Built in schema v2** (decision D9): two nullable columns
+  on `task`, one atomic claim-if-free, a fused `next --claim`, and a frontier clause
+  that drops another agent's live lease. Expiry is evaluated on read, so a crashed
+  agent's reservation lapses with no sweeper.
 
 OL is correctness of edits; the lease is reservation of work — and claim-if-free is
 itself an OL-style CAS, so the two share one mechanism with no rework.
@@ -320,17 +322,18 @@ system, and — being registry-backed — without typo fragmentation of the one 
 starts empty and the dev populates it the day a kind is felt (kind is optional;
 typo-safety comes from the registry mechanism, not from pre-population).
 
-**Deferred — agent claim / lease.** Concurrency coordination for >1 simultaneous
-agent. Two nullable columns (`claimed_by`, `claimed_until`) plus one daemon
-primitive: an atomic *claim-if-free*, with a fused *next-and-claim*. The frontier
-gains `AND (claimed_until IS NULL OR claimed_until <= now)`. **SoC boundary:** stx
-provides only the columns and the atomic primitive; the *policy* — TTL duration,
-heartbeat/renew, crash handling, release-on-done — belongs to the **agent
-framework**, which passes `claimed_until` as a value. stx holds no coordination
-opinion; it only offers the mutual-exclusion primitive that agents can't build for
-themselves on a non-atomic store. **Trigger:** the moment a second concurrent agent
-runs. Failure mode if not yet added: silent double-work (recoverable, not
-corrupting).
+**Built (schema v2) — agent claim / lease.** Concurrency coordination for >1
+simultaneous agent, added when its stated trigger arrived. Two nullable columns
+(`claimed_by`, `claimed_until`) plus one daemon primitive: an atomic *claim-if-free*
+(whose `OR claimed_by = :me` arm doubles as renew), with a fused *next-and-claim* at
+`POST /next/claim`. The frontier gains
+`AND (claimed_by IS NULL OR claimed_until <= now [OR claimed_by = :me])`. **SoC
+boundary:** stx provides only the columns and the atomic primitive; the *policy* —
+TTL duration, heartbeat cadence, crash handling, release-on-done — belongs to the
+**agent framework**, which passes a TTL and lets the daemon compute the expiry
+against the clock the comparison uses (D9). stx holds no coordination opinion; it
+only offers the mutual-exclusion primitive that agents can't build for themselves on
+a non-atomic store.
 
 **Rejected — general labels / tags.** Considered and declined, on **duplication**
 grounds. stx is structurally dense (tracks, segments, status, two edge types,
@@ -365,8 +368,9 @@ verb/RPC surface; **the move/rename verbs** — task refile
 (`POST /tasks/{id}/segment`), segment rename+reparent (`PATCH /segments/{id}`), and
 the registry edits (`PATCH` on a status/kind, `POST …/statuses/order`). Nothing in
 the model is write-once any more except `segment.track_id` (#5) and the denormalized
-`workspace_id` (#8), both of which are structural.
+`workspace_id` (#8), both of which are structural. **Schema v2** adds the agent
+claim/lease (decision D9) — the first migration the project has shipped.
 
-**Open / deferred:** agent claim/lease (see Deferred additions above); durable
+**Open / deferred:** durable
 journal cursor (restart-surviving seq); optional unblock-impact annotation on
 `next`; TUI (out of scope this pass).

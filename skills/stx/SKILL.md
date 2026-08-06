@@ -55,6 +55,10 @@ to any command for machine-readable output; text is the compact default.
 | `stx status ls -w <ws>` · `status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` · `status edit <s> -w <ws> [--name …] [--order N]` · `status order <s1> <s2> … -w <ws>` | status admin — `edit` renames/renumbers one, `order` sets the kanban order in one txn (listed first, the rest behind them). `terminal` is not editable |
 | `stx kind new <name> -w <ws>` · `kind archive <name> -w <ws>` · `kind rename <old> <new> -w <ws>` | kind admin (a rename keeps the id, so typed tasks stay typed) |
 | `stx transition -w <ws> --from <s> --to <s>` | allow a status transition |
+| `stx claim <id> --as <agent> [--ttl 15m]` · `stx release <id> --as <agent>` | reserve a task for an agent / drop the lease. `claim` on a task you already hold **renews** it (no separate heartbeat verb). A leased task leaves everyone else's `next` |
+| `stx next -w <ws> --claim --as <agent> [--ttl 15m] [--limit N]` | **the agent loop** — frontier + reservation in one transaction, so two agents never get the same task. `-q` pipes the claimed ids |
+| `stx next -w <ws> --as <agent>` | frontier including the leases *you* hold (without `--as`, every leased task is hidden) |
+| `stx claims -w <ws>` | who holds what, and until when (live leases only) |
 | `stx version` (or `--version`) | client version, plus the daemon's schema/seq when it's up — works with the daemon down |
 
 `mv`/`edit`/`done` handle the optimistic-lock `version` automatically (read-modify-write, one retry

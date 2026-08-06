@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Agent claim/lease — `stx claim`, `stx release`, `stx next --claim`, `stx claims`.** Optimistic
+  locking stops two agents *editing* the same task off one read; it never stopped two agents both
+  *picking* the same ready task, because `next` is a pure read that hands everyone the same top row.
+  `schema.sql` has specified the fix since day one and gated it on one trigger — "the moment a second
+  concurrent agent runs" — which has now arrived. A lease is two nullable columns (`claimed_by`,
+  `claimed_until`) and one atomic **claim-if-free**; a leased task leaves every other agent's
+  frontier. `stx next -w x --claim --as "$SESSION" --ttl 15m -q` fuses the frontier and the
+  reservation into **one transaction** (`POST /next/claim`, not a flag on the `next` read), so two
+  agents racing `--limit 1` are guaranteed different tasks — asserted with genuinely concurrent
+  calls, not a simulation. `--as` without `--claim` keeps your own leases visible, so an agent
+  holding five tasks doesn't read an empty frontier and look idle. Claiming a task you already hold
+  **renews** it, so a heartbeat is the same call you started with and there is no second verb.
+  Expiry is evaluated on read, exactly like the frontier itself: **nothing sweeps**, a crashed
+  agent's tasks come back on their own, and that is also why there is no steal/force verb. A lease
+  moves neither `version` nor `updated_at` — lease and content are orthogonal axes, and sharing the
+  OL token would turn one agent's claim into every other agent's spurious 409. Losing a claim is a
+  409 carrying the holder and expiry so the loser re-plans without a second round trip. TTL length,
+  heartbeat cadence and release-on-done remain the agent framework's policy (decision **D9**); stx
+  owns only the primitive and the clock the expiry is compared against.
+- **Schema v2 and the project's first migration.** `migrations/002_agent_claims.sql` adds the two
+  lease columns and a partial index — purely additive, no table rebuilt, every existing task reading
+  as free. This is also the first real exercise of `Db.runMigrations`, whose registry had been empty
+  since v1: `DbTest` now upgrades a **populated** v1 database built from a frozen copy of the v3.0.0
+  schema, asserting the rows survive, `foreign_key_check` is clean, the columns are usable, and a
+  second boot is a no-op. Verified against a copy of a real 96-task database.
+
 - **`stx refile <id> -t <track> [-s <segment>]` — a task can finally change where it's filed.** `mv`
   moves a task through the kanban; `refile` moves it through the filing tree, which nothing could do
   before: `segment_id` was set at `add` and never again. Backed by a new daemon endpoint

@@ -67,9 +67,19 @@ workspace → track → segment* → task
 ## `next` (the frontier)
 
 A **filter, not a recommender**: a task is in the frontier iff `archived=0`, status not
-terminal, and no live `blocks` edge points at it from a non-terminal task. Ordered
-`priority DESC, id ASC` (presentation only). **Recompute-on-read, no caching.** Scopes:
-`-w` workspace (required), `--track`, `--segment` subtree, `--kind`.
+terminal, no live `blocks` edge points at it from a non-terminal task, and no *other* agent
+holds a live lease on it. Ordered `priority DESC, id ASC` (presentation only).
+**Recompute-on-read, no caching** — which is also how a lease expires, with no sweeper. Scopes:
+`-w` workspace (required), `--track`, `--segment` subtree, `--kind`, `--as` (identity).
+
+## Agent leases (schema v2, decision D9)
+
+`claimed_by` / `claimed_until` on `task`, plus one atomic **claim-if-free** whose
+`OR claimed_by = :me` arm doubles as renew. `stx next --claim --as <agent>` fuses frontier +
+reservation in one write-actor transaction, so two agents never get the same task. A lease moves
+neither `version` nor `updated_at` — lease and content are separate axes, and sharing the OL token
+would turn one agent's claim into another's spurious 409. TTL length is the agent framework's
+policy; stx only owns the primitive and the clock the expiry is compared against.
 
 ## Invariants
 
@@ -107,7 +117,13 @@ archives its incident edges), immutable `segment.track_id` (a task moves between
   segment/status/kind edits (`segment edit`, `status edit|order`, `kind rename`) are plain writes
   ordered by the single write-actor, with no CAS token on the wire.
 - Sole local user: schema changes edit `src/main/resources/schema.sql` and recreate the DB
-  rather than authoring a migration by default.
+  rather than authoring a migration by default. **Once there is data worth keeping, write the
+  migration** — `src/main/resources/migrations/NNN_name.sql`, registered in `Db.MIGRATIONS`, with
+  `SCHEMA_VERSION` bumped by one. `schema.sql` defines a fresh install; a migration is how an
+  existing DB catches up, and the two must converge (002 documents the one place they can't).
+  `DbTest` upgrades a populated v1 DB built from the frozen `schema_v1.sql` — copy that pattern.
+- **Copying the DB requires the WAL.** `cp stx.db` alone silently loses everything still in
+  `stx.db-wal`; take `stx.db`, `stx.db-wal` and `stx.db-shm` together.
 
 ## Stack
 

@@ -82,7 +82,9 @@ See the table and recipes in [`skills/stx/SKILL.md`](../skills/stx/SKILL.md) —
 the single source for the command list. In short:
 
 - **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>] [-s <segment>] [--kind <k>]`,
-  `show <id>`, `blockers <id> [--depth N]`, `version`
+  `show <id>`, `blockers <id> [--depth N]`, `claims -w <ws>`, `version`
+- **Agent leases:** `claim <id> --as <agent> [--ttl 15m]`, `release <id> --as <agent>`,
+  `next --claim --as <agent>`
 - **Tasks:** `add`, `mv <id> <status>`, `refile <id> -w <ws> -t <track> [-s <segment>]`,
   `edit` (incl. `--kind`/`--no-kind`), `done`, `block`, `relate`, `archive`
 - **Containers:** `ws new|rename`, `track new|edit`, `segment new|edit`, `status`, `kind`,
@@ -163,6 +165,36 @@ redefine which tasks count as done.
 unfinished work in the way of something you can't — walked transitively through the `blocks` DAG,
 shallowest hop first. A task is in `next` **iff** its blocker list is empty. This is how you see
 *what* a cross-track dependency is waiting on when `next -t <track>` returns less than you expected.
+
+## Agent leases — not double-working the same task
+
+Optimistic locking stops two agents *editing* the same task off one read. It does nothing about two
+agents both *picking* the same ready task, because `next` is a pure read and hands the same top row
+to everyone who asks. A **lease** closes that:
+
+```sh
+stx next -w auth --claim --as "$SESSION" --ttl 15m -q | while read id; do
+    …do the work…
+    stx release "$id" --as "$SESSION"
+done
+```
+
+`--claim` goes through a fused endpoint that computes the frontier **and** reserves it in one
+transaction, so two agents racing `--limit 1` are guaranteed different tasks. A leased task drops out
+of everyone else's `next`; `--as <agent>` keeps your own leases visible, so an agent holding five
+tasks doesn't read an empty frontier and think it's idle. `stx claims -w <ws>` shows who holds what.
+
+- **`claim` is also renew.** Re-claiming a task you already hold extends it, so a heartbeat is the
+  same call you started with. There is no separate verb.
+- **Crashes need no cleanup.** A lease carries an expiry, and expiry is evaluated on read — nothing
+  sweeps. A dead agent's tasks return to the frontier when its TTL lapses, which is why there is also
+  no steal/force verb.
+- **A lease is not an edit.** It moves neither `version` nor `updated_at`, so another agent claiming
+  a task can never turn your planned `mv`/`edit` into a spurious conflict.
+- **stx holds no policy.** How long to hold, when to heartbeat, whether to release on done — all the
+  agent framework's. stx supplies the columns and the atomic primitive (decision D9).
+- Releasing a task you don't hold is a 409 naming the holder; releasing something free or already
+  expired is a successful no-op, which is the state a crash-recovering agent finds its own tasks in.
 
 Optimistic-lock versions are handled automatically by `mv`/`refile`/`edit`/`done` (read-modify-write
 with one retry on conflict). Illegal status moves print the legal targets. The container/registry

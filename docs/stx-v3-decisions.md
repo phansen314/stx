@@ -151,3 +151,48 @@ and it ties D2's one-hop `blocked-by` view to `blockers --depth 1`.
 minimum hop count, and the diamond's shared node appears once. `stx blockers -q` prints the **blocker**
 ids (not the queried id), which is what makes `stx blockers 42 -q | stx done -` work; empty is exit 1 per
 the grep convention, so `if stx blockers 42 -q >/dev/null` reads as "is it blocked?".
+
+---
+
+## D9 — The agent lease answers to a TTL, not a timestamp, and never touches `version`
+
+`schema.sql` has specified the claim/lease since day one and gated it on one trigger — "the moment a
+second concurrent agent runs" — which has now happened. The shape it specified (two nullable columns,
+one atomic claim-if-free, a fused next-and-claim, and a frontier clause) is what shipped in **schema
+v2**. Three things the original note left open, decided here:
+
+**The daemon computes the expiry; the caller sends a TTL.** The note said the framework "passes
+`claimed_until` as a value". That would put the clock *and* the text format on the caller while the
+comparison (`claimed_until <= datetime('now')`) runs on SQLite's clock — a zone or format slip yields
+a lease that silently never expires, or one that is born expired. Corrupting the single guarantee the
+feature sells is too high a price for a purity that buys nothing on a loopback-only daemon. So the
+wire carries `ttlSeconds` and the daemon does the arithmetic. **The SoC boundary is unchanged**: *how
+long* to hold is still the framework's policy, and stx still holds no opinion about it — only the
+addition moved to the process that owns the clock.
+
+**A claim moves neither `version` nor `updated_at`.** Unstated, and load-bearing. If claiming bumped
+`version`, one agent taking a lease would hand every *other* agent a spurious `VersionConflict` on
+the next `mv`/`edit` — the lease would corrupt the mechanism it was meant to complement. Lease and
+content are orthogonal axes and must not share a token. `updated_at` stays put for the same reason:
+"last touched" should mean the work changed, not that someone looked at it. `ClaimTest` asserts both,
+the `updated_at` case against a backdated row (the column is second-granularity, so a naive
+same-second comparison would pass either way).
+
+**`next` hides other agents' leases, but not your own.** The specced clause
+(`AND (claimed_until IS NULL OR claimed_until <= now)`) hides *every* leased task, which would mean an
+agent that just claimed five tasks reads an empty frontier and looks idle. `?as=<agent>` adds an
+`OR claimed_by = :me` arm. Anonymous reads behave exactly as specced.
+
+**Not an invariant.** The canonical count stays **nine** (D1). A stale or expired lease is never
+*incorrect* — it just stops reserving. Which is also why there is no sweeper and no steal verb:
+expiry is evaluated on read, exactly like the frontier itself, so a crashed agent's lease lapses on
+its own and TTL *is* the crash story.
+
+**Renew is not a verb.** Claim-if-free's third arm is `OR claimed_by = :me`, so re-claiming a task
+you hold extends it. One primitive covers claim, renew, and heartbeat.
+
+**The fused call is a POST.** `next --claim` goes to `POST /next/claim`, not a flag on `GET /next` — a
+read that mutates breaks the read path's WAL-snapshot contract, and the point of fusing is that the
+select and the reservation share one write-actor transaction. That serialization is what makes
+double-work impossible, and `ClaimTest` asserts it with two concurrent `--limit 1` calls that must
+come away with different tasks.

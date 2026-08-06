@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # smoke-go.sh — exercise the Go stx CLI end to end (NOT unit tests; just runs the commands).
 #
-# All 25 commands: ls, tree, next, show, blockers, add, edit, mv, refile, done, block, relate,
-# unblock, unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status, kind,
-# transition, version (+ --json, errors), including the move/rename verbs (refile, segment edit,
-# status edit/order, kind rename). Creates a throwaway workspace and archives it at the end.
+# All 28 commands: ls, tree, next, show, blockers, claims, add, edit, mv, refile, done, claim,
+# release, block, relate, unblock, unrelate, relate-kinds, meta, graph, archive, ws, track, segment,
+# status, kind, transition, version (+ --json, errors), including the move/rename verbs (refile,
+# segment edit, status edit/order, kind rename) and the agent lease. Creates a throwaway workspace
+# and archives it at the end.
 #
 #   bash scripts/smoke-go.sh
 set -u
@@ -159,7 +160,35 @@ g next -w "$W" --kind defect
 printf '\nand a case-insensitive clash is refused (exit 2):\n'
 g kind rename defect "  CHORE " -w "$W"
 
+hr "7e. agent leases — claim / renew / release / expiry (no sweeper)"
+g claim "$A1" --as agent-1 --ttl 60s
+printf '\nthe frontier hides it from everyone else…\n'; g next -w "$W"
+printf '\n…but not from its holder:\n';                 g next -w "$W" --as agent-1
+printf '\nwho holds what:\n';                            g claims -w "$W"
+printf '\na second agent is refused, and told who has it (exit 2):\n'
+g claim "$A1" --as agent-2
+printf '\nre-claiming your own task RENEWS it (no separate heartbeat verb):\n'
+g claim "$A1" --as agent-1 --ttl 3600s
+printf '\nreleasing someone else'"'"'s lease is refused (exit 2):\n'; g release "$A1" --as agent-2
+printf '\nthe holder releases, and it returns to the frontier:\n'
+g release "$A1" --as agent-1
+g next -w "$W" -q
+printf '\nexpiry needs no sweeper — a 2s lease, then wait:\n'
+"$GO" claim "$A4" --as ghost --ttl 2s -q >/dev/null && echo "  #$A4 leased by ghost"
+printf '  frontier now: '; "$GO" next -w "$W" -q | tr '\n' ' '; echo
+sleep 3
+printf '  after the TTL: '; "$GO" next -w "$W" -q | tr '\n' ' '; echo "  <- #$A4 is back"
+g claims -w "$W"
+printf '\nthe agent loop — claim the frontier, work it, release it:\n'
+"$GO" next -w "$W" --claim --as loop-1 --ttl 60s --limit 2 -q | while read -r id; do
+    printf '  working #%s\n' "$id"
+    "$GO" release "$id" --as loop-1 -q >/dev/null
+done
+
 hr "8. error paths (each should print 'error: …' and exit 2)"
+g claim "$A1" --as agent-1 --ttl 100ms      # sub-second ttl truncates to 0 — rejected client-side
+g claim "$A1"                               # a lease needs a holder
+g next -w "$W" --claim                      # --claim without --as
 g refile "$A4" -w "$W"                       # refile without a destination track
 g refile "$A4" -w "$W" -t build -s no-such-segment
 g segment edit api -w "$W" -t build          # nothing to edit
