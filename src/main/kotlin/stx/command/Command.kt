@@ -138,6 +138,18 @@ data class CreateTask(
 data class MoveStatus(val taskId: Long, val toStatusId: Long, val expectedVersion: Int) : WriteCommand
 
 /**
+ * Refile a task under a different segment — a move through the *filing* tree, orthogonal to
+ * [MoveStatus]'s move through the kanban. CAS on [expectedVersion] (§6), like every task write.
+ *
+ * The target segment must sit in the SAME workspace: `task.workspace_id` is denormalized from the
+ * container chain (#8) and every incident edge is workspace-local (#7), so a cross-workspace
+ * refile would strand both. Cross-*track* refiling is fine — a task's blockers may live in another
+ * track by design (next.md, "Cross-track blockers"), so no edge needs touching.
+ */
+@Serializable
+data class RefileTask(val taskId: Long, val segmentId: Long, val expectedVersion: Int) : WriteCommand
+
+/**
  * Edit an existing task; CAS on [expectedVersion] (§6). A non-null scalar updates that field;
  * the genuinely-nullable columns use explicit clear flags so "leave unchanged" (null) is
  * distinct from "set to null": [clearKind].
@@ -154,7 +166,13 @@ data class EditTask(
     val metadataJson: String? = null,
 ) : WriteCommand
 
-// ── Writes: container/registry edits (versioned rows) ─────────────────────────
+// ── Writes: container/registry edits ─────────────────────────────────────────
+//
+// workspace/track carry a version column, so their edits CAS like a task's. segment/status/kind
+// do NOT (schema.sql: only workspace/track/task are versioned) — their edits are plain writes,
+// same as [SetDefaultStatus] and the archives. Serialization through the single write-actor is
+// what orders them; there is no lost-update to guard because there is no read-modify-write in
+// the client for these (each edit names its new value outright).
 
 @Serializable
 data class EditWorkspace(
@@ -172,6 +190,46 @@ data class EditTrack(
     val description: String? = null,
     val metadataJson: String? = null,
 ) : WriteCommand
+
+/**
+ * Rename and/or reparent a filing segment. Unversioned (see section note).
+ *
+ * A reparent is where invariants #2 and #5 stop being enforced by the mere *absence* of a
+ * mutation: the new parent must be live, must belong to the SAME track (#5 — `segment.track_id`
+ * is immutable; moving work across tracks is [RefileTask]'s job, per task), and must not sit in
+ * the moved segment's own subtree (#2 — `segmentReparentWouldCycle`). The synthetic root segment
+ * has no parent to change (`ux_segment_one_root` keeps its `parent_segment_id` NULL), so a
+ * reparent of a root is rejected; renaming one is fine.
+ *
+ * Both fields null is a no-op that returns the row — segment names are not unique by design, so
+ * there is nothing to CAS or clash on.
+ */
+@Serializable
+data class EditSegment(val segmentId: Long, val name: String? = null, val parentSegmentId: Long? = null) : WriteCommand
+
+/** Rename a status and/or change its kanban_order (display only). `terminal` is deliberately NOT
+ *  editable: flipping it retroactively redefines which existing tasks count as done and silently
+ *  rewrites the frontier. Unversioned (see section note). */
+@Serializable
+data class EditStatus(
+    val workspaceId: Long,
+    val statusId: Long,
+    val name: String? = null,
+    val kanbanOrder: Int? = null,
+) : WriteCommand
+
+/**
+ * Set the whole kanban order in one txn: the listed statuses take positions `0..n-1` in the given
+ * order, and any live status left out keeps its relative order behind them. A partial list is
+ * therefore a "float these to the front" move, which is how the order is usually adjusted.
+ */
+@Serializable
+data class ReorderStatuses(val workspaceId: Long, val statusIds: List<Long>) : WriteCommand
+
+/** Rename a kind. The registry is what makes `next --kind` trustworthy, so the rename takes the
+ *  same case-insensitive duplicate rejection as [CreateKind]. Unversioned (see section note). */
+@Serializable
+data class EditKind(val workspaceId: Long, val kindId: Long, val name: String) : WriteCommand
 
 // ── Writes: edges ────────────────────────────────────────────────────────────
 

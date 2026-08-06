@@ -83,6 +83,27 @@ object StatusRepo {
     fun setDefault(c: Connection, id: Long): Res<Int, StxError> =
         sql("status") { c.exec("UPDATE status SET is_default=1 WHERE id=? AND archived=0", id) }
 
+    /** Rename and/or re-order a live status. Unversioned row: no CAS, no updated_at. A rename can
+     *  still hit `ux_status_ws_name_live`, so the UNIQUE maps to a typed Duplicate via [sql]. */
+    fun edit(c: Connection, id: Long, name: String?, kanbanOrder: Int?): Res<Int, StxError> =
+        sql("status", "status name '$name'") {
+            val sets = buildList {
+                if (name != null) add("name=?")
+                if (kanbanOrder != null) add("kanban_order=?")
+            }
+            if (sets.isEmpty()) {
+                0
+            } else {
+                val params = buildList<Any?> {
+                    if (name != null) add(name); if (kanbanOrder != null) add(kanbanOrder); add(id)
+                }
+                c.exec("UPDATE status SET ${sets.joinToString(",")} WHERE id=? AND archived=0", *params.toTypedArray())
+            }
+        }
+
+    fun setOrder(c: Connection, id: Long, kanbanOrder: Int): Int =
+        c.exec("UPDATE status SET kanban_order=? WHERE id=? AND archived=0", kanbanOrder, id)
+
     fun archive(c: Connection, id: Long): Int =
         c.exec("UPDATE status SET archived=1 WHERE id=? AND archived=0", id)
 }
@@ -209,6 +230,20 @@ object SegmentRepo {
     fun allIdsOfTrack(c: Connection, trackId: Long): List<Long> =
         c.queryList("SELECT id FROM segment WHERE track_id=?", trackId) { it.getLong("id") }
 
+    /** Rename and/or reparent a live segment (the daemon has already checked #2/#5). Unversioned
+     *  row: no CAS, no updated_at. `track_id` is never in the SET list — it is immutable (#5). */
+    fun edit(c: Connection, id: Long, name: String?, parentSegmentId: Long?): Int {
+        val sets = buildList {
+            if (name != null) add("name=?")
+            if (parentSegmentId != null) add("parent_segment_id=?")
+        }
+        if (sets.isEmpty()) return 0
+        val params = buildList<Any?> {
+            if (name != null) add(name); if (parentSegmentId != null) add(parentSegmentId); add(id)
+        }
+        return c.exec("UPDATE segment SET ${sets.joinToString(",")} WHERE id=? AND archived=0", *params.toTypedArray())
+    }
+
     fun archive(c: Connection, id: Long): Int =
         c.exec("UPDATE segment SET archived=1 WHERE id=? AND archived=0", id)
 }
@@ -225,6 +260,11 @@ object KindRepo {
 
     fun listLive(c: Connection, workspaceId: Long): List<KindDto> =
         c.queryList("SELECT * FROM task_kind WHERE workspace_id=? AND archived=0 ORDER BY id", workspaceId) { it.toKind() }
+
+    /** Rename a live kind. Unversioned row: no CAS. The live UNIQUE (`ux_task_kind_ws_name_live`)
+     *  maps to a typed Duplicate via [sql]; tasks keep pointing at the same kind_id. */
+    fun rename(c: Connection, id: Long, name: String): Res<Int, StxError> =
+        sql("task_kind", "kind '$name'") { c.exec("UPDATE task_kind SET name=? WHERE id=? AND archived=0", name, id) }
 
     /** #9: kind archive null-cascades — referencing live tasks become untyped. */
     fun nullCascade(c: Connection, kindId: Long): Int =
@@ -278,6 +318,14 @@ object TaskRepo {
         c.exec(
             "UPDATE task SET status_id=?, version=version+1, updated_at=datetime('now') WHERE id=? AND archived=0 AND version=?",
             statusId, id, expected,
+        )
+
+    /** Refile: same CAS shape as [casMoveStatus], different column. workspace_id is NOT touched —
+     *  the daemon rejects a cross-workspace target, so the denormalized value stays correct (#8). */
+    fun casRefile(c: Connection, id: Long, segmentId: Long, expected: Int): Int =
+        c.exec(
+            "UPDATE task SET segment_id=?, version=version+1, updated_at=datetime('now') WHERE id=? AND archived=0 AND version=?",
+            segmentId, id, expected,
         )
 
     fun casEdit(c: Connection, e: EditTask): Int {

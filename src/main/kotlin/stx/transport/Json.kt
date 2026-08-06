@@ -61,6 +61,7 @@ fun encodeReply(reply: Reply): String = when (reply) {
 )
 
 @Serializable data class MoveStatusBody(val toStatusId: Long, val expectedVersion: Int)
+@Serializable data class RefileBody(val segmentId: Long, val expectedVersion: Int)
 
 @Serializable data class EditTaskBody(
     val expectedVersion: Int,
@@ -74,5 +75,12 @@ fun encodeReply(reply: Reply): String = when (reply) {
 
 @Serializable data class EditWorkspaceBody(val expectedVersion: Int, val name: String? = null, val metadataJson: String? = null)
 @Serializable data class EditTrackBody(val expectedVersion: Int, val name: String? = null, val description: String? = null, val metadataJson: String? = null)
+
+// segment/status/kind rows carry no version column, so their edit bodies carry no expectedVersion.
+@Serializable data class EditSegmentBody(val name: String? = null, val parentSegmentId: Long? = null)
+@Serializable data class EditStatusBody(val name: String? = null, val kanbanOrder: Int? = null)
+@Serializable data class StatusOrderBody(val statusIds: List<Long>)
+@Serializable data class EditKindBody(val name: String)
+
 @Serializable data class BlocksBody(val sourceTaskId: Long, val targetTaskId: Long)
 @Serializable data class RelatesBody(val kind: String, val sourceTaskId: Long, val targetTaskId: Long)

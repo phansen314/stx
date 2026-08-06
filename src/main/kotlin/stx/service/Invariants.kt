@@ -16,10 +16,10 @@ import java.sql.Connection
  * Reusable daemon invariants and small guards (brief §3). Each returns `Res<…, StxError>` so
  * callers `bind()` them inside a command's `rail { }`; a rejected invariant is a typed Failure,
  * never a thrown exception. Notes on coverage at this verb surface:
- *  - #2 (segment-tree acyclic) and #5 (segment.track_id immutable) are enforced by the ABSENCE
- *    of any reparent / move-segment / track-id mutation: a segment's parent and track are set
- *    only at create (where the new node has no descendants, so no cycle is possible) and never
- *    updated. [segmentReparentWouldCycle] is provided for the day a move-segment verb lands.
+ *  - #2 (segment-tree acyclic) is checked by [segmentReparentWouldCycle] on the one verb that can
+ *    break it, `EditSegment`'s reparent (at create the new node has no descendants, so no cycle is
+ *    possible). #5 (segment.track_id immutable) has no mutation to guard — no verb writes
+ *    `track_id`, and a reparent is rejected unless the new parent is already in the same track.
  */
 
 /**
@@ -71,8 +71,8 @@ fun blocksWouldCycle(c: Connection, source: Long, target: Long): Boolean {
     return false
 }
 
-/** #2 (future move-segment only): would reparenting [segmentId] under [newParentId] create a
- *  cycle? True iff newParent is in the subtree of segment, or is the segment itself. */
+/** #2: would reparenting [segmentId] under [newParentId] create a cycle? True iff newParent is in
+ *  the subtree of segment, or is the segment itself. Called by `EditSegment`. */
 fun segmentReparentWouldCycle(c: Connection, segmentId: Long, newParentId: Long): Boolean =
     newParentId == segmentId || newParentId in stx.repo.SegmentRepo.liveSubtreeIds(c, segmentId)
 

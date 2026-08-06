@@ -40,9 +40,14 @@ class StxService {
         // ── writes: tasks ──
         is CreateTask -> createTask(c, command)
         is MoveStatus -> moveStatus(c, command)
+        is RefileTask -> refileTask(c, command)
         is EditTask -> editTask(c, command)
         is EditWorkspace -> editWorkspace(c, command)
         is EditTrack -> editTrack(c, command)
+        is EditSegment -> editSegment(c, command)
+        is EditStatus -> editStatus(c, command)
+        is ReorderStatuses -> reorderStatuses(c, command)
+        is EditKind -> editKind(c, command)
         // ── writes: edges ──
         is AddBlocks -> addBlocks(c, command)
         is AddRelates -> addRelates(c, command)
@@ -233,6 +238,24 @@ class StxService {
         TaskRepo.getById(c, task.id) ?: raise(StxError.NotFound("task", task.id))
     }
 
+    /**
+     * Refile a task into another segment (§5). Deliberately shaped like [moveStatus]: OL first, so
+     * a racing loser gets a clean VersionConflict rather than a confusing target error.
+     */
+    private fun refileTask(c: Connection, cmd: RefileTask): Res<Reply, StxError> = rail {
+        val task = loadVisibleTask(c, cmd.taskId).bind()
+        ensure(task.version == cmd.expectedVersion) {
+            StxError.VersionConflict("task", task.id, cmd.expectedVersion, task.version)
+        }
+        val seg = SegmentRepo.getLive(c, cmd.segmentId) ?: raise(StxError.NotFound("segment", cmd.segmentId))
+        // #8/#7: workspace_id is denormalized onto the task and onto every incident edge, so the
+        // target must be in the same workspace. Cross-TRACK is allowed — see RefileTask's doc.
+        ensure(seg.workspaceId == task.workspaceId) { StxError.CrossWorkspace(seg.id, task.workspaceId) }
+        val changes = TaskRepo.casRefile(c, task.id, seg.id, cmd.expectedVersion)
+        interpretCas(c, "task", "task", task.id, cmd.expectedVersion, changes).bind()
+        TaskRepo.getById(c, task.id) ?: raise(StxError.NotFound("task", task.id))
+    }
+
     private fun editTask(c: Connection, cmd: EditTask): Res<Reply, StxError> = rail {
         cmd.title?.let { requireNonBlank("title", it).bind() }
         cmd.metadataJson?.let { requireJsonObject("metadata_json", it).bind() }
@@ -261,6 +284,81 @@ class StxService {
         val changes = TrackRepo.casEdit(c, cmd.id, cmd.expectedVersion, cmd.name, cmd.description, cmd.metadataJson)
         interpretCas(c, "track", "track", cmd.id, cmd.expectedVersion, changes).bind()
         TrackRepo.getById(c, cmd.id) ?: raise(StxError.NotFound("track", cmd.id))
+    }
+
+    /**
+     * Rename and/or reparent a segment. This is the verb whose absence used to "enforce"
+     * invariants #2 and #5 (see Invariants.kt) — so both are checked here explicitly.
+     */
+    private fun editSegment(c: Connection, cmd: EditSegment): Res<Reply, StxError> = rail {
+        cmd.name?.let { requireNonBlank("name", it).bind() }
+        val seg = SegmentRepo.getById(c, cmd.segmentId) ?: raise(StxError.NotFound("segment", cmd.segmentId))
+        if (seg.archived) raise(StxError.Gone("segment", cmd.segmentId))
+        if (cmd.parentSegmentId != null) {
+            // The root's NULL parent is what ux_segment_one_root and the tree walk both key on.
+            ensure(!seg.isRoot) { StxError.Validation("the root segment has no parent to change") }
+            val parent = SegmentRepo.getLive(c, cmd.parentSegmentId) ?: raise(StxError.NotFound("segment", cmd.parentSegmentId))
+            // #5: segment.track_id is immutable, so a reparent never leaves the track. Moving work
+            // between tracks is a per-task refile, not a container move.
+            ensure(parent.trackId == seg.trackId) { StxError.ImmutableField("segment", "track_id") }
+            // #2: the parent must not sit inside the moved segment's own subtree.
+            ensure(!segmentReparentWouldCycle(c, seg.id, parent.id)) { StxError.CycleRejected("segment", parent.id, seg.id) }
+        }
+        SegmentRepo.edit(c, seg.id, cmd.name, cmd.parentSegmentId)
+        SegmentRepo.getById(c, seg.id) ?: raise(StxError.NotFound("segment", seg.id))
+    }
+
+    private fun editStatus(c: Connection, cmd: EditStatus): Res<Reply, StxError> = rail {
+        cmd.name?.let { requireNonBlank("name", it).bind() }
+        val st = liveStatusOfWorkspace(c, cmd.workspaceId, cmd.statusId).bind()
+        if (cmd.name != null) {
+            // Same case-insensitive near-duplicate reject as createStatus — excluding the row
+            // itself, so re-casing a status ("todo" -> "Todo") is a legal rename of itself.
+            val wanted = cmd.name.trim()
+            if (StatusRepo.listLive(c, st.workspaceId).any { it.id != st.id && it.name.trim().equals(wanted, ignoreCase = true) }) {
+                raise(StxError.Duplicate("status", "status name '${cmd.name}'"))
+            }
+        }
+        StatusRepo.edit(c, st.id, cmd.name, cmd.kanbanOrder).bind()
+        StatusRepo.getById(c, st.id) ?: raise(StxError.NotFound("status", st.id))
+    }
+
+    /** Renumber kanban_order in one txn: listed statuses take 0..n-1, the rest keep their relative
+     *  order behind them (so a partial list is "float these to the front"). */
+    private fun reorderStatuses(c: Connection, cmd: ReorderStatuses): Res<Reply, StxError> = rail {
+        WorkspaceRepo.getLive(c, cmd.workspaceId) ?: raise(StxError.NotFound("workspace", cmd.workspaceId))
+        ensure(cmd.statusIds.isNotEmpty()) { StxError.Validation("no statuses given to order") }
+        ensure(cmd.statusIds.distinct().size == cmd.statusIds.size) { StxError.Validation("a status is listed twice") }
+        val named = cmd.statusIds.map { liveStatusOfWorkspace(c, cmd.workspaceId, it).bind() }
+        val namedIds = named.map { it.id }.toSet()
+        // listLive is already ORDER BY kanban_order, id — that is the "relative order" the
+        // unlisted statuses keep.
+        val rest = StatusRepo.listLive(c, cmd.workspaceId).filter { it.id !in namedIds }
+        (named + rest).forEachIndexed { i, s -> StatusRepo.setOrder(c, s.id, i) }
+        StatusList(StatusRepo.listLive(c, cmd.workspaceId))
+    }
+
+    private fun editKind(c: Connection, cmd: EditKind): Res<Reply, StxError> = rail {
+        requireNonBlank("name", cmd.name).bind()
+        val k = KindRepo.getById(c, cmd.kindId) ?: raise(StxError.NotFound("kind", cmd.kindId))
+        if (k.archived) raise(StxError.Gone("kind", cmd.kindId))
+        ensure(k.workspaceId == cmd.workspaceId) { StxError.CrossWorkspace(k.id, cmd.workspaceId) }
+        // The registry is what keeps `next --kind` from fragmenting, so a rename takes the same
+        // case-insensitive reject as createKind (excluding itself — a re-casing is legal).
+        val wanted = cmd.name.trim()
+        if (KindRepo.listLive(c, k.workspaceId).any { it.id != k.id && it.name.trim().equals(wanted, ignoreCase = true) }) {
+            raise(StxError.Duplicate("kind", "kind name '${cmd.name}'"))
+        }
+        KindRepo.rename(c, k.id, cmd.name).bind()
+        KindRepo.getById(c, k.id) ?: raise(StxError.NotFound("kind", k.id))
+    }
+
+    /** Shared guard for the status admin verbs: the row exists, is live, and is this workspace's. */
+    private fun liveStatusOfWorkspace(c: Connection, workspaceId: Long, statusId: Long): Res<StatusDto, StxError> = rail {
+        val st = StatusRepo.getById(c, statusId) ?: raise(StxError.NotFound("status", statusId))
+        if (st.archived) raise(StxError.Gone("status", statusId))
+        ensure(st.workspaceId == workspaceId) { StxError.CrossWorkspace(st.id, workspaceId) }
+        st
     }
 
     // ── edges ────────────────────────────────────────────────────────────────────────────────

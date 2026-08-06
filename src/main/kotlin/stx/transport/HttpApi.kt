@@ -75,9 +75,15 @@ class HttpApi(private val db: Db, private val service: StxService, private val a
         "/tracks/{id}/tasks" bind POST to { req -> body<TaskBody>(req) { taskFrom(trackId = req.longPath("id"), segmentId = null, b = it) } },
         "/segments/{id}/tasks" bind POST to { req -> body<TaskBody>(req) { taskFrom(trackId = null, segmentId = req.longPath("id"), b = it) } },
         "/tasks/{id}/status" bind POST to { req -> body<MoveStatusBody>(req) { MoveStatus(req.longPath("id"), it.toStatusId, it.expectedVersion) } },
+        // the filing-tree sibling of /status: same CAS shape, different axis (refile, not kanban)
+        "/tasks/{id}/segment" bind POST to { req -> body<RefileBody>(req) { RefileTask(req.longPath("id"), it.segmentId, it.expectedVersion) } },
         "/tasks/{id}" bind PATCH to { req -> body<EditTaskBody>(req) { editFrom(req.longPath("id"), it) } },
         "/workspaces/{id}" bind PATCH to { req -> body<EditWorkspaceBody>(req) { EditWorkspace(req.longPath("id"), it.expectedVersion, it.name, it.metadataJson) } },
         "/tracks/{id}" bind PATCH to { req -> body<EditTrackBody>(req) { EditTrack(req.longPath("id"), it.expectedVersion, it.name, it.description, it.metadataJson) } },
+        "/segments/{id}" bind PATCH to { req -> body<EditSegmentBody>(req) { EditSegment(req.longPath("id"), it.name, it.parentSegmentId) } },
+        "/workspaces/{id}/statuses/{sid}" bind PATCH to { req -> body<EditStatusBody>(req) { EditStatus(req.longPath("id"), req.longPath("sid"), it.name, it.kanbanOrder) } },
+        "/workspaces/{id}/statuses/order" bind POST to { req -> body<StatusOrderBody>(req) { ReorderStatuses(req.longPath("id"), it.statusIds) } },
+        "/workspaces/{id}/kinds/{kid}" bind PATCH to { req -> body<EditKindBody>(req) { EditKind(req.longPath("id"), req.longPath("kid"), it.name) } },
 
         // ── writes: edges ──
         "/blocks" bind POST to { req -> body<BlocksBody>(req) { AddBlocks(it.sourceTaskId, it.targetTaskId) } },
