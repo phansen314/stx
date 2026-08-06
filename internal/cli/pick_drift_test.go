@@ -175,8 +175,13 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 	mux.HandleFunc("GET /workspaces/1/kinds", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, items([]map[string]any{{"id": 200, "workspaceId": 1, "name": "bug"}}))
 	})
+	// root(20) plus one nested segment(21) — enough for the refile/reparent paths to have a
+	// non-root destination to name. Pickers take the first line, so builders still land on root.
 	mux.HandleFunc("GET /tracks/10/segments", func(w http.ResponseWriter, _ *http.Request) {
-		write(w, items([]map[string]any{{"id": 20, "workspaceId": 1, "trackId": 10, "isRoot": true, "name": "root"}}))
+		write(w, items([]map[string]any{
+			{"id": 20, "workspaceId": 1, "trackId": 10, "isRoot": true, "name": "root"},
+			{"id": 21, "workspaceId": 1, "trackId": 10, "parentSegmentId": 20, "name": "phase-1"},
+		}))
 	})
 	// honors ?status= (the kanban read) — #5 sits in Backlog(100), so any other filter is empty.
 	mux.HandleFunc("GET /tracks/10/tasks", func(w http.ResponseWriter, r *http.Request) {
@@ -226,6 +231,7 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 	}
 	mux.HandleFunc("POST /tracks/10/tasks", ok(task))
 	mux.HandleFunc("POST /tasks/5/status", ok(task))
+	mux.HandleFunc("POST /tasks/5/segment", ok(task))
 	mux.HandleFunc("PATCH /tasks/5", ok(task))
 	mux.HandleFunc("POST /blocks", ok(map[string]any{}))
 	mux.HandleFunc("POST /blocks/archive", ok(map[string]any{}))
@@ -248,6 +254,18 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 	// on the rendered name rather than on the request alone.
 	mux.HandleFunc("PATCH /workspaces/1", patched(ws))
 	mux.HandleFunc("PATCH /tracks/10", patched(track))
+	// the unversioned edits (segment/status/kind) PATCH the same way, minus the CAS token.
+	mux.HandleFunc("PATCH /segments/20", patched(seg))
+	mux.HandleFunc("PATCH /segments/21", patched(map[string]any{"id": 21, "workspaceId": 1, "trackId": 10, "name": "phase-1"}))
+	mux.HandleFunc("PATCH /workspaces/1/statuses/100", patched(map[string]any{"id": 100, "workspaceId": 1, "name": "Backlog", "kanbanOrder": 0, "isDefault": true}))
+	mux.HandleFunc("PATCH /workspaces/1/kinds/200", patched(map[string]any{"id": 200, "workspaceId": 1, "name": "bug"}))
+	mux.HandleFunc("POST /workspaces/1/statuses/order", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, items([]map[string]any{
+			{"id": 100, "name": "Backlog", "kanbanOrder": 0, "isDefault": true},
+			{"id": 101, "name": "Doing", "kanbanOrder": 1},
+			{"id": 102, "name": "Done", "kanbanOrder": 2, "terminal": true},
+		}))
+	})
 
 	log := &reqLog{}
 	srv := httptest.NewServer(record(log, mux))
