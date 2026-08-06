@@ -28,6 +28,7 @@ var errPickCancelled = errors.New("pick cancelled")
 var pickCommands = []struct{ name, help string }{
 	{"add", "create a task"},
 	{"mv", "move a task's status"},
+	{"refile", "file a task under another track/segment"},
 	{"done", "move a task to the terminal status"},
 	{"edit", "edit a task"},
 	{"show", "task detail + edges"},
@@ -44,7 +45,7 @@ var pickCommands = []struct{ name, help string }{
 	{"archive", "archive an entity"},
 	{"ws", "create a workspace"},
 	{"track", "create a track"},
-	{"segment", "create a segment"},
+	{"segment", "segment admin"},
 	{"status", "status admin"},
 	{"kind", "kind admin"},
 	{"transition", "add a status transition"},
@@ -53,6 +54,7 @@ var pickCommands = []struct{ name, help string }{
 var builders = map[string]func(*client.Client) ([]string, error){
 	"add":          buildAdd,
 	"mv":           buildMv,
+	"refile":       buildRefile,
 	"done":         buildDone,
 	"edit":         buildEdit,
 	"show":         buildShow,
@@ -69,7 +71,7 @@ var builders = map[string]func(*client.Client) ([]string, error){
 	"archive":      buildArchive,
 	"ws":           buildWs,
 	"track":        buildTrack,
-	"segment":      buildSegmentNew,
+	"segment":      buildSegment,
 	"status":       buildStatus,
 	"kind":         buildKind,
 	"transition":   buildTransition,
@@ -200,6 +202,29 @@ func buildMv(c *client.Client) ([]string, error) {
 		return nil, err
 	}
 	return argvMv(strconv.FormatInt(task.ID, 10), st), nil
+}
+
+// buildRefile picks the task, then its destination: a track, then a segment inside it. Landing on
+// the track's root segment is the common case, so it assembles without -s (the command's default).
+func buildRefile(c *client.Client) ([]string, error) {
+	ws, err := pickWorkspace(c, "building:  stx refile …")
+	if err != nil {
+		return nil, err
+	}
+	task, err := pickTask(c, ws.ID, "building:  stx refile …   (workspace: "+ws.Name+")")
+	if err != nil {
+		return nil, err
+	}
+	id := strconv.FormatInt(task.ID, 10)
+	tr, err := pickTrack(c, ws.ID, "building:  stx refile "+id+" -w "+ws.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	seg, err := pickSegment(c, tr.ID, "building:  stx refile "+id+" -w "+ws.Name+" -t "+tr.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	return argvRefile(id, ws.Name, tr.Name, seg), nil
 }
 
 func buildDone(c *client.Client) ([]string, error) {
@@ -561,24 +586,41 @@ func buildTrack(c *client.Client) ([]string, error) {
 	return []string{"track", "edit", tr.Name, "-w", ws.Name, "--name", name}, nil
 }
 
-func buildSegmentNew(c *client.Client) ([]string, error) {
-	ws, err := pickWorkspace(c, "building:  stx segment new …")
+func buildSegment(c *client.Client) ([]string, error) {
+	sub, err := pickOne("segment> ", "building:  stx segment …", "new", "edit")
 	if err != nil {
 		return nil, err
 	}
-	tr, err := pickTrack(c, ws.ID, "building:  stx segment new -w "+ws.Name+" …")
+	ws, err := pickWorkspace(c, "building:  stx segment "+sub+" …")
 	if err != nil {
 		return nil, err
 	}
-	name, err := promptRequired("segment name> ")
+	tr, err := pickTrack(c, ws.ID, "building:  stx segment "+sub+" -w "+ws.Name+" …")
 	if err != nil {
 		return nil, err
 	}
-	return []string{"segment", "new", name, "-w", ws.Name, "-t", tr.Name}, nil
+	if sub == "new" {
+		name, err := promptRequired("segment name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"segment", "new", name, "-w", ws.Name, "-t", tr.Name}, nil
+	}
+	seg, err := pickSegment(c, tr.ID, "building:  stx segment edit -w "+ws.Name+" -t "+tr.Name+" …")
+	if err != nil {
+		return nil, err
+	}
+	// --name and --under are both optional but the command needs at least one; renaming is the
+	// one that always applies (the root segment can't be reparented at all).
+	name, err := promptRequired("new name> ")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"segment", "edit", seg.Name, "-w", ws.Name, "-t", tr.Name, "--name", name}, nil
 }
 
 func buildStatus(c *client.Client) ([]string, error) {
-	sub, err := pickOne("status> ", "building:  stx status …", "new", "ls", "default", "archive")
+	sub, err := pickOne("status> ", "building:  stx status …", "new", "ls", "default", "archive", "edit", "order")
 	if err != nil {
 		return nil, err
 	}
@@ -599,6 +641,24 @@ func buildStatus(c *client.Client) ([]string, error) {
 			return nil, err
 		}
 		return []string{"status", "new", name, "-w", ws.Name, "--order", order}, nil
+	case "edit":
+		st, err := pickStatusName(c, ws.ID, "building:  stx status edit -w "+ws.Name+" …")
+		if err != nil {
+			return nil, err
+		}
+		name, err := promptRequired("new name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"status", "edit", st, "-w", ws.Name, "--name", name}, nil
+	case "order":
+		// One status is a complete `order` call ("float this to the front"); the rest keep their
+		// relative order behind it. More can be typed onto the assembled line.
+		st, err := pickStatusName(c, ws.ID, "building:  stx status order -w "+ws.Name+" …")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"status", "order", st, "-w", ws.Name}, nil
 	default: // default | archive — pick an existing status
 		st, err := pickStatusName(c, ws.ID, "building:  stx status "+sub+" -w "+ws.Name+" …")
 		if err != nil {
@@ -609,7 +669,7 @@ func buildStatus(c *client.Client) ([]string, error) {
 }
 
 func buildKind(c *client.Client) ([]string, error) {
-	sub, err := pickOne("kind> ", "building:  stx kind …", "new", "archive")
+	sub, err := pickOne("kind> ", "building:  stx kind …", "new", "archive", "rename")
 	if err != nil {
 		return nil, err
 	}
@@ -624,9 +684,16 @@ func buildKind(c *client.Client) ([]string, error) {
 		}
 		return []string{"kind", "new", name, "-w", ws.Name}, nil
 	}
-	k, err := pickKindName(c, ws.ID, "building:  stx kind archive -w "+ws.Name+" …")
+	k, err := pickKindName(c, ws.ID, "building:  stx kind "+sub+" -w "+ws.Name+" …")
 	if err != nil {
 		return nil, err
+	}
+	if sub == "rename" {
+		name, err := promptRequired("new name> ")
+		if err != nil {
+			return nil, err
+		}
+		return []string{"kind", "rename", k, name, "-w", ws.Name}, nil
 	}
 	return []string{"kind", "archive", k, "-w", ws.Name}, nil
 }
@@ -683,11 +750,21 @@ func appendFields(argv []string, fields []kv) []string {
 }
 
 func argvMv(id, status string) []string { return []string{"mv", id, status} }
-func argvDone(id string) []string       { return []string{"done", id} }
-func argvShow(id string) []string       { return []string{"show", id} }
-func argvBlockers(id string) []string   { return []string{"blockers", id} }
-func argvNext(ws string) []string       { return []string{"next", "-w", ws} }
-func argvTree(ws string) []string       { return []string{"tree", "-w", ws} }
+
+// argvRefile omits -s for a root segment: `refile -t T` already means "the track's root".
+func argvRefile(id, ws, track string, seg api.Segment) []string {
+	argv := []string{"refile", id, "-w", ws, "-t", track}
+	if !seg.IsRoot {
+		argv = append(argv, "-s", seg.Name)
+	}
+	return argv
+}
+
+func argvDone(id string) []string     { return []string{"done", id} }
+func argvShow(id string) []string     { return []string{"show", id} }
+func argvBlockers(id string) []string { return []string{"blockers", id} }
+func argvNext(ws string) []string     { return []string{"next", "-w", ws} }
+func argvTree(ws string) []string     { return []string{"tree", "-w", ws} }
 
 func argvEdit(id string, fields []kv) []string {
 	return appendFields([]string{"edit", id}, fields)

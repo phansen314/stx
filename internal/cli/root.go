@@ -59,7 +59,7 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newLsCmd(), newTreeCmd(), newNextCmd(), newShowCmd(), newBlockersCmd(),
-		newAddCmd(), newMvCmd(), newEditCmd(), newDoneCmd(),
+		newAddCmd(), newMvCmd(), newRefileCmd(), newEditCmd(), newDoneCmd(),
 		newBlockCmd(), newRelateCmd(), newUnblockCmd(), newUnrelateCmd(), newRelateKindsCmd(),
 		newMetaCmd(), newGraphCmd(), newArchiveCmd(),
 		newWsCmd(), newTrackCmd(), newSegmentCmd(), newStatusCmd(), newKindCmd(), newTransitionCmd(),

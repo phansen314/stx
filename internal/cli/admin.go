@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/phansen314/stx/internal/api"
 	"github.com/spf13/cobra"
@@ -172,7 +173,58 @@ func newSegmentCmd() *cobra.Command {
 	create.Flags().StringVarP(&trackFlag, "track", "t", "", "track name or id (required)")
 	_ = create.MarkFlagRequired("track")
 	create.Flags().Int64Var(&parent, "parent", 0, "parent segment id")
-	segment.AddCommand(create)
+
+	var editWs, editTrack, name, under string
+	edit := &cobra.Command{
+		Use: "edit <segment>", Short: "rename a segment or move it under another parent", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("under") {
+				return errors.New("nothing to edit — pass --name and/or --under")
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, editWs)
+			if err != nil {
+				return err
+			}
+			tr, err := resolveTrack(c, ws.ID, editTrack)
+			if err != nil {
+				return err
+			}
+			seg, err := resolveSegment(c, tr.ID, args[0])
+			if err != nil {
+				return err
+			}
+			changes := map[string]any{}
+			if cmd.Flags().Changed("name") {
+				changes["name"] = name
+			}
+			if cmd.Flags().Changed("under") {
+				// A reparent stays inside the track (segment.track_id is immutable), so the new
+				// parent is resolved from the same track's segment list.
+				parent, err := resolveSegment(c, tr.ID, under)
+				if err != nil {
+					return err
+				}
+				changes["parentSegmentId"] = parent.ID
+			}
+			// No CAS: segment rows carry no version column (see client.EditSegment).
+			out, err := c.EditSegment(seg.ID, changes)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, []int64{out.ID}, out, fmt.Sprintf("segment #%d  %s", out.ID, out.Name))
+		},
+	}
+	addWsFlag(edit, &editWs)
+	edit.Flags().StringVarP(&editTrack, "track", "t", "", "track name or id (required)")
+	_ = edit.MarkFlagRequired("track")
+	edit.Flags().StringVar(&name, "name", "", "new name")
+	edit.Flags().StringVar(&under, "under", "", "new parent segment (name or id, same track)")
+
+	segment.AddCommand(create, edit)
 	return segment
 }
 
@@ -300,7 +352,92 @@ func newStatusCmd() *cobra.Command {
 	}
 	addWsFlag(archive, &arcWs)
 
-	status.AddCommand(list, create, setDefault, archive)
+	var editWs, editName string
+	var editOrder int
+	edit := &cobra.Command{
+		Use: "edit <status>", Short: "rename a status or change its kanban order", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("order") {
+				return errors.New("nothing to edit — pass --name and/or --order")
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, editWs)
+			if err != nil {
+				return err
+			}
+			statuses, err := c.Statuses(ws.ID)
+			if err != nil {
+				return err
+			}
+			s, err := resolveStatusIn(statuses, args[0])
+			if err != nil {
+				return err
+			}
+			changes := map[string]any{}
+			if cmd.Flags().Changed("name") {
+				changes["name"] = editName
+			}
+			if cmd.Flags().Changed("order") {
+				changes["kanbanOrder"] = editOrder
+			}
+			// `terminal` is deliberately not editable — flipping it would retroactively redefine
+			// which tasks count as done and rewrite the frontier.
+			out, err := c.EditStatus(ws.ID, s.ID, changes)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, []int64{out.ID}, out, fmt.Sprintf("status #%d  %s", out.ID, out.Name))
+		},
+	}
+	addWsFlag(edit, &editWs)
+	edit.Flags().StringVar(&editName, "name", "", "new name")
+	edit.Flags().IntVar(&editOrder, "order", 0, "new kanban order")
+
+	var orderWs string
+	reorder := &cobra.Command{
+		Use:   "order <status> [status...]",
+		Short: "set the kanban order (listed first; the rest keep their order behind them)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, orderWs)
+			if err != nil {
+				return err
+			}
+			statuses, err := c.Statuses(ws.ID)
+			if err != nil {
+				return err
+			}
+			ids := make([]int64, 0, len(args))
+			for _, ref := range args {
+				s, err := resolveStatusIn(statuses, ref)
+				if err != nil {
+					return err
+				}
+				ids = append(ids, s.ID)
+			}
+			ordered, err := c.ReorderStatuses(ws.ID, ids)
+			if err != nil {
+				return err
+			}
+			outIDs := make([]int64, 0, len(ordered))
+			names := make([]string, 0, len(ordered))
+			for _, s := range ordered {
+				outIDs = append(outIDs, s.ID)
+				names = append(names, s.Name)
+			}
+			return emit(cmd, outIDs, ordered, strings.Join(names, " → "))
+		},
+	}
+	addWsFlag(reorder, &orderWs)
+
+	status.AddCommand(list, create, setDefault, archive, edit, reorder)
 	return status
 }
 
@@ -357,7 +494,37 @@ func newKindCmd() *cobra.Command {
 	}
 	addWsFlag(archive, &arcWs)
 
-	kind.AddCommand(create, archive)
+	var renameWs string
+	rename := &cobra.Command{
+		Use: "rename <name> <new-name>", Short: "rename a kind", Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, renameWs)
+			if err != nil {
+				return err
+			}
+			kinds, err := c.Kinds(ws.ID)
+			if err != nil {
+				return err
+			}
+			k, err := resolveKindIn(kinds, args[0])
+			if err != nil {
+				return err
+			}
+			// Tasks keep pointing at the same kind id, so a rename never re-types existing work.
+			out, err := c.RenameKind(ws.ID, k.ID, args[1])
+			if err != nil {
+				return err
+			}
+			return emit(cmd, []int64{out.ID}, out, fmt.Sprintf("kind #%d  %s", out.ID, out.Name))
+		},
+	}
+	addWsFlag(rename, &renameWs)
+
+	kind.AddCommand(create, archive, rename)
 	return kind
 }
 

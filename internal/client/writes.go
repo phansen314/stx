@@ -42,6 +42,14 @@ func (c *Client) MoveStatus(id, toStatusID int64, expectedVersion int) (api.Task
 	return out, c.call("POST", fmt.Sprintf("/tasks/%d/status", id), body, &out)
 }
 
+// RefileTask → POST /tasks/{id}/segment (CAS on expectedVersion). The filing-tree sibling of
+// MoveStatus: same shape, different axis — this moves a task between segments/tracks, not stages.
+func (c *Client) RefileTask(id, segmentID int64, expectedVersion int) (api.Task, error) {
+	body := map[string]any{"segmentId": segmentID, "expectedVersion": expectedVersion}
+	var out api.Task
+	return out, c.call("POST", fmt.Sprintf("/tasks/%d/segment", id), body, &out)
+}
+
 // EditTask → PATCH /tasks/{id}. changes is a partial-update map (camelCase keys) merged with
 // the required expectedVersion CAS token; a field present updates it, absent leaves it. Only
 // kindId uses the explicit clearKind flag to distinguish "clear" from "unchanged".
@@ -117,6 +125,33 @@ func (c *Client) CreateSegment(track int64, name string, parent *int64) (api.Seg
 	}
 	var out api.Segment
 	return out, c.call("POST", fmt.Sprintf("/tracks/%d/segments", track), body, &out)
+}
+
+// EditSegment / EditStatus / RenameKind → PATCH. These rows carry no version column (only
+// workspace/track/task do), so there is no expectedVersion token and no CAS retry: the write-actor
+// serializes them and each edit names its new value outright.
+func (c *Client) EditSegment(id int64, changes map[string]any) (api.Segment, error) {
+	var out api.Segment
+	return out, c.call("PATCH", fmt.Sprintf("/segments/%d", id), changes, &out)
+}
+
+func (c *Client) EditStatus(ws, statusID int64, changes map[string]any) (api.Status, error) {
+	var out api.Status
+	return out, c.call("PATCH", fmt.Sprintf("/workspaces/%d/statuses/%d", ws, statusID), changes, &out)
+}
+
+// ReorderStatuses → POST /workspaces/{ws}/statuses/order: the listed ids take kanban positions
+// 0..n-1 in one txn; unlisted live statuses keep their relative order behind them. Returns the
+// whole new order.
+func (c *Client) ReorderStatuses(ws int64, statusIDs []int64) ([]api.Status, error) {
+	var out api.Items[api.Status]
+	body := map[string]any{"statusIds": statusIDs}
+	return out.Items, c.call("POST", fmt.Sprintf("/workspaces/%d/statuses/order", ws), body, &out)
+}
+
+func (c *Client) RenameKind(ws, kindID int64, name string) (api.Kind, error) {
+	var out api.Kind
+	return out, c.call("PATCH", fmt.Sprintf("/workspaces/%d/kinds/%d", ws, kindID), map[string]any{"name": name}, &out)
 }
 
 func (c *Client) CreateStatus(ws int64, name string, order int, terminal bool) (api.Status, error) {

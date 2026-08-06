@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -155,6 +156,81 @@ func newMvCmd() *cobra.Command {
 			return emitBatch(cmd, moved, res, lines, runErr)
 		},
 	}
+}
+
+// newRefileCmd is `mv`'s sibling on the other axis: `mv` moves a task through the kanban, `refile`
+// moves it through the filing tree. The target is resolved ONCE (unlike mv's per-task status
+// lookup) because a segment is a single concrete destination — ids from stdin that live in another
+// workspace are rejected by the daemon rather than silently retargeted.
+func newRefileCmd() *cobra.Command {
+	var wsFlag, trackFlag, segFlag string
+	cmd := &cobra.Command{
+		Use:   "refile <id|->",
+		Short: "file a task under another track/segment (`-` reads ids from stdin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := readIDs(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			c, err := dial()
+			if err != nil {
+				return err
+			}
+			ws, err := resolveWorkspace(c, wsFlag)
+			if err != nil {
+				return err
+			}
+			tr, err := resolveTrack(c, ws.ID, trackFlag)
+			if err != nil {
+				return err
+			}
+			segs, err := c.Segments(tr.ID)
+			if err != nil {
+				return err
+			}
+			var target api.Segment
+			if segFlag != "" {
+				if target, err = pickByRef(segs, segFlag, "segment",
+					func(s api.Segment) int64 { return s.ID }, func(s api.Segment) string { return s.Name }); err != nil {
+					return err
+				}
+			} else {
+				// No segment named: the track's root, matching `add -t` (a task filed "to the track").
+				i := slices.IndexFunc(segs, func(s api.Segment) bool { return s.IsRoot })
+				if i < 0 {
+					return fmt.Errorf("track '%s' has no root segment", tr.Name)
+				}
+				target = segs[i]
+			}
+			where := tr.Name
+			if !target.IsRoot {
+				where += "/" + target.Name
+			}
+			var moved []int64
+			var res []any
+			var lines []string
+			runErr := runIDs(cmd, ids, func(id int64) error {
+				task, err := retryConflict(
+					func() (int, error) { d, e := c.TaskDetail(id); return d.Task.Version, e },
+					func(v int) (api.Task, error) { return c.RefileTask(id, target.ID, v) },
+				)
+				if err != nil {
+					return err
+				}
+				moved = append(moved, task.ID)
+				res = append(res, task)
+				lines = append(lines, fmt.Sprintf("refiled #%d → %s", task.ID, where))
+				return nil
+			})
+			return emitBatch(cmd, moved, res, lines, runErr)
+		},
+	}
+	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
+	cmd.Flags().StringVarP(&trackFlag, "track", "t", "", "destination track name or id (required)")
+	_ = cmd.MarkFlagRequired("track")
+	cmd.Flags().StringVarP(&segFlag, "segment", "s", "", "destination segment name or id within the track (default: its root)")
+	return cmd
 }
 
 func newDoneCmd() *cobra.Command {

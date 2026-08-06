@@ -64,6 +64,17 @@ func resolveTrack(c *client.Client, wsID int64, ref string) (api.Track, error) {
 	return pickByRef(tracks, ref, "track", func(t api.Track) int64 { return t.ID }, func(t api.Track) string { return t.Name })
 }
 
+// resolveSegment picks a segment by name-or-id within one track. Segment names are not unique by
+// design (they are pure filing labels), so a repeated name is an "ambiguous — use an id" error
+// rather than a silent first-match.
+func resolveSegment(c *client.Client, trackID int64, ref string) (api.Segment, error) {
+	segs, err := c.Segments(trackID)
+	if err != nil {
+		return api.Segment{}, err
+	}
+	return pickByRef(segs, ref, "segment", func(s api.Segment) int64 { return s.ID }, func(s api.Segment) string { return s.Name })
+}
+
 // resolveStatusIn / resolveKindIn pick from an already-fetched list (mirror context.status/kind).
 func resolveStatusIn(statuses []api.Status, ref string) (api.Status, error) {
 	return pickByRef(statuses, ref, "status", func(s api.Status) int64 { return s.ID }, func(s api.Status) string { return s.Name })

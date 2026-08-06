@@ -52,13 +52,15 @@ func registerCompletions(root *cobra.Command) {
 
 	// ── first positional = a task id ──
 	posArg(completeTaskArg,
-		[]string{"show"}, []string{"blockers"}, []string{"edit"}, []string{"done"},
+		[]string{"show"}, []string{"blockers"}, []string{"edit"}, []string{"done"}, []string{"refile"},
 		[]string{"block"}, []string{"unblock"}, []string{"relate"}, []string{"unrelate"})
 	posArg(completeMvArgs, []string{"mv"})           // id, then legal statuses
 	posArg(completeArchiveArgs, []string{"archive"}) // <type> then id-of-type
-	posArg(completeStatusArg, []string{"status", "default"}, []string{"status", "archive"})
+	posArg(completeStatusArg, []string{"status", "default"}, []string{"status", "archive"}, []string{"status", "edit"})
+	posArg(completeStatusArgs, []string{"status", "order"}) // every position is a status
 	posArg(completeTrackArg, []string{"track", "edit"})
-	posArg(completeKindArg, []string{"kind", "archive"})
+	posArg(completeKindArg, []string{"kind", "archive"}, []string{"kind", "rename"})
+	posArg(completeSegmentArg, []string{"segment", "edit"})
 	posArg(completeMetaKeyArg, []string{"meta", "get"}, []string{"meta", "set"}, []string{"meta", "del"})
 
 	// ── task-id flags: block/unblock --on, relate/unrelate --to ──
@@ -69,13 +71,19 @@ func registerCompletions(root *cobra.Command) {
 	// ── -w / --workspace on every workspace-scoped command ──
 	flagComp("workspace", completeWorkspaceFlag,
 		[]string{"add"}, []string{"next"}, []string{"tree"}, []string{"relate-kinds"}, []string{"graph"},
-		[]string{"meta"}, []string{"ws", "rename"}, []string{"track", "new"}, []string{"track", "edit"},
-		[]string{"segment", "new"},
+		[]string{"meta"}, []string{"refile"}, []string{"ws", "rename"}, []string{"track", "new"}, []string{"track", "edit"},
+		[]string{"segment", "new"}, []string{"segment", "edit"},
 		[]string{"status", "new"}, []string{"status", "ls"}, []string{"status", "default"}, []string{"status", "archive"},
-		[]string{"kind", "new"}, []string{"kind", "archive"}, []string{"transition"})
+		[]string{"status", "edit"}, []string{"status", "order"},
+		[]string{"kind", "new"}, []string{"kind", "archive"}, []string{"kind", "rename"}, []string{"transition"})
 
 	// ── --track (ws-scoped) ──
-	flagComp("track", completeTrackFlag, []string{"add"}, []string{"graph"}, []string{"segment", "new"}, []string{"meta"})
+	flagComp("track", completeTrackFlag, []string{"add"}, []string{"graph"}, []string{"segment", "new"},
+		[]string{"segment", "edit"}, []string{"refile"}, []string{"meta"})
+
+	// ── --segment / --under: a segment within the -t track on the line ──
+	flagComp("segment", completeSegmentFlag, []string{"refile"})
+	flagComp("under", completeSegmentFlag, []string{"segment", "edit"})
 
 	// ── enum flags ──
 	flagComp("status", completeStatusFlag, []string{"add"})
@@ -468,6 +476,72 @@ func completeStatusArg(cmd *cobra.Command, args []string, _ string) ([]string, c
 	}
 	var out []string
 	for _, s := range statuses {
+		out = append(out, s.Name)
+	}
+	return out, noComp
+}
+
+// completeStatusArgs is completeStatusArg for a variadic positional (`status order a b c`): every
+// position offers a status, minus the ones already typed.
+func completeStatusArgs(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	ws := wsFromFlag(cmd, c)
+	if ws == nil {
+		return nil, noComp
+	}
+	statuses, err := c.Statuses(*ws)
+	if err != nil {
+		return nil, noComp
+	}
+	taken := map[string]bool{}
+	for _, a := range args {
+		taken[a] = true
+	}
+	var out []string
+	for _, s := range statuses {
+		if !taken[s.Name] {
+			out = append(out, s.Name)
+		}
+	}
+	return out, noComp
+}
+
+// completeSegmentArg / completeSegmentFlag offer the segments of the track named by the command's
+// -t flag (segment edit's positional and --under, refile's --segment) — a segment ref is only
+// meaningful within its track.
+func completeSegmentArg(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, noComp
+	}
+	return completeSegmentFlag(cmd, args, "")
+}
+
+func completeSegmentFlag(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	c := completeClient()
+	if c == nil {
+		return nil, noComp
+	}
+	ws := wsFromFlag(cmd, c)
+	if ws == nil {
+		return nil, noComp
+	}
+	tf := cmd.Flag("track")
+	if tf == nil || tf.Value.String() == "" {
+		return nil, noComp
+	}
+	tr, err := resolveTrack(c, *ws, tf.Value.String())
+	if err != nil {
+		return nil, noComp
+	}
+	segs, err := c.Segments(tr.ID)
+	if err != nil {
+		return nil, noComp
+	}
+	var out []string
+	for _, s := range segs {
 		out = append(out, s.Name)
 	}
 	return out, noComp
