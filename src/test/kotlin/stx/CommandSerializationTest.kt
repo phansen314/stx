@@ -6,8 +6,13 @@ import stx.command.Command
 import stx.command.CreateTask
 import stx.command.CreateWorkspace
 import stx.command.ListWorkspaces
+import stx.command.EditKind
+import stx.command.EditSegment
+import stx.command.EditStatus
 import stx.command.MoveStatus
 import stx.command.Next
+import stx.command.RefileTask
+import stx.command.ReorderStatuses
 import stx.command.ListBlockers
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,5 +36,10 @@ class CommandSerializationTest {
         roundtrip(CreateTask(trackId = 4, title = "do it", priority = 5))
         roundtrip(MoveStatus(taskId = 7, toStatusId = 2, expectedVersion = 3))
         roundtrip(AddBlocks(sourceTaskId = 1, targetTaskId = 2))
+        roundtrip(RefileTask(taskId = 7, segmentId = 3, expectedVersion = 2))
+        roundtrip(EditSegment(segmentId = 5, name = "phase-2", parentSegmentId = 6))
+        roundtrip(EditStatus(workspaceId = 1, statusId = 2, name = "Todo", kanbanOrder = 3))
+        roundtrip(ReorderStatuses(workspaceId = 1, statusIds = listOf(3, 1, 2)))
+        roundtrip(EditKind(workspaceId = 1, kindId = 4, name = "impl"))
     }
 }

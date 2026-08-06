@@ -166,6 +166,61 @@ class HttpApiTest {
         assertEquals(409, patch("/tracks/$trackId", """{"expectedVersion":0,"name":"x"}""").status.code)
     }
 
+    @Test fun `post task segment refiles under CAS`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"main"}"""))
+        val segId = idOf(post("/tracks/$trackId/segments", """{"name":"phase-1"}"""))
+        val taskId = idOf(post("/tracks/$trackId/tasks", """{"title":"x"}"""))
+
+        val ok = post("/tasks/$taskId/segment", """{"segmentId":$segId,"expectedVersion":0}""")
+        assertEquals(200, ok.status.code)
+        assertEquals(segId, parser.decodeFromString<TaskDto>(ok.bodyString()).segmentId)
+
+        val stale = post("/tasks/$taskId/segment", """{"segmentId":$segId,"expectedVersion":0}""")
+        assertEquals(409, stale.status.code)
+        assertEquals("VersionConflict", errorOf(stale))
+    }
+
+    @Test fun `patch segment renames and reparents, 409s a cycle`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"main"}"""))
+        val a = idOf(post("/tracks/$trackId/segments", """{"name":"a"}"""))
+        val child = idOf(post("/tracks/$trackId/segments", """{"name":"child","parentSegmentId":$a}"""))
+
+        val ok = patch("/segments/$a", """{"name":"alpha"}""")
+        assertEquals(200, ok.status.code)
+        assertEquals("alpha", parser.parseToJsonElement(ok.bodyString()).jsonObject["name"]!!.jsonPrimitive.content)
+
+        val cycle = patch("/segments/$a", """{"parentSegmentId":$child}""")
+        assertEquals(409, cycle.status.code)
+        assertEquals("CycleRejected", errorOf(cycle))
+    }
+
+    @Test fun `patch status renames, order endpoint renumbers, patch kind renames`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        fun statusList() = parser.parseToJsonElement(get("/workspaces/$wsId/statuses").bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        fun names() = statusList().map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        fun statusId(name: String) = statusList()
+            .first { it.jsonObject["name"]!!.jsonPrimitive.content == name }.jsonObject["id"]!!.jsonPrimitive.long
+
+        val backlog = statusId("Backlog")
+        val review = statusId("Review")
+        val renamed = patch("/workspaces/$wsId/statuses/$backlog", """{"name":"Todo"}""")
+        assertEquals(200, renamed.status.code)
+        assertEquals("Todo", parser.parseToJsonElement(renamed.bodyString()).jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals(409, patch("/workspaces/$wsId/statuses/$backlog", """{"name":"review"}""").status.code)
+
+        val reordered = post("/workspaces/$wsId/statuses/order", """{"statusIds":[$review,$backlog]}""")
+        assertEquals(200, reordered.status.code)
+        assertEquals(listOf("Review", "Todo", "Implementation", "Done"), names())
+
+        val kindId = idOf(post("/workspaces/$wsId/kinds", """{"name":"impl"}"""))
+        val kindRenamed = patch("/workspaces/$wsId/kinds/$kindId", """{"name":"build"}""")
+        assertEquals(200, kindRenamed.status.code)
+        assertEquals("build", parser.parseToJsonElement(kindRenamed.bodyString()).jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
     @Test fun `bulk edge export returns both edge kinds`() {
         val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
         val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))

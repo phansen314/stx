@@ -360,4 +360,165 @@ class ServiceTest {
         val root = (r(ListSegments(track)).getOrThrow() as SegmentList).items.first { it.isRoot }
         assertEquals(root.id, seg.parentSegmentId, "no-parent segment defaults to the root, not NULL")
     }
+
+    // ── refile: a task moves through the filing tree ─────────────────────────────────────────
+
+    @Test fun `refile moves a task across tracks and re-scopes next, keeping its edges`() {
+        val (ws, track1) = seedTrack()
+        val track2 = w(CreateTrack(ws, "billing")).id()
+        val seg2 = w(CreateSegment(track2, "phase-1")).id()
+        val blocker = w(CreateTask(trackId = track1, title = "blocker")).id()
+        val t = w(CreateTask(trackId = track1, title = "x")).getOrThrow() as TaskDto
+        w(AddBlocks(blocker, t.id)).getOrThrow()
+
+        val moved = w(RefileTask(t.id, seg2, t.version)).getOrThrow() as TaskDto
+        assertEquals(seg2, moved.segmentId)
+        assertEquals(ws, moved.workspaceId, "#8: same workspace, so the denormalized id is unchanged")
+        assertEquals(t.version + 1, moved.version)
+        // Track scope follows the task; the cross-track blocks edge survives and still gates it.
+        assertEquals(listOf(moved.id), (r(ListTasks(track2)).getOrThrow() as TaskList).items.map { it.id })
+        assertTrue((r(Next(ws, trackId = track2)).getOrThrow() as FrontierList).items.isEmpty(), "still blocked from track1")
+        w(MoveStatus(blocker, statusId(ws, "Done"), 0)).getOrThrow()
+        assertEquals(listOf(moved.id), (r(Next(ws, trackId = track2)).getOrThrow() as FrontierList).items.map { it.id })
+    }
+
+    @Test fun `refile rejects a cross-workspace target, a stale version, and an unknown segment`() {
+        val (_, track1) = seedTrack()
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        val track2 = w(CreateTrack(ws2, "t2")).id()
+        val foreignSeg = w(CreateSegment(track2, "s2")).id()
+        val t = w(CreateTask(trackId = track1, title = "x")).getOrThrow() as TaskDto
+
+        assertIs<StxError.CrossWorkspace>(w(RefileTask(t.id, foreignSeg, t.version)).failureOrNull())
+        assertIs<StxError.NotFound>(w(RefileTask(t.id, 99999, t.version)).failureOrNull())
+        // OL is checked before the target (like moveStatus): a stale version conflicts even with a
+        // target that would itself be rejected.
+        assertIs<StxError.VersionConflict>(w(RefileTask(t.id, foreignSeg, t.version + 7)).failureOrNull())
+        // and the task hasn't moved
+        assertEquals(t.segmentId, (r(GetTask(t.id)).getOrThrow() as TaskDetail).task.segmentId)
+    }
+
+    @Test fun `refile of an archived task is Gone`() {
+        val (_, track) = seedTrack()
+        val t = w(CreateTask(trackId = track, title = "x")).getOrThrow() as TaskDto
+        val seg = w(CreateSegment(track, "s")).id()
+        w(ArchiveTask(t.id)).getOrThrow()
+        assertIs<StxError.Gone>(w(RefileTask(t.id, seg, t.version)).failureOrNull())
+    }
+
+    // ── segment edit: rename + reparent (#2, #5) ─────────────────────────────────────────────
+
+    @Test fun `segment reparent moves the subtree and its tasks stay filed under it`() {
+        val (ws, track) = seedTrack()
+        val a = w(CreateSegment(track, "a")).id()
+        val b = w(CreateSegment(track, "b")).id()
+        val child = w(CreateSegment(track, "child", parentSegmentId = a)).getOrThrow() as SegmentDto
+        val task = w(CreateTask(segmentId = child.id, title = "x")).id()
+
+        val moved = w(EditSegment(a, name = "alpha", parentSegmentId = b)).getOrThrow() as SegmentDto
+        assertEquals("alpha", moved.name)
+        assertEquals(b, moved.parentSegmentId)
+        assertEquals(track, moved.trackId, "#5: track_id is untouched by a reparent")
+        // The subtree came along: scoping next at b now reaches the grandchild's task.
+        assertEquals(listOf(task), (r(Next(ws, segmentId = b)).getOrThrow() as FrontierList).items.map { it.id })
+    }
+
+    @Test fun `segment reparent rejects a cycle, a foreign track, and the root`() {
+        val (ws, track) = seedTrack()
+        val other = w(CreateTrack(ws, "t2")).id()
+        val a = w(CreateSegment(track, "a")).id()
+        val child = w(CreateSegment(track, "child", parentSegmentId = a)).id()
+        val grand = w(CreateSegment(track, "grand", parentSegmentId = child)).id()
+        val root = (r(ListSegments(track)).getOrThrow() as SegmentList).items.first { it.isRoot }
+
+        assertIs<StxError.CycleRejected>(w(EditSegment(a, parentSegmentId = grand)).failureOrNull()) // #2, deep
+        assertIs<StxError.CycleRejected>(w(EditSegment(a, parentSegmentId = a)).failureOrNull())     // #2, self
+        val foreign = w(CreateSegment(other, "s")).id()
+        assertIs<StxError.ImmutableField>(w(EditSegment(a, parentSegmentId = foreign)).failureOrNull()) // #5
+        assertIs<StxError.Validation>(w(EditSegment(root.id, parentSegmentId = a)).failureOrNull())
+        // renaming the root is fine, though
+        assertEquals("(top)", (w(EditSegment(root.id, name = "(top)")).getOrThrow() as SegmentDto).name)
+        // nothing moved
+        assertEquals(root.id, (r(ListSegments(track)).getOrThrow() as SegmentList).items.first { it.id == a }.parentSegmentId)
+    }
+
+    @Test fun `segment edit rejects a blank name and an archived segment`() {
+        val (_, track) = seedTrack()
+        val a = w(CreateSegment(track, "a")).id()
+        assertIs<StxError.Validation>(w(EditSegment(a, name = " ")).failureOrNull())
+        w(ArchiveSegment(a)).getOrThrow()
+        assertIs<StxError.Gone>(w(EditSegment(a, name = "b")).failureOrNull())
+    }
+
+    // ── registry edits: status rename/order, kind rename ─────────────────────────────────────
+
+    @Test fun `status rename keeps its tasks and rejects a case-insensitive clash`() {
+        val (ws, track) = seedTrack()
+        val backlog = statusId(ws, "Backlog")
+        val task = w(CreateTask(trackId = track, title = "x")).id()
+        val renamed = w(EditStatus(ws, backlog, name = "Todo")).getOrThrow() as StatusDto
+        assertEquals("Todo", renamed.name)
+        assertTrue(renamed.isDefault, "rename doesn't disturb the default flag")
+        assertEquals(backlog, (r(GetTask(task)).getOrThrow() as TaskDetail).task.statusId, "tasks follow the id")
+        // clashing with another live status (any casing) is refused; re-casing itself is allowed.
+        assertIs<StxError.Duplicate>(w(EditStatus(ws, backlog, name = "  REVIEW ")).failureOrNull())
+        assertEquals("TODO", (w(EditStatus(ws, backlog, name = "TODO")).getOrThrow() as StatusDto).name)
+    }
+
+    @Test fun `status edit rejects a foreign workspace, an archived status, and a blank name`() {
+        val (ws, _) = seedTrack()
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        assertIs<StxError.CrossWorkspace>(w(EditStatus(ws2, statusId(ws, "Backlog"), name = "x")).failureOrNull())
+        assertIs<StxError.Validation>(w(EditStatus(ws, statusId(ws, "Backlog"), name = " ")).failureOrNull())
+        val extra = w(CreateStatus(ws, "Blocked", kanbanOrder = 9)).id()
+        w(ArchiveStatus(ws, extra)).getOrThrow()
+        assertIs<StxError.Gone>(w(EditStatus(ws, extra, name = "x")).failureOrNull())
+    }
+
+    @Test fun `status order renumbers listed statuses first and keeps the rest behind them`() {
+        val (ws, _) = seedTrack()
+        val review = statusId(ws, "Review")
+        val backlog = statusId(ws, "Backlog")
+        val ordered = (w(ReorderStatuses(ws, listOf(review, backlog))).getOrThrow() as StatusList).items
+        assertEquals(listOf("Review", "Backlog", "Implementation", "Done"), ordered.map { it.name })
+        assertEquals(listOf(0, 1, 2, 3), ordered.map { it.kanbanOrder })
+        // a single-field edit can still nudge one status
+        w(EditStatus(ws, backlog, kanbanOrder = 99)).getOrThrow()
+        assertEquals("Backlog", statuses(ws).last().name)
+    }
+
+    @Test fun `status order rejects duplicates, an empty list, and a foreign status`() {
+        val (ws, _) = seedTrack()
+        val backlog = statusId(ws, "Backlog")
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        assertIs<StxError.Validation>(w(ReorderStatuses(ws, listOf(backlog, backlog))).failureOrNull())
+        assertIs<StxError.Validation>(w(ReorderStatuses(ws, emptyList())).failureOrNull())
+        assertIs<StxError.CrossWorkspace>(w(ReorderStatuses(ws, listOf(statusId(ws2, "Backlog")))).failureOrNull())
+        assertIs<StxError.NotFound>(w(ReorderStatuses(ws, listOf(99999))).failureOrNull())
+        // rejected wholesale — nothing was renumbered
+        assertEquals(listOf("Backlog", "Implementation", "Review", "Done"), statuses(ws).map { it.name })
+    }
+
+    @Test fun `kind rename keeps typed tasks and rejects a case-insensitive clash`() {
+        val (ws, track) = seedTrack()
+        val impl = w(CreateKind(ws, "impl")).id()
+        w(CreateKind(ws, "docs")).getOrThrow()
+        val task = w(CreateTask(trackId = track, title = "x", kindId = impl)).id()
+        assertEquals("build", (w(EditKind(ws, impl, "build")).getOrThrow() as KindDto).name)
+        assertEquals(impl, (r(GetTask(task)).getOrThrow() as TaskDetail).task.kindId, "tasks follow the id")
+        // `next --kind` still resolves the task under the new name's id
+        assertEquals(listOf(task), (r(Next(ws, kindId = impl)).getOrThrow() as FrontierList).items.map { it.id })
+        assertIs<StxError.Duplicate>(w(EditKind(ws, impl, " DOCS ")).failureOrNull())
+        assertEquals("BUILD", (w(EditKind(ws, impl, "BUILD")).getOrThrow() as KindDto).name)
+    }
+
+    @Test fun `kind rename rejects a foreign workspace, an archived kind, and a blank name`() {
+        val (ws, _) = seedTrack()
+        val ws2 = w(CreateWorkspace("ws2")).id()
+        val impl = w(CreateKind(ws, "impl")).id()
+        assertIs<StxError.CrossWorkspace>(w(EditKind(ws2, impl, "x")).failureOrNull())
+        assertIs<StxError.Validation>(w(EditKind(ws, impl, " ")).failureOrNull())
+        w(ArchiveKind(ws, impl)).getOrThrow()
+        assertIs<StxError.Gone>(w(EditKind(ws, impl, "x")).failureOrNull())
+    }
 }
