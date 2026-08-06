@@ -40,6 +40,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx blockers <id> [--depth N]` | **inverse of `next`** — the unfinished work blocking this task, transitively, shallowest hop first. `-q` prints the *blocker* ids (so `stx blockers 42 -q \| stx done -` clears the path); exit 1 = nothing is blocking it |
 | `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …] [-e]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin, `-e` writes the description in `$EDITOR`) |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
+| `stx refile <id> -w <ws> -t <track> [-s <segment>]` | re-file a task under another track/segment (`mv` on the filing axis; `-s` names a segment in that track, default its root). Same workspace only; `-` reads ids from stdin |
 | `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k \| --no-kind] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |
 | `stx done <id>` | move to the workspace's terminal status |
 | `stx block <id> --on <blocker-id>` · `stx unblock <id> --on <blocker-id>` | add / remove a blocks edge (feeds `next`) |
@@ -50,9 +51,9 @@ to any command for machine-readable output; text is the compact default.
 | `stx archive task\|segment\|track\|workspace <id> [--yes]` | archive (`--yes` required for track/workspace — cascades) |
 | `stx ws new <name>` · `stx ws rename <new-name> -w <ws>` | create / rename a workspace |
 | `stx track new <name> -w <ws> [--desc …]` · `stx track edit <track> -w <ws> [--name …] [--desc …]` | create / edit a track |
-| `stx segment new <name> -w <ws> -t <track> [--parent <id>]` | new segment |
-| `stx status ls -w <ws>` · `status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` | status admin |
-| `stx kind new <name> -w <ws>` · `kind archive <name> -w <ws>` | kind admin |
+| `stx segment new <name> -w <ws> -t <track> [--parent <id>]` · `segment edit <segment> -w <ws> -t <track> [--name …] [--under <parent>]` | create / rename / reparent a segment (reparent stays inside the track; the root can be renamed, not moved) |
+| `stx status ls -w <ws>` · `status new <name> -w <ws> --order N [--terminal]` · `status default <s> -w <ws>` · `status archive <s> -w <ws>` · `status edit <s> -w <ws> [--name …] [--order N]` · `status order <s1> <s2> … -w <ws>` | status admin — `edit` renames/renumbers one, `order` sets the kanban order in one txn (listed first, the rest behind them). `terminal` is not editable |
+| `stx kind new <name> -w <ws>` · `kind archive <name> -w <ws>` · `kind rename <old> <new> -w <ws>` | kind admin (a rename keeps the id, so typed tasks stay typed) |
 | `stx transition -w <ws> --from <s> --to <s>` | allow a status transition |
 | `stx version` (or `--version`) | client version, plus the daemon's schema/seq when it's up — works with the daemon down |
 

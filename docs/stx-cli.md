@@ -83,9 +83,10 @@ the single source for the command list. In short:
 
 - **Orient:** `ls`, `tree -w <ws>`, `next -w <ws> [-t <track>] [-s <segment>] [--kind <k>]`,
   `show <id>`, `blockers <id> [--depth N]`, `version`
-- **Tasks:** `add`, `mv <id> <status>`, `edit` (incl. `--kind`/`--no-kind`), `done`, `block`,
-  `relate`, `archive`
-- **Containers:** `ws new|rename`, `track new|edit`, `segment new`, `status`, `kind`, `transition`
+- **Tasks:** `add`, `mv <id> <status>`, `refile <id> -w <ws> -t <track> [-s <segment>]`,
+  `edit` (incl. `--kind`/`--no-kind`), `done`, `block`, `relate`, `archive`
+- **Containers:** `ws new|rename`, `track new|edit`, `segment new|edit`, `status`, `kind`,
+  `transition`
 - **Metadata:** `meta {ls|get|set|del} (--task <id> | -w <ws> [--track <t>]) [key] [value]` —
   free-form JSON key/values on a task, workspace, or track (`set` parses the value as JSON,
   falling back to a string; `--string` forces a literal string)
@@ -137,16 +138,36 @@ the single source for the command list. In short:
     `scripts/graph_bigdemo.sh` (a 13-task cross-track DAG in mixed statuses/kinds/priorities,
     rendered with `examples/graph.toml` in every cluster mode) each spin an isolated throwaway daemon
     and render into `build/`.
-- **Containers/registries:** `ws new|rename`, `track new|edit`, `segment new`, `status …`,
-  `kind …`, `transition`
+- **Containers/registries:** `ws new|rename`, `track new|edit`, `segment new|edit`,
+  `status new|ls|default|archive|edit|order`, `kind new|archive|rename`, `transition`
+
+**Nothing is filed once and stuck.** `mv` moves a task through the kanban; **`refile`** moves it
+through the filing tree — `stx refile 41 -w auth -t billing` re-files it under another track (its
+root segment), `-s <segment>` names a segment inside that track instead. Ids may come from stdin
+(`stx next -w auth -q | stx refile - -w auth -t triage`). The destination must be in the same
+workspace (a task's workspace is derived from its container chain, and its edges are
+workspace-local); crossing *tracks* is fine — a `blocks` edge may already span them.
+
+The containers themselves move and rename too: **`segment edit <segment> -w <ws> -t <track>
+[--name N] [--under <parent>]`** renames a segment or reparents it (inside its own track — a
+segment's track is immutable, so moving *work* between tracks is `refile`'s job, per task; the
+track's root segment can be renamed but not reparented, and a parent inside the segment's own
+subtree is rejected as a cycle). **`status edit <status> -w <ws> [--name N] [--order N]`** and
+**`status order <s1> <s2> … -w <ws>`** rename and renumber the kanban (`order` puts the listed
+statuses first and leaves the rest behind them, in one transaction); **`kind rename <old> <new> -w
+<ws>`** renames a work type. Renames keep ids, so tasks stay on the status/kind they were on.
+A status's `terminal` flag is deliberately *not* editable — flipping it would retroactively
+redefine which tasks count as done.
 
 `blockers` is the inverse of `next`: `next` lists what you *can* work on, `blockers <id>` lists the
 unfinished work in the way of something you can't — walked transitively through the `blocks` DAG,
 shallowest hop first. A task is in `next` **iff** its blocker list is empty. This is how you see
 *what* a cross-track dependency is waiting on when `next -t <track>` returns less than you expected.
 
-Optimistic-lock versions are handled automatically by `mv`/`edit`/`done` (read-modify-write with one
-retry on conflict). Illegal status moves print the legal targets.
+Optimistic-lock versions are handled automatically by `mv`/`refile`/`edit`/`done` (read-modify-write
+with one retry on conflict). Illegal status moves print the legal targets. The container/registry
+edits (`segment edit`, `status edit|order`, `kind rename`) have no CAS token at all — those rows
+carry no version column; the daemon's single write-actor is what orders them.
 
 ## Editing in $EDITOR
 

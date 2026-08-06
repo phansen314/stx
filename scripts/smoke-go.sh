@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # smoke-go.sh — exercise the Go stx CLI end to end (NOT unit tests; just runs the commands).
 #
-# All 24 commands: ls, tree, next, show, blockers, add, edit, mv, done, block, relate, unblock,
-# unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status, kind, transition,
-# version (+ --json, errors). Creates a throwaway workspace and archives it at the end.
+# All 25 commands: ls, tree, next, show, blockers, add, edit, mv, refile, done, block, relate,
+# unblock, unrelate, relate-kinds, meta, graph, archive, ws, track, segment, status, kind,
+# transition, version (+ --json, errors), including the move/rename verbs (refile, segment edit,
+# status edit/order, kind rename). Creates a throwaway workspace and archives it at the end.
 #
 #   bash scripts/smoke-go.sh
 set -u
@@ -119,7 +120,50 @@ printf '\nexit codes — 0 results / 1 empty / 2 error:\n'
 "$GO" meta ls --task "$A4" >/dev/null 2>&1;          printf '  meta ls (no keys set)  → %s\n' "$?"
 "$GO" next -w "$W" -t no-such-track >/dev/null 2>&1; printf '  next (bad track)       → %s\n' "$?"
 
+hr "7c. refile — a task moves through the FILING tree (mv's other axis)"
+g track new triage -w "$W" --desc "the refile destination"
+printf '\ncross-track, to the destination track'"'"'s root segment:\n'
+g refile "$A4" -w "$W" -t triage
+g tree -w "$W"
+printf '\nand back into the api segment, named (not by id):\n'
+g refile "$A4" -w "$W" -t build -s api
+printf '\nthe blocks edge survives a refile — #%s is still blocked by #%s:\n' "$A2" "$A1"
+g blockers "$A2"
+printf '\nbatch: pipe a whole frontier into another track (-q ids in, -q ids out):\n'
+"$GO" next -w "$W" -t build -q | "$GO" refile - -w "$W" -t triage -q
+g tree -w "$W"
+
+hr "7d. container / registry edits — nothing is filed once and stuck"
+g segment new v2 -w "$W" -t build
+g segment edit v2 -w "$W" -t build --name v2-api --under api   # rename + reparent in one call
+g tree -w "$W"
+printf '\na parent inside the moved segment'"'"'s own subtree is a cycle (exit 2):\n'
+g segment edit api -w "$W" -t build --under v2-api
+printf '\nthe root segment has no parent to change (exit 2):\n'
+g segment edit "(root)" -w "$W" -t build --under api
+printf '\ncross-track destinations are not nameable from -t build (exit 2):\n'
+g segment edit api -w "$W" -t triage --name nope
+printf '\nstatus rename keeps the id, so #%s stays where it is:\n' "$A1"
+g status edit Blocked -w "$W" --name Waiting
+g show "$A1"
+printf '\nreorder the kanban (listed first, the rest keep their order behind them):\n'
+g status order Waiting Backlog -w "$W"
+g status ls -w "$W"
+printf '\nrenaming onto another live status, any casing, is a duplicate (exit 2):\n'
+g status edit Waiting -w "$W" --name "  backlog "
+printf '\nkind rename — typed tasks keep their kind (same id):\n'
+g edit "$A1" --kind bug
+g kind new chore -w "$W"
+g kind rename bug defect -w "$W"
+g next -w "$W" --kind defect
+printf '\nand a case-insensitive clash is refused (exit 2):\n'
+g kind rename defect "  CHORE " -w "$W"
+
 hr "8. error paths (each should print 'error: …' and exit 2)"
+g refile "$A4" -w "$W"                       # refile without a destination track
+g refile "$A4" -w "$W" -t build -s no-such-segment
+g segment edit api -w "$W" -t build          # nothing to edit
+g status edit Backlog -w "$W"                # nothing to edit
 g show 99999999                              # NotFound
 g mv "$A1" Nonsense                          # unknown status (resolve)
 g edit "$A1"                                 # nothing to edit

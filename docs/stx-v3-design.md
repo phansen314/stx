@@ -251,13 +251,18 @@ itself an OL-style CAS, so the two share one mechanism with no rework.
 ## Daemon-enforced invariants (not expressible in SQLite)
 
 1. `blocks` forms a DAG (no cycles).
-2. `segment.parent_segment_id` forms a tree within a track (no cycles).
+2. `segment.parent_segment_id` forms a tree within a track (no cycles). Checked on the
+   one verb that can break it — `segment edit --under` (reparent); at create the new
+   node has no descendants, so no cycle is reachable.
 3. Each track has exactly one root segment, auto-created with it.
 4. Archiving a task archives its incident `blocks`/`relates_to` rows, so a live
    edge always connects two live tasks (keeps `next` simple). *Corollary:*
    archiving an incomplete blocker auto-unblocks its dependents (the edge is
    gone) — intended behavior; archived means does-not-exist.
-5. A segment's `track_id` is immutable and equals its root ancestor's track.
+5. A segment's `track_id` is immutable and equals its root ancestor's track. No verb
+   writes it: `segment edit --under` reparents only within the segment's own track,
+   and moving *work* between tracks is a per-task refile
+   (`POST /tasks/{id}/segment`), which changes `task.segment_id` and nothing else.
 6. **Container archive cascade.** Archiving a track archives, in the same
    transaction, all its live segments and all live tasks filed under them (each
    task archive cascades its edges via #4). Archiving a **segment** archives, in
@@ -356,7 +361,11 @@ journal; daemon is single writer, recompute-on-read.
 
 **Also built since:** the inverse read `stx blockers <task>` — a daemon endpoint
 (`GET /tasks/{id}/blockers`), not a client traversal (decision D8); the full daemon
-verb/RPC surface.
+verb/RPC surface; **the move/rename verbs** — task refile
+(`POST /tasks/{id}/segment`), segment rename+reparent (`PATCH /segments/{id}`), and
+the registry edits (`PATCH` on a status/kind, `POST …/statuses/order`). Nothing in
+the model is write-once any more except `segment.track_id` (#5) and the denormalized
+`workspace_id` (#8), both of which are structural.
 
 **Open / deferred:** agent claim/lease (see Deferred additions above); durable
 journal cursor (restart-surviving seq); optional unblock-impact annotation on

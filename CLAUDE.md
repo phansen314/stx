@@ -75,9 +75,10 @@ terminal, and no live `blocks` edge points at it from a non-terminal task. Order
 
 SQLite enforces FKs, CHECKs, and partial-unique indexes. The daemon enforces the graph
 invariants SQLite can't, transactionally (`service/Invariants.kt`, `service/StxService.kt`):
-`blocks` is a DAG, `segment` parent is acyclic within a track, exactly one root segment per
-track, archive cascade (archiving a task archives its incident edges), immutable
-`segment.track_id`. Canonical invariant count is **nine** — numbered in `schema.sql` /
+`blocks` is a DAG, `segment` parent is acyclic within a track (checked on `segment edit --under`,
+the only reparent verb), exactly one root segment per track, archive cascade (archiving a task
+archives its incident edges), immutable `segment.track_id` (a task moves between tracks via
+`refile`; a segment never does). Canonical invariant count is **nine** — numbered in `schema.sql` /
 `docs/stx-v3-design.md` (decision D1).
 
 ## Conventions
@@ -100,9 +101,11 @@ track, archive cascade (archiving a task archives its incident edges), immutable
 - **Loopback binding is the whole security model** — no auth. Structured JSON error envelope:
   `{error: <variant>, ...variant-specific fields}` (no `kind` key). Status mapping
   Validation→400, NotFound→404, Conflict→409, Gone→410.
-- **Optimistic locking**: `mv`/`edit`/`done` do a single CAS on the client-supplied version and
-  return `VersionConflict` on mismatch. The one-retry read-modify-write lives in the CLI, not the
-  daemon — `internal/cli/cas.go`.
+- **Optimistic locking**: `mv`/`refile`/`edit`/`done` do a single CAS on the client-supplied version
+  and return `VersionConflict` on mismatch. The one-retry read-modify-write lives in the CLI, not the
+  daemon — `internal/cli/cas.go`. Only workspace/track/task carry a `version` column, so the
+  segment/status/kind edits (`segment edit`, `status edit|order`, `kind rename`) are plain writes
+  ordered by the single write-actor, with no CAS token on the wire.
 - Sole local user: schema changes edit `src/main/resources/schema.sql` and recreate the DB
   rather than authoring a migration by default.
 

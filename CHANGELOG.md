@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`stx refile <id> -t <track> [-s <segment>]` — a task can finally change where it's filed.** `mv`
+  moves a task through the kanban; `refile` moves it through the filing tree, which nothing could do
+  before: `segment_id` was set at `add` and never again. Backed by a new daemon endpoint
+  `POST /tasks/{id}/segment`, deliberately shaped like `/tasks/{id}/status` — same CAS-first
+  ordering, so a racing loser gets a clean `VersionConflict` rather than a confusing target error.
+  Without `-s` the destination is the track's root segment, which is what `add -t` already means.
+  The target must be in the same workspace (a task's `workspace_id` is derived from its container
+  chain and every incident edge is workspace-local); crossing **tracks** is fine and moves no edges —
+  a `blocks` edge may already span tracks by design. Ids may come from stdin, so
+  `stx next -w x -q | stx refile - -w x -t triage` re-files a whole frontier.
+- **`stx segment edit <segment> [--name] [--under]` — rename or reparent a filing segment.** Segments
+  were create-and-archive only; a typo or a tree you'd outgrown was permanent. A reparent stays
+  inside the segment's own track (`segment.track_id` is immutable — invariant #5 — so moving *work*
+  across tracks is `refile`'s job, per task), rejects a new parent inside the moved segment's own
+  subtree (invariant #2, which until now was "enforced" only by the absence of a reparent verb), and
+  is refused outright on a track's root segment, whose NULL parent is what `ux_segment_one_root`
+  keys on. Renaming the root is fine. Segments are now addressable by **name** as well as id
+  (`--under phase-1`), scoped to the track they live in.
+- **`stx status edit`, `stx status order`, `stx kind rename` — the registries are editable.** A
+  status's name and kanban position and a kind's name were set once at create. `status edit <s>
+  [--name] [--order N]` changes one; `status order <s1> <s2> …` sets the whole kanban order in a
+  single transaction — the listed statuses take the front, and any status left out keeps its
+  relative order behind them, so a partial list is "float these to the front". `kind rename <old>
+  <new>` renames a work type. Renames keep the row id, so tasks stay on the status/kind they were
+  on, and both take the same case-insensitive duplicate rejection as their create verbs (excluding
+  the row itself, so re-casing `todo` → `Todo` is a legal rename of itself). A status's `terminal`
+  flag is deliberately **not** editable: flipping it would retroactively redefine which existing
+  tasks count as done and silently rewrite the frontier. All three are unversioned rows, so their
+  daemon endpoints (`PATCH /segments/{id}`, `PATCH /workspaces/{id}/statuses/{sid}`,
+  `POST /workspaces/{id}/statuses/order`, `PATCH /workspaces/{id}/kinds/{kid}`) carry no CAS token —
+  the single write-actor is what orders them.
 - **`stx blockers <id>` — the inverse of `next`.** `next` lists what you can work on; `blockers` lists the
   unfinished work in the way of something you can't, walked transitively backward through the
   `blocks` DAG and ordered shallowest hop first. Backed by a new daemon endpoint
