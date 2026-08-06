@@ -177,15 +177,21 @@ class Db(private val url: String) {
          * Schema version this daemon understands; stamped into `PRAGMA user_version` on fresh load.
          * Bump by exactly 1 whenever you add a migration, and register its script in [MIGRATIONS].
          */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         /**
          * version -> classpath path of the forward migration that PRODUCES that version
          * (migrations[n] upgrades a v(n-1) DB to vn). Explicit registry rather than directory
-         * scanning so it resolves identically from a jar. Empty until the first schema change, e.g.
-         *   mapOf(2 to "/migrations/002_add_xyz.sql")
+         * scanning so it resolves identically from a jar.
+         *
+         * Every entry must leave the DB structurally equivalent to what [SCHEMA_RESOURCE] produces
+         * for a fresh install at the same version — `schema.sql` is the definition, a migration is
+         * how an existing DB catches up. Where the two cannot be made identical, the migration says
+         * so in a comment (002 skips a table-level CHECK that would need a full table rebuild).
          */
-        private val MIGRATIONS: Map<Int, String> = emptyMap()
+        private val MIGRATIONS: Map<Int, String> = mapOf(
+            2 to "/migrations/002_agent_claims.sql",
+        )
 
         /**
          * Split a SQL script into statements (xerial runs one per call). Tracks single-quoted

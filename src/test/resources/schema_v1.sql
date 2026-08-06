@@ -171,26 +171,16 @@ CREATE TABLE task (
     metadata_json TEXT    NOT NULL DEFAULT '{}',
     archived      INTEGER NOT NULL DEFAULT 0,
     version       INTEGER NOT NULL DEFAULT 0,        -- optimistic-lock token (see CAS note at foot)
-    -- Agent lease (see the claim/lease note at foot). Framework-set, orthogonal to `version`:
-    -- claiming is a RESERVATION, not a content edit, so it moves neither version nor updated_at.
-    -- NULL claimed_by = free. An expired lease is not cleaned up; expiry is evaluated on read.
-    claimed_by    TEXT,
-    claimed_until TEXT,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     CHECK (archived IN (0, 1)),
     CHECK (length(trim(title)) > 0),
-    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
-    -- A holder implies an expiry and vice versa: a lease with one half missing would either
-    -- never expire or never be attributable. Both NULL (free) or both set (held).
-    CHECK ((claimed_by IS NULL) = (claimed_until IS NULL))
+    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
 );
 CREATE INDEX ix_task_workspace ON task(workspace_id) WHERE archived = 0;  -- hot path: every `next` filters workspace_id first
 CREATE INDEX ix_task_segment   ON task(segment_id)   WHERE archived = 0;
 CREATE INDEX ix_task_status    ON task(status_id)    WHERE archived = 0;
 CREATE INDEX ix_task_kind      ON task(kind_id)      WHERE archived = 0 AND kind_id IS NOT NULL;
--- `next` filters out live leases on every call; only held rows are worth indexing.
-CREATE INDEX ix_task_claim     ON task(claimed_until) WHERE archived = 0 AND claimed_until IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- live_task: the canonical "visible task" predicate, centralized so every
@@ -333,38 +323,24 @@ CREATE UNIQUE INDEX ux_relates_live
 --   not work duration -> that gap is the deferred claim/lease below.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
--- AGENT CLAIM / LEASE (built in schema v2 — the trigger, "a second concurrent
--- agent", arrived). Columns live on `task` above; this is the mechanism.
---
---   The primitive is ONE statement — claim-if-free, an OL-style CAS on the lease
---   rather than on `version`:
---       UPDATE task SET claimed_by = :me,
---                       claimed_until = datetime('now', '+' || :ttl || ' seconds')
---        WHERE id = :id AND archived = 0
---          AND (claimed_by IS NULL OR claimed_until <= datetime('now')
---               OR claimed_by = :me);
---     changes()=1 -> won; changes()=0 -> re-read and report the holder (409).
---     The `OR claimed_by = :me` arm makes renew/heartbeat fall out for free.
---   Frontier gains: AND (claimed_by IS NULL OR claimed_until <= datetime('now')
---                        [OR claimed_by = :me]) — the bracketed arm only when the
---     caller identifies itself, so an agent still sees the work it holds.
---   NO SWEEPER. Expiry is evaluated on read, like the frontier itself; a crashed
---     agent's lease simply stops mattering when its TTL passes. That is also the
---     whole crash story, which is why there is no steal/force verb.
---   Orthogonal to OL: a claim moves neither `version` nor `updated_at` (see the
---     task CHECK note). If it moved `version`, one agent claiming would hand
---     every other agent a spurious 409 on its next edit. OL = correctness of
---     edits (no lost updates); lease = reservation of work (no double-work).
---   NOT an invariant — the canonical count stays 9 (D1). A stale lease is never
---     incorrect, it just stops reserving.
---   SoC unchanged: stx supplies the columns + the primitive. TTL length,
---     heartbeat cadence, crash policy, release-on-done are the AGENT FRAMEWORK's.
---     stx computes the expiry from a caller-supplied TTL rather than accepting an
---     absolute timestamp, so the clock the comparison uses is the one that set it.
---
--- ─────────────────────────────────────────────────────────────────────────────
 -- DEFERRED ADDITIONS (designed, not built — all are leaves: nothing references
 -- them, so they add with zero migration pain whenever the need is real).
+--
+--   Agent claim / lease — concurrency coordination for >1 simultaneous agent.
+--     Shape when added:
+--       ALTER TABLE task ADD COLUMN claimed_by    TEXT;   -- framework-set
+--       ALTER TABLE task ADD COLUMN claimed_until  TEXT;   -- framework-set expiry
+--     Plus ONE daemon primitive: atomic "claim-if-free" (set claimed_by=me where
+--       claimed_by IS NULL OR claimed_until <= now, in one txn, report win/lose),
+--       and a fused next-and-claim built on it. NB: claim-if-free is itself an
+--       OL-style CAS (same mechanism as `version` above) — no rework when added.
+--       OL = correctness of edits (no lost updates); lease = reservation of work
+--       (no double-work). Different problems; OL is not a substitute for the lease.
+--     Frontier gains: AND (claimed_until IS NULL OR claimed_until <= now).
+--     SoC: stx provides only the columns + the atomic primitive. TTL duration,
+--       heartbeat/renew, crash policy, release-on-done all belong to the AGENT
+--       FRAMEWORK, which passes claimed_until as a value. stx holds no policy.
+--     Trigger to add: the moment a second concurrent agent runs.
 --
 --   (Labels were considered and REJECTED — stx is structurally dense enough that
 --    a free-form key:value store would only DUPLICATE existing structure
