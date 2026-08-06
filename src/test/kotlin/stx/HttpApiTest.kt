@@ -221,6 +221,49 @@ class HttpApiTest {
         assertEquals("build", parser.parseToJsonElement(kindRenamed.bodyString()).jsonObject["name"]!!.jsonPrimitive.content)
     }
 
+    @Test fun `lease routes - claim, the 409 that names the holder, release, claims, and next-claim`() {
+        val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
+        val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))
+        val a = idOf(post("/tracks/$trackId/tasks", """{"title":"a"}"""))
+        val b = idOf(post("/tracks/$trackId/tasks", """{"title":"b"}"""))
+
+        val claimed = post("/tasks/$a/claim", """{"agentId":"agent-1","ttlSeconds":600}""")
+        assertEquals(200, claimed.status.code)
+        assertEquals("agent-1", parser.decodeFromString<TaskDto>(claimed.bodyString()).claimedBy)
+
+        // the loser gets 409 carrying the holder + expiry, so it can re-plan without a re-read
+        val lost = post("/tasks/$a/claim", """{"agentId":"agent-2","ttlSeconds":600}""")
+        assertEquals(409, lost.status.code)
+        assertEquals("Claimed", errorOf(lost))
+        val body = parser.parseToJsonElement(lost.bodyString()).jsonObject
+        assertEquals("agent-1", body["by"]!!.jsonPrimitive.content)
+        assertTrue(body["until"]!!.jsonPrimitive.content.isNotBlank())
+
+        // the frontier hides it from everyone but its holder
+        fun frontierIDs(q: String) =
+            (parser.parseToJsonElement(get("/next?workspace=$wsId$q").bodyString())
+                .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray)
+                .map { it.jsonObject["id"]!!.jsonPrimitive.long }
+        assertEquals(listOf(b), frontierIDs(""))
+        assertEquals(listOf(a, b), frontierIDs("&as=agent-1"))
+
+        val claims = parser.parseToJsonElement(get("/workspaces/$wsId/claims").bodyString())
+            .jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        assertEquals(1, claims.size)
+        assertEquals("agent-1", claims[0].jsonObject["claimedBy"]!!.jsonPrimitive.content)
+
+        // fused frontier+claim takes what is left
+        val fused = post("/next/claim", """{"workspaceId":$wsId,"agentId":"agent-2","ttlSeconds":600}""")
+        assertEquals(200, fused.status.code)
+        val taken = parser.parseToJsonElement(fused.bodyString()).jsonObject["items"]!! as kotlinx.serialization.json.JsonArray
+        assertEquals(listOf(b), taken.map { it.jsonObject["id"]!!.jsonPrimitive.long })
+        assertEquals("agent-2", taken[0].jsonObject["claimedBy"]!!.jsonPrimitive.content)
+
+        assertEquals(409, post("/tasks/$a/release", """{"agentId":"agent-2"}""").status.code)
+        assertEquals(200, post("/tasks/$a/release", """{"agentId":"agent-1"}""").status.code)
+        assertEquals(listOf(a), frontierIDs(""))
+    }
+
     @Test fun `bulk edge export returns both edge kinds`() {
         val wsId = idOf(post("/workspaces", """{"name":"ws"}"""))
         val trackId = idOf(post("/workspaces/$wsId/tracks", """{"name":"m"}"""))

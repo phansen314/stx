@@ -6,7 +6,11 @@ import stx.command.Command
 import stx.command.CreateTask
 import stx.command.CreateWorkspace
 import stx.command.ListWorkspaces
+import stx.command.ClaimTask
 import stx.command.EditKind
+import stx.command.ListClaims
+import stx.command.NextAndClaim
+import stx.command.ReleaseTask
 import stx.command.EditSegment
 import stx.command.EditStatus
 import stx.command.MoveStatus
@@ -41,5 +45,10 @@ class CommandSerializationTest {
         roundtrip(EditStatus(workspaceId = 1, statusId = 2, name = "Todo", kanbanOrder = 3))
         roundtrip(ReorderStatuses(workspaceId = 1, statusIds = listOf(3, 1, 2)))
         roundtrip(EditKind(workspaceId = 1, kindId = 4, name = "impl"))
+        roundtrip(Next(workspaceId = 1, asAgent = "agent-1"))
+        roundtrip(ClaimTask(taskId = 7, agentId = "agent-1", ttlSeconds = 900))
+        roundtrip(ReleaseTask(taskId = 7, agentId = "agent-1"))
+        roundtrip(NextAndClaim(workspaceId = 1, agentId = "agent-1", ttlSeconds = 900, trackId = 2, limit = 5))
+        roundtrip(ListClaims(workspaceId = 1))
     }
 }
