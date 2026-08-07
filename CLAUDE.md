@@ -41,9 +41,12 @@ Authoritative design lives in `docs/` — start with
   `./bin/stx`, which auto-builds on first use); `go test ./internal/...`. Put on PATH:
   `ln -s "$PWD/bin/stx" ~/.local/bin/stx`.
 
-Deployed via systemd user unit `packaging/systemd/stx.service` → runs
-`build/install/stx/bin/stx`, so a deploy is `./gradlew installDist` + `systemctl --user
-restart stx.service` (not a bare `build`).
+Deployed via systemd user unit `packaging/systemd/stx.service` (symlinked into
+`~/.config/systemd/user/` by `make install-unit`, so it can't drift) → runs
+`build/install/stx/bin/stx`. **Deploy with `make deploy`** — stop, `installDist`, start, in that
+order. `installDist` rewrites the jar in place, and a daemon left running across the swap keeps
+serving cached routes and dies later on the first route it hadn't touched yet; restarting
+*afterwards* doesn't help, because the damage happens during the build.
 
 ## Model
 

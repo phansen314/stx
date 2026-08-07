@@ -16,17 +16,21 @@ A ready-to-use unit template lives at
    cd ~/code/stx && ./gradlew installDist
    ```
 
-2. **Install the unit:**
+2. **Install the unit** — `make install-unit`, which **symlinks** it:
 
    ```sh
-   mkdir -p ~/.config/systemd/user
-   cp ~/code/stx/packaging/systemd/stx.service ~/.config/systemd/user/
+   cd ~/code/stx && make install-unit
    ```
+
+   Symlinked rather than copied on purpose. A copy drifts from the repo the moment either side is
+   edited and nothing tells you; with a link, a repo change reaches the daemon after a
+   `daemon-reload`. Machine-specific values (a JDK path, say) go in a **drop-in**
+   (`systemctl --user edit stx.service`) — never in the tracked unit, which uses `%h` so it stays
+   machine-independent.
 
 3. **Enable + start now:**
 
    ```sh
-   systemctl --user daemon-reload
    systemctl --user enable --now stx.service
    ```
 
@@ -63,13 +67,17 @@ systemctl --user import-environment PATH
 
 ## Update after a rebuild
 
-`./gradlew installDist` overwrites the launcher in place — just restart:
-
 ```sh
-systemctl --user restart stx.service
+cd ~/code/stx && make deploy      # stop → installDist → start
 ```
 
-No reinstall needed.
+**Stop first — do not rebuild under a running daemon.** `installDist` rewrites
+`build/install/stx/lib/stx-*.jar` **in place**, and a JVM started earlier has the zip central
+directory cached while loading classes lazily. The running daemon therefore keeps serving every
+route it has already exercised and fails only on the *first* use of a route it hasn't touched
+yet — arbitrarily later, and looking nothing like "you rebuilt under me". `make deploy` exists so
+the safe order is the only order you have to remember; `restart` alone does not save you, because
+the damage happens during `installDist`, before the restart.
 
 ## Notes
 
@@ -78,13 +86,18 @@ No reinstall needed.
 - **Double-start is safe:** the daemon holds an exclusive `~/.local/state/stx/stx.lock`, so a
   second instance (e.g. a manual `bin/stx` while the service runs) exits with code 1 rather
   than corrupting state.
-- **Clean stop:** `systemctl --user stop stx.service` sends SIGTERM; the shutdown hook stops
-  the server, closes the write actor, and releases the lock (exit 0, no restart).
+- **Clean stop:** `systemctl --user stop stx.service` sends SIGTERM; the shutdown hook stops the
+  server, closes the write actor, and releases the lock. The JVM then exits **143** (128+15), not
+  0 — that is what a process killed by SIGTERM reports, cleanly or otherwise. The unit carries
+  `SuccessExitStatus=143` so systemd treats it as success; without it every clean stop is recorded
+  as `Failed with result 'exit-code'`, which makes `systemctl is-failed` lie and hides a genuine
+  crash in the noise. (The alternative — calling `exitProcess(0)` from the shutdown hook — risks
+  deadlocking against the shutdown it runs inside, so the fix belongs in the unit.)
 
 ## Remove
 
 ```sh
 systemctl --user disable --now stx.service
-rm ~/.config/systemd/user/stx.service
+rm ~/.config/systemd/user/stx.service   # the symlink; the repo file stays
 systemctl --user daemon-reload
 ```

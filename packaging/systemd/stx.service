@@ -13,6 +13,12 @@ Type=simple
 ExecStart=%h/code/stx/build/install/stx/bin/stx
 Restart=on-failure
 RestartSec=2s
+# A JVM killed by SIGTERM exits 143 (128+15) even though its shutdown hook ran cleanly —
+# stopping the server, draining the write actor, releasing the lock. Without this, EVERY clean
+# `systemctl stop` records "Failed with result 'exit-code'", which makes `is-failed` lie and
+# would camouflage a real crash. Fixing it here rather than calling exitProcess(0) from the hook:
+# exiting from inside a shutdown hook can deadlock against the shutdown it is running in.
+SuccessExitStatus=143
 # Optional overrides — uncomment to change:
 # Environment=STX_PORT=8420
 # Environment=XDG_STATE_HOME=%h/.local/state
