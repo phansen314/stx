@@ -84,7 +84,7 @@ func registerCompletions(root *cobra.Command) {
 		[]string{"segment", "edit"}, []string{"refile"}, []string{"meta"})
 
 	// ── --segment / --under: a segment within the -t track on the line ──
-	flagComp("segment", completeSegmentFlag, []string{"refile"})
+	flagComp("segment", completeSegmentFlag, []string{"refile"}, []string{"add"})
 	flagComp("under", completeSegmentFlag, []string{"segment", "edit"})
 
 	// ── enum flags ──

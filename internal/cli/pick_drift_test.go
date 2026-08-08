@@ -236,6 +236,10 @@ func newDriftServer(t *testing.T) (string, *reqLog) {
 		return func(w http.ResponseWriter, _ *http.Request) { write(w, v) }
 	}
 	mux.HandleFunc("POST /tracks/10/tasks", ok(task))
+	// filing straight into a segment — `add -s`, which had no fixture route until #93
+	mux.HandleFunc("POST /segments/21/tasks", ok(map[string]any{
+		"id": 7, "workspaceId": 1, "segmentId": 21, "statusId": 100, "title": "seed", "version": 0,
+	}))
 	mux.HandleFunc("POST /tasks/5/status", ok(task))
 	mux.HandleFunc("POST /tasks/5/segment", ok(task))
 	leased := map[string]any{

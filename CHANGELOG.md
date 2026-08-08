@@ -117,6 +117,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`stx add -s` takes a segment name, like `refile -s` always did.** The same flag letter on the
+  same concept had two rules: `stx add -s lifecycle` died with `strconv.ParseInt: parsing
+  "lifecycle": invalid syntax` while `stx refile -s lifecycle` resolved the name against the track.
+  `add` also refused `-t` and `-s` together, which removed the only scope a segment name can be
+  resolved in. Both flags are now accepted together and mean what they mean everywhere else: `-t`
+  alone files at the track's root, `-t` with `-s` files in that segment (by name **or** id) within
+  that track, and a bare `-s <id>` still works with no `-t`, since segment ids are global. A name
+  with no track is an error that says to add `-t` rather than leaking a parse failure. The
+  equivalence is asserted directly — the same `-w`/`-t`/`-s` triple that `add`s a task into a
+  segment `refile`s an existing one into the very same segment.
 - **Exit codes follow grep: 0 results, 1 empty result set, 2 error.** Errors previously exited 1;
   the new 1 means "the command worked and found nothing" (`ls`, `next`, `tree`, `meta ls`, `graph`,
   `status ls`, `relate-kinds`), so `if stx next -w x -q >/dev/null` is a valid predicate. Scripts

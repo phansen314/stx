@@ -44,7 +44,8 @@ hr "1. add — create tasks with Go"
 A1=$(addid "design schema"   -w "$W" -t build -p 2); echo "  design schema  → #$A1"
 A2=$(addid "write migration" -w "$W" -t build       ); echo "  write migration → #$A2"
 A3=$(addid "ship it"         -w "$W" -t build -p 1  ); echo "  ship it        → #$A3"
-A4=$(addid "GET /users"      -w "$W" -s "$SEG"       ); echo "  GET /users     → #$A4 (in api segment)"
+A4=$(addid "GET /users"      -w "$W" -s "$SEG"       ); echo "  GET /users     → #$A4 (in api segment, by id)"
+A5=$(addid "POST /users"     -w "$W" -t build -s api ); echo "  POST /users    → #$A5 (same segment, by NAME — same rules as refile)"
 printf '\ntext form of one add (with the bug kind from §0b):\n'; g add "extra task" -w "$W" -t build --kind bug
 
 hr "2. edit — title / description / priority (CAS)"
@@ -196,7 +197,8 @@ g status edit Backlog -w "$W"                # nothing to edit
 g show 99999999                              # NotFound
 g mv "$A1" Nonsense                          # unknown status (resolve)
 g edit "$A1"                                 # nothing to edit
-g add "bad" -w "$W" -t build -s "$SEG"       # both -t and -s
+g add "bad" -w "$W"                          # neither -t nor -s
+g add "bad" -w "$W" -s api                   # a segment NAME needs -t to resolve against
 g add "bad" -w no-such-workspace -t build    # unknown workspace
 g next                                       # missing -w
 g meta ls                                    # no target (need --task or -w)

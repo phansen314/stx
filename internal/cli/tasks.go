@@ -14,8 +14,7 @@ import (
 )
 
 func newAddCmd() *cobra.Command {
-	var wsFlag, trackFlag, statusFlag, kindFlag, descFlag string
-	var segFlag int64
+	var wsFlag, trackFlag, statusFlag, kindFlag, descFlag, segFlag string
 	var prioFlag int
 	var useEditor bool
 	cmd := &cobra.Command{
@@ -24,9 +23,13 @@ func newAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hasTrack := trackFlag != ""
-			hasSeg := cmd.Flags().Changed("segment")
-			if hasTrack == hasSeg {
-				return errors.New("pass exactly one of -t/--track or -s/--segment")
+			hasSeg := segFlag != ""
+			// -t and -s are no longer exclusive: "this segment, in this track" is the scope a
+			// segment NAME needs to resolve, and refusing it was what left `-s` id-only here while
+			// `refile -s` took a name. A bare -s still works when it's an id — segment ids are
+			// global, so no track is needed to look one up.
+			if !hasTrack && !hasSeg {
+				return errors.New("pass -t/--track and/or -s/--segment")
 			}
 			// Unlike `edit`, the editor is never implied here — `stx add "quick note"` must stay a
 			// one-liner, so -e is the only way in.
@@ -75,15 +78,31 @@ func newAddCmd() *cobra.Command {
 				}
 				p.KindID = &k.ID
 			}
-			if hasTrack {
+			// Filing destination, resolved exactly like `refile`'s (#93 — same flags, same rules):
+			//   -t alone            → the track's root segment (the daemon routes it there)
+			//   -t with -s          → that segment, by name or id, WITHIN that track
+			//   -s alone            → a segment id; a name has no track to resolve against
+			switch {
+			case hasTrack:
 				tr, err := resolveTrack(c, ws.ID, trackFlag)
 				if err != nil {
 					return err
 				}
-				p.Track = &tr.ID
-			} else {
-				s := segFlag
-				p.Segment = &s
+				if !hasSeg {
+					p.Track = &tr.ID
+					break
+				}
+				seg, err := resolveSegment(c, tr.ID, segFlag)
+				if err != nil {
+					return err
+				}
+				p.Segment = &seg.ID
+			default:
+				id, err := strconv.ParseInt(segFlag, 10, 64)
+				if err != nil {
+					return fmt.Errorf("resolving a segment by name needs a track — pass -t <track> with -s %s (or give the segment's id)", segFlag)
+				}
+				p.Segment = &id
 			}
 			task, err := c.CreateTask(p)
 			if err != nil {
@@ -96,7 +115,7 @@ func newAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&wsFlag, "workspace", "w", "", "workspace name or id (required)")
 	cmd.Flags().StringVarP(&trackFlag, "track", "t", "", "track name or id")
-	cmd.Flags().Int64VarP(&segFlag, "segment", "s", 0, "segment id")
+	cmd.Flags().StringVarP(&segFlag, "segment", "s", "", "segment name (needs -t) or id")
 	cmd.Flags().IntVarP(&prioFlag, "priority", "p", 0, "priority")
 	cmd.Flags().StringVar(&statusFlag, "status", "", "initial status name or id")
 	cmd.Flags().StringVar(&kindFlag, "kind", "", "kind name or id")

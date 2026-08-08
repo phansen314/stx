@@ -38,7 +38,7 @@ to any command for machine-readable output; text is the compact default.
 | `stx next -w <ws> [-t <track>] [-s <segment-id>] [--kind k] [--limit N]` | ready tasks (frontier: unblocked, non-terminal); `-s` scopes to a segment subtree, `--kind` to a work type |
 | `stx show <id>` | task detail + edges (blocked-by / blocks / relates) |
 | `stx blockers <id> [--depth N]` | **inverse of `next`** — the unfinished work blocking this task, transitively, shallowest hop first. `-q` prints the *blocker* ids (so `stx blockers 42 -q \| stx done -` clears the path); exit 1 = nothing is blocking it |
-| `stx add "<title>" -w <ws> -t <track> [-p N] [--status s] [--kind k] [--desc …] [-e]` | create task (`-s <segment-id>` instead of `-t`; `--desc -` reads stdin, `-e` writes the description in `$EDITOR`) |
+| `stx add "<title>" -w <ws> -t <track> [-s <segment>] [-p N] [--status s] [--kind k] [--desc …] [-e]` | create task. `-s` takes a segment **name or id** and resolves within `-t`, exactly like `refile -s`; `-s <id>` alone works without `-t`. `--desc -` reads stdin, `-e` writes the description in `$EDITOR` |
 | `stx mv <id> <status>` | move status (validates transition; prints legal targets if illegal) |
 | `stx refile <id> -w <ws> -t <track> [-s <segment>]` | re-file a task under another track/segment (`mv` on the filing axis; `-s` names a segment in that track, default its root). Same workspace only; `-` reads ids from stdin |
 | `stx edit <id> [--title …] [--desc …] [--priority N] [--kind k \| --no-kind] [-e]` | edit fields; **no field flag on a terminal (or `-e`) opens the description in `$EDITOR`** — whole buffer = description, `unchanged #id` when you close it untouched |

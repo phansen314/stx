@@ -145,7 +145,10 @@ the single source for the command list. In short:
 
 **Nothing is filed once and stuck.** `mv` moves a task through the kanban; **`refile`** moves it
 through the filing tree — `stx refile 41 -w auth -t billing` re-files it under another track (its
-root segment), `-s <segment>` names a segment inside that track instead. Ids may come from stdin
+root segment), `-s <segment>` names a segment inside that track instead — and **`add` takes the same
+`-w`/`-t`/`-s` triple with the same rules**, so the flags that file a new task there also move an
+existing one there. (`add -s <id>` still works without `-t`: segment ids are global, so there is
+nothing to resolve against.) Ids may come from stdin
 (`stx next -w auth -q | stx refile - -w auth -t triage`). The destination must be in the same
 workspace (a task's workspace is derived from its container chain, and its edges are
 workspace-local); crossing *tracks* is fine — a `blocks` edge may already span them.
