@@ -68,6 +68,21 @@ command from live daemon data. `eval "$(stx completion bash)"` adds `<TAB>` comp
 ids/workspaces/statuses. See
 [`docs/stx-cli.md`](docs/stx-cli.md#interactive-helpers).
 
+## Claude Code plugin
+
+The repo is also a Claude Code plugin, so Claude can drive the daemon through skills rather than
+being re-taught the CLI each session:
+
+```
+/plugin marketplace add ~/code/stx     # once
+/plugin install stx@stx
+```
+
+**Installing takes a snapshot copy** into `~/.claude/plugins/cache/`, so editing `skills/*/SKILL.md`
+does nothing until you bump `version` in `.claude-plugin/plugin.json` and run `/plugin update
+stx@stx` — an unchanged version makes the update a no-op. Details and a staleness check:
+[`docs/claude-plugin.md`](docs/claude-plugin.md).
+
 ## Run the tests
 
 ```bash
@@ -83,4 +98,5 @@ go test ./internal/...      # Go CLI suite
 | `cmd/stx/`, `internal/` | Go CLI — the `stx` client (`bin/stx-go`)   |
 | `bin/`   | Launchers — `stx` (→ Go, auto-builds), `stx-go` (compiled binary) |
 | `scripts/` | `graph_demo.sh` / `graph_bigdemo.sh` — seed an isolated daemon + render styled graphs; `smoke-go.sh` — Go CLI smoke test |
+| `skills/`, `.claude-plugin/` | Claude Code plugin — see [`docs/claude-plugin.md`](docs/claude-plugin.md) |
 | `docs/`  | Design decisions — see [`docs/stx-v3-decisions.md`](docs/stx-v3-decisions.md) |

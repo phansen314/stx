@@ -23,6 +23,7 @@ Authoritative design lives in `docs/` — start with
 | `scripts/`| `graph_demo.sh` / `graph_bigdemo.sh` — seed an isolated daemon and render styled/clustered graphs; `smoke-go.sh` — Go CLI smoke test |
 | `examples/`| `graph.toml` — annotated `stx graph` styling config (copy to `~/.config/stx/graph.toml`) |
 | `packaging/systemd/` | `stx.service` user unit (autostart)              |
+| `skills/`, `.claude-plugin/` | Claude Code plugin (`stx`, `next` skills) — install COPIES it into `~/.claude/plugins/cache/`, so a skills edit needs a `plugin.json` version bump + `/plugin update stx@stx` to reach a session (`docs/claude-plugin.md`) |
 | `docs/`   | Authoritative design, schema, decisions                     |
 
 ## Build / run / test
